@@ -165,33 +165,42 @@ hasnt "no other config key is read as the provider" "not-this-one" "$out"
 out="$(bash "$probe" --sections agents --home "$sb/nobody-home" 2>&1)"
 has "an account without them: absent" "INFO ai-agent hermes: absent" "$out"
 
-echo "── suspend attempts refused: reported as INFO, by a stub journalctl (this runs on macOS too)"
+echo "── suspend attempts refused: reported as INFO, by a stub journalctl"
 # The masks stop the sleep but not the attempt: a desktop's own idle-suspend still calls logind,
 # which broadcasts the wall message and only then finds the target masked. The probe counts the
 # refusals in this boot so the hub can say the desktop's automatic suspend is still on. Hermetic:
-# a stub journalctl stands in for the journal, and says exactly what logind would.
-stub() { # name, then the lines the stub prints for every call
-    local n="$1"; shift
-    { printf '#!/bin/sh\n'; for l in "$@"; do printf 'printf "%%s\\n" %s\n' "$(printf '%q' "$l")"; done; } > "$sb/bin/$n"
-    chmod +x "$sb/bin/$n"
-}
-stub journalctl "Unit suspend.target is masked, refusing operation." \
-                "Oct 11 08:18:03 worker systemd-logind[1]: Unit suspend.target is masked, refusing operation."
-out="$(bash "$probe" --sections sleep --journalctl-bin "$sb/bin/journalctl" 2>&1)"; st=$?
-expect_exit "a refusal is INFO, never a failure" 0 "$st"
-has "counts the refusals" "INFO suspend-attempts: 2 refused in this boot" "$out"
-has "names what to turn off (COSMIC)" "COSMIC Settings > Power & Battery > Automatic suspend > Never" "$out"
-has "names what to turn off (GNOME)" "sleep-inactive-ac-type 'nothing'" "$out"
-stub journalctl
-out="$(bash "$probe" --sections sleep --journalctl-bin "$sb/bin/journalctl" 2>&1)"; st=$?
-expect_exit "a quiet boot stays green" 0 "$st"
-has "and says so" "INFO suspend-attempts: none refused in this boot" "$out"
-hasnt "no advice when there is nothing to advise" "Automatic suspend > Never" "$out"
-# The other shape: a desktop calling the sleep verb straight through, which logind refuses with
-# a different sentence (systemd 255, logind-action.c). Both are counted.
-stub journalctl "Failed to execute suspend operation: Access denied"
-out="$(bash "$probe" --sections sleep --journalctl-bin "$sb/bin/journalctl" 2>&1)"
-has "a direct sleep verb refused is counted too" "INFO suspend-attempts: 1 refused in this boot" "$out"
+# a stub journalctl stands in for the journal, and says exactly what logind would. Linux only —
+# the sleep section has no such branch on macOS (its own sleep section is pmset's).
+if [ "$(uname -s)" = Linux ]; then
+    stub() { # name, then the lines the stub prints for every call
+        local n="$1"; shift
+        { printf '#!/bin/sh\n'; for l in "$@"; do printf 'printf "%%s\\n" %s\n' "$(printf '%q' "$l")"; done; } > "$sb/bin/$n"
+        chmod +x "$sb/bin/$n"
+    }
+    stub journalctl "Unit suspend.target is masked, refusing operation." \
+                    "Oct 11 08:18:03 worker systemd-logind[1]: Unit suspend.target is masked, refusing operation."
+    out="$(bash "$probe" --sections sleep --journalctl-bin "$sb/bin/journalctl" 2>&1)"
+    has "counts the refusals" "INFO suspend-attempts: 2 refused in this boot" "$out"
+    has "names what to turn off (COSMIC)" "COSMIC Settings > Power & Battery > Automatic suspend > Never" "$out"
+    has "names what to turn off (GNOME)" "sleep-inactive-ac-type 'nothing'" "$out"
+    # The refusals are INFO and never a FAIL: the line is INFO, and no FAIL names suspend-attempts
+    # (the exit status is not asserted — it follows THIS machine's sleep targets, which differ
+    # between a masked worker and a CI runner, and is not what the count is about).
+    hasnt "reported as INFO, not FAIL" "FAIL suspend-attempts" "$out"
+    stub journalctl
+    out="$(bash "$probe" --sections sleep --journalctl-bin "$sb/bin/journalctl" 2>&1)"
+    has "a quiet boot says so" "INFO suspend-attempts: none refused in this boot" "$out"
+    hasnt "no advice when there is nothing to advise" "Automatic suspend > Never" "$out"
+    # The other shape: a desktop calling the sleep verb straight through, which logind refuses with
+    # a different sentence (systemd 255, logind-action.c). Both are counted.
+    stub journalctl "Failed to execute suspend operation: Access denied"
+    out="$(bash "$probe" --sections sleep --journalctl-bin "$sb/bin/journalctl" 2>&1)"
+    has "a direct sleep verb refused is counted too" "INFO suspend-attempts: 1 refused in this boot" "$out"
+    hasnt "and is still INFO" "FAIL suspend-attempts" "$out"
+else
+    echo "  ok   skipped on macOS: the sleep section is Linux's, and macOS's is pmset's"
+    pass=$((pass+1))
+fi
 
 echo "── usage"
 bash "$probe" --bogus >/dev/null 2>&1; expect_exit "an unknown argument is exit 2" 2 "$?"
