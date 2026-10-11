@@ -44,3 +44,19 @@ status:
 # Generate a repository with the library-lending sample in it: just new <dir> --target python
 new dir *flags:
     python3 tools/new.py "{{dir}}" {{flags}}
+
+# The worker loop (worker/README.md, step 8), configured by .gonk/worker.toml. The loop: just worker
+worker *flags:
+    python3 tools/worker.py run {{flags}}
+
+# One item, then exit (0 handed back, 3 nothing to take, 4 taken but not handed back with evidence).
+worker-once *flags:
+    python3 tools/worker.py run --once {{flags}}
+
+# What the worker would take now, and why it skips the rest. Claims nothing.
+worker-plan *flags:
+    python3 tools/worker.py plan {{flags}}
+
+# Let this worker take an item it handed back before: just worker-forget 12
+worker-forget item:
+    python3 tools/worker.py forget {{item}}

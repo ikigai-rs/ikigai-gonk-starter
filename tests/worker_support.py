@@ -1,0 +1,266 @@
+"""Support for the worker's tests: an in-memory ledger that answers the commands the worker
+sends (as gonk's ledger does, for the parts the worker uses), a scratch git origin, the stub gh
+and the fake agent, and a worker wired to all of them.
+
+The in-memory ledger is checked against the real one by tests/test_worker_gonk.py, which runs
+the same loop against a scratch gonk where `ikigai-gonk` and `ikigai` are installed.
+"""
+
+from __future__ import annotations
+
+import json
+import shlex
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+from support import ROOT, gonk, scratch_repo
+
+sys.path.insert(0, str(ROOT / "tools"))
+import worker  # noqa: E402
+
+FAKES = ROOT / "tests" / "fakes"
+
+
+def iso(t: datetime) -> str:
+    return t.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+class FakeLedger:
+    """One ledger, in memory, answering `ikigai -c` command strings the way gonk does for
+    next, items, item:N, claim (sink and delete), comment and close. Thread-safe: the
+    heartbeat calls it from its own thread."""
+
+    def __init__(self, name: str = "acme") -> None:
+        self.name = name
+        self.items: dict[int, dict] = {}
+        self.calls: list[tuple[str, str | None]] = []
+        self.closes: list[int] = []
+        self.lock = threading.Lock()
+        self.refuse_renewals = False
+        self.tick = 0
+
+    # -- the test's own hands on it
+    def file(self, title: str, labels: list[str], body: str = "") -> int:
+        number = len(self.items) + 1
+        self.items[number] = {
+            "number": number,
+            "display": f"{self.name}#{number}",
+            "iri": f"urn:iki:ledger:{self.name}:item:{number}",
+            "title": title,
+            "body": body,
+            "status": "open",
+            "deferred": False,
+            "labels": sorted(labels),
+            "claim": None,
+            "comments": [],
+        }
+        return number
+
+    def force_claim(self, number: int, holder: str, expires: datetime | None = None) -> None:
+        """What a takeover, or a dispatcher's release and re-claim, leaves behind."""
+        with self.lock:
+            exp = expires or datetime.now(UTC) + timedelta(minutes=30)
+            self.items[number]["claim"] = {"holder": holder, "kind": "machine", "expires": iso(exp)}
+
+    def add_comment(self, number: int, text: str) -> None:
+        self.tick += 1
+        stamp = iso(datetime.now(UTC) + timedelta(microseconds=self.tick * 1000))
+        self.items[number]["comments"].append({"author": "fake", "time": stamp, "text": text})
+
+    # -- the factory gonk.Ikigai is replaced by
+    def __call__(self, target):
+        return self
+
+    def locate(self):
+        return "/fake/bin/ikigai", "ikigai 0.0.0"
+
+    def run(self, command: str, stdin: str | None = None) -> gonk.Answer:
+        with self.lock:
+            self.calls.append((command, stdin))
+            return self.answer(command, stdin or "")
+
+    def answer(self, command: str, stdin: str) -> gonk.Answer:
+        verb, resource, *words = command.split()
+        args = dict(w.split("=", 1) for w in words)
+        prefix = f"urn:gk:iki:ledger:{self.name}:"
+        if not resource.startswith(prefix):
+            return gonk.Answer(1, "", f"no endpoint resolved for {resource}")
+        name = resource[len(prefix) :]
+        now = datetime.now(UTC)
+
+        def has(item, labels, without):
+            want = [w for w in labels.split(",") if w]
+            avoid = [w for w in without.split(",") if w]
+            return all(w in item["labels"] for w in want) and not any(
+                w in item["labels"] for w in avoid
+            )
+
+        if verb == "source" and name == "next":
+            ready, excluded = [], []
+            for n in sorted(self.items):
+                item = self.items[n]
+                if item["status"] != "open" or not has(
+                    item, args.get("labels", ""), args.get("without", "")
+                ):
+                    continue
+                if item["claim"]:
+                    excluded.append(
+                        {"why": "claimed", "holder": item["claim"]["holder"], "item": item}
+                    )
+                else:
+                    ready.append(item)
+            limit = int(args.get("limit", 3))
+            ranking = [{"rank": i + 1, "item": it} for i, it in enumerate(ready[:limit])]
+            doc = {"schema": 1, "ledger": self.name, "ready": len(ready), "ranking": ranking}
+            return gonk.Answer(0, json.dumps({**doc, "excluded": excluded}), "")
+        if verb == "source" and name == "items":
+            rows = [
+                it
+                for _, it in sorted(self.items.items())
+                if it["status"] == "open" and has(it, args.get("labels", ""), "")
+            ]
+            return gonk.Answer(0, json.dumps({"schema": 1, "items": rows, "total": len(rows)}), "")
+        if verb == "source" and name.startswith("item:"):
+            item = self.items.get(int(name[5:]))
+            if item is None:
+                return gonk.Answer(1, "", f"no item {name[5:]}")
+            return gonk.Answer(0, json.dumps({"schema": 1, "item": item}), "")
+
+        item = self.items.get(int(args.get("item", 0)))
+        if item is None:
+            return gonk.Answer(1, "", "no such item")
+        display = item["display"]
+        if verb == "sink" and name == "claim":
+            holder = stdin.strip()
+            held = item["claim"]
+            if held and held["holder"] != holder:
+                if gonk.parse_instant(held["expires"]) <= now:
+                    return gonk.Answer(
+                        1, "", f"{display}: lease ran out; takeover=true from={held['holder']}"
+                    )
+                return gonk.Answer(
+                    1, "", f"conflict: {display} is already claimed by {held['holder']}"
+                )
+            if self.refuse_renewals and held:
+                return gonk.Answer(1, "", f"conflict: {display} is already claimed by someone")
+            lease = worker.seconds(args.get("lease", "30m"), "lease")
+            expires = iso(now + timedelta(seconds=lease))
+            item["claim"] = {"holder": holder, "kind": "machine", "expires": expires}
+            return gonk.Answer(0, f"claimed by {holder} until {expires}\n", "")
+        if verb == "delete" and name == "claim":
+            item["claim"] = None
+            if stdin.strip():
+                self.add_comment(item["number"], stdin.strip())
+            return gonk.Answer(0, f"released {display}\n", "")
+        if verb == "sink" and name == "comment":
+            self.add_comment(item["number"], stdin.strip())
+            return gonk.Answer(0, f"commented on {display}\n", "")
+        if verb == "sink" and name == "close":
+            self.closes.append(item["number"])
+            item["status"] = "closed"
+            return gonk.Answer(0, f"closed {display}\n", "")
+        return gonk.Answer(1, "", f"the fake ledger does not answer {command!r}")
+
+
+def git(*argv: str, cwd: Path | None = None) -> str:
+    return subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", *argv],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+
+
+def scratch_origin(tmp: Path) -> Path:
+    """A bare repository with one commit on main: the remote a worker clones."""
+    origin = tmp / "origin.git"
+    git("init", "-q", "--bare", "-b", "main", str(origin))
+    seed = tmp / "seed"
+    git("init", "-q", "-b", "main", str(seed))
+    (seed / "README.md").write_text("a library\n")
+    git("add", "README.md", cwd=seed)
+    git("commit", "-q", "-m", "first", cwd=seed)
+    git("push", "-q", str(origin), "main", cwd=seed)
+    return origin
+
+
+class Rig:
+    """A worker's checkout, its home, a scratch origin, the stub gh and the fake agent."""
+
+    def __init__(self, test, ledger_name: str = "acme", target: str | None = None) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="gonk-worker-")).resolve()
+        test.addCleanup(shutil.rmtree, self.tmp, True)
+        self.home = self.tmp / "home"
+        self.home.mkdir()
+        self.origin = scratch_origin(self.tmp)
+        self.checkout = scratch_repo(test)
+        self.record = self.tmp / "record"
+        self.gh_state = self.tmp / "gh.json"
+        self.gh_state.write_text(json.dumps({"slug": "acme/lib"}))
+        (self.checkout / ".gonk" / "gonk.toml").write_text(f'ledger = "{ledger_name}"\n')
+        sock = target or str(self.tmp / "g.sock")
+        (self.checkout / ".gonk" / "local.toml").write_text(
+            f'transport = "socket"\nsocket = "{sock}"\nholder = "w1"\n'
+        )
+        self.agent_flags: list[str] = []
+
+    @property
+    def gh_argv(self) -> list[str]:
+        return [sys.executable, str(FAKES / "gh.py"), "--state", str(self.gh_state)]
+
+    def configure(self, **overrides) -> None:
+        settings = {
+            "labels": '["worker:w1"]',
+            "work_root": '"~/work"',
+            "lease": '"30m"',
+            "renew_every": '"1s"',
+            "poll": '"1s"',
+            "budget": '"60s"',
+            "ci_wait": '"0s"',
+            "grace": '"2s"',
+        }
+        settings.update({k: v for k, v in overrides.items() if v is not None})
+        command = [
+            sys.executable,
+            str(FAKES / "fake_agent.py"),
+            "--record",
+            str(self.record),
+            "--gh",
+            shlex.join(self.gh_argv),
+            "--branch",
+            "{branch}",
+            "--item",
+            "{item}",
+            "--report-file",
+            "{report_file}",
+            *self.agent_flags,
+            "--",
+            "{prompt}",
+        ]
+        lines = [f"{k} = {v}" for k, v in settings.items()]
+        lines.append(f"gh = {json.dumps(self.gh_argv)}")
+        lines += ["", "[agent]", f"command = {json.dumps(command)}"]
+        lines += ["", "[repos.lib]", f'remote = "{self.origin}"', 'github = "acme/lib"']
+        lines += ["", "[repos.other]", f'remote = "{self.origin}"', 'github = "acme/other"']
+        (self.checkout / ".gonk" / "worker.toml").write_text("\n".join(lines) + "\n")
+
+    def worker(self, ikigai) -> worker.Worker:
+        cfg = gonk.load(self.checkout)
+        wc = worker.load_worker(cfg)
+        return worker.Worker(cfg, wc, ikigai, home=self.home)
+
+    def gh(self) -> dict:
+        return json.loads(self.gh_state.read_text())
+
+    def prompt(self, number: int) -> str:
+        return (self.record / f"prompt-{number}.md").read_text()
+
+    def branches(self) -> list[str]:
+        out = git("for-each-ref", "--format=%(refname:short)", "refs/heads", cwd=self.origin)
+        return out.split()

@@ -1,0 +1,43 @@
+# A worker's configuration: copy to .gonk/worker.toml in the worker's checkout and edit.
+# Git-ignored there, because it is this machine's. tools/worker.py reads it; how the machine
+# reaches gonk, the ledger, and the holder name are in .gonk/local.toml and .gonk/gonk.toml,
+# written by `python3 tools/gonk.py init` (see worker/README.md, "Running the worker loop").
+
+# Which items this worker takes: `next` narrowed to items carrying ALL of these labels.
+# Required, so a worker never takes work nobody meant for it. The dispatcher marks an item
+# ready for this machine by adding the label.
+labels = ["worker:my-worker"]
+# Items carrying ANY of these are never taken.
+# without = ["needs-person"]
+
+# Where worktrees go: <work_root>/<repo>/item-<N>. Must be under this account's own home.
+work_root = "~/work"
+
+lease = "30m"          # the claim's lease
+# renew_every = "10m"  # the heartbeat; default a third of the lease
+budget = "45m"         # wall-clock per item; the agent is stopped when it runs out
+ci_wait = "10m"        # after the agent exits, how long to wait for its PR's CI to finish
+poll = "60s"           # between polls of `next` when nothing is ready
+# keep = false         # true keeps every worktree after its hand-back
+# gh = "gh"            # the GitHub CLI, if it is not `gh` on PATH
+# stop_file = ".gonk/state/worker/stop"   # create it to stop the loop between items
+
+[agent]
+# One of the presets (each the agent's documented non-interactive form):
+#   claude          claude -p {prompt}
+#   codex           codex exec {prompt}
+#   hermes          hermes -z {prompt}
+#   hermes-profile  hermes --profile {profile} -z {prompt}     (set profile = "<name>")
+# or a command of your own, as a list; placeholders: {prompt} {prompt_file} {workdir}
+# {branch} {item} {repo} {report_file} {profile}. An unattended agent also needs its own
+# permission settings; the worker does not choose them for you.
+preset = "claude"
+# command = ["codex", "exec", "--full-auto", "{prompt}"]
+# profile = "coder"
+
+# Every repository this worker may work in, by the name its items' `repo:<name>` label uses.
+# An item must carry exactly one `repo:` label naming one of these.
+[repos.library]
+remote = "https://github.com/acme/library.git"
+# github = "acme/library"   # owner/name for gh; read from a github.com remote when omitted
+# base = "main"             # the branch each worktree starts from (origin/<base>)

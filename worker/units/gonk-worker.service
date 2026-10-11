@@ -1,0 +1,43 @@
+# The worker loop as a systemd USER unit of the `agent` account (Linux).
+#
+# Install, as agent (`sudo machinectl shell agent@` gives a session with a user bus; plain
+# `sudo -iu agent` may answer "Failed to connect to bus"):
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp ~/gonk-worker/worker/units/gonk-worker.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now gonk-worker
+#   journalctl --user -u gonk-worker -f          # its log; hubdiag reads the journal too
+#
+# It runs as long as the account LINGERS (worker-setup.sh turns linger on for agent), with or
+# without anyone logged in. `%h` is agent's home. The checkout it runs from is
+# ~/gonk-worker, a clone of this repository with `.gonk/local.toml` (from `tools/gonk.py init`)
+# and `.gonk/worker.toml` (from worker/worker.sample.toml); edit WorkingDirectory and
+# ExecStart if yours is elsewhere.
+#
+# ⚠ A unit reads no .profile or .bashrc, so PATH is set here: the agent's own Rust tools
+# (ikigai) first, then ~/.local/bin (where claude, codex and hermes install), then the system.
+# Add the directory of anything else the agent runs.
+#
+# Stopping it (`systemctl --user stop gonk-worker`) sends SIGTERM: the worker stops the agent,
+# hands the item back with a note and exits; KillMode=mixed then cleans up anything left after
+# TimeoutStopSec. To stop it between items instead, create the stop file the worker names in
+# its first log line (.gonk/state/worker/stop by default).
+
+[Unit]
+Description=gonk worker: take ledger items, run an agent on each, hand them back
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/gonk-worker
+Environment=PATH=%h/.cargo/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/env python3 %h/gonk-worker/tools/worker.py run
+Restart=on-failure
+RestartSec=60
+KillMode=mixed
+TimeoutStopSec=90
+
+[Install]
+WantedBy=default.target

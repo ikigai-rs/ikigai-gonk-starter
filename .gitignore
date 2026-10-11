@@ -5,3 +5,4 @@ __pycache__/
 *.pyc
 .venv/
 .ruff_cache/
+.gonk/worker.toml

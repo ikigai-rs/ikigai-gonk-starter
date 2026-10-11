@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The worker loop as a launchd DAEMON that runs as the `agent` account (macOS).
+
+  A daemon rather than a LaunchAgent, because agent never logs in to the GUI, and a
+  LaunchAgent loads only in a login session. The admin installs it:
+
+    sudo cp worker/units/dev.ikigai-rs.gonk-worker.plist /Library/LaunchDaemons/
+    sudo chown root:wheel /Library/LaunchDaemons/dev.ikigai-rs.gonk-worker.plist
+    sudo launchctl bootstrap system /Library/LaunchDaemons/dev.ikigai-rs.gonk-worker.plist
+
+  and stops it with `sudo launchctl bootout system/dev.ikigai-rs.gonk-worker` (SIGTERM: the
+  worker stops the agent, hands the item back with a note, and exits). To restart after an
+  edit, bootout, wait a couple of seconds, then bootstrap: never chain the two with &&, since
+  bootout exits non-zero in ordinary cases and the bootstrap would never run.
+
+  The checkout is /Users/agent/gonk-worker, a clone of this repository with .gonk/local.toml
+  (from tools/gonk.py init) and .gonk/worker.toml (from worker/worker.sample.toml).
+
+  A daemon reads no .profile, so PATH is set here: the agent's own Rust tools (ikigai) first,
+  then ~/.local/bin (claude, codex, hermes), then Homebrew, whose python3 is 3.11 or later
+  (the one in /usr/bin is older than these tools need), then the system.
+
+  The log is /tmp/ikigai-gonk-worker.log, where hubdiag reads the launchd services' logs;
+  each agent's own output is beside its worktree, under ~agent/work, in hubdiag's view.
+
+  Not yet run on a worker Mac: no worker Mac exists yet. Check it the first time with
+  `sudo launchctl print system/dev.ikigai-rs.gonk-worker` and the log.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.ikigai-rs.gonk-worker</string>
+  <key>UserName</key>
+  <string>agent</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/agent/gonk-worker</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/agent/.cargo/bin:/Users/agent/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>HOME</key>
+    <string>/Users/agent/</string>
+  </dict>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/env</string>
+    <string>python3</string>
+    <string>/Users/agent/gonk-worker/tools/worker.py</string>
+    <string>run</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>60</integer>
+  <key>ExitTimeOut</key>
+  <integer>90</integer>
+  <key>StandardOutPath</key>
+  <string>/tmp/ikigai-gonk-worker.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/ikigai-gonk-worker.log</string>
+</dict>
+</plist>

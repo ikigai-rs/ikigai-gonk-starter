@@ -1,10 +1,10 @@
 # worker: machines that do agentic work for a hub
 
 A **worker** is a machine a hub dispatches work to: it claims a ledger item, branches a fresh
-worktree, runs an agent, pushes a branch and opens a pull request (the worker loop, which is
-coming to this repository; see "Coming next" in the [top-level README](../README.md)). This
-directory turns setting one up into a mechanism instead of someone's memory: two scripts the
-worker's admin runs on the worker, and two interfaces the hub reads over ssh.
+worktree, runs an agent, pushes a branch and opens a pull request. That loop is
+[`tools/worker.py`](../tools/worker.py) (step 8 below). This directory turns setting one up
+into a mechanism instead of someone's memory: two scripts the worker's admin runs on the
+worker, two interfaces the hub reads over ssh, and the units that run the loop as a service.
 
 | on the worker, by its admin | on the hub |
 | --- | --- |
@@ -328,6 +328,121 @@ allows and nothing else does, kept up by a service on the hub:
 On the worker, `localhost:1060` then reaches the hub's gonk; a dead session frees the port in
 about 30 seconds (`ClientAliveInterval 10`, `CountMax 3`), so the service can re-bind it.
 
+### 8. The worker loop, as `agent`
+
+[`tools/worker.py`](../tools/worker.py) is the loop. It runs as `agent`, from a clone of this
+repository in agent's home (the units below expect `~/gonk-worker`), and works only under
+agent's home: it refuses a work root anywhere else, and refuses to run as root.
+
+    sudo -iu agent
+    git clone https://github.com/ikigai-rs/ikigai-gonk-starter ~/gonk-worker && cd ~/gonk-worker
+    ikigai cert generate --dir ~/gonk-cert
+    python3 tools/gonk.py init --ledger <ledger> --holder <worker name> \
+        --quic quic://<gonk host>:<port> --cert-dir ~/gonk-cert   # prints the lines to enroll it
+    cp worker/worker.sample.toml .gonk/worker.toml                # then edit it
+    python3 tools/worker.py plan                                  # what it would take, and why
+    python3 tools/worker.py run --once                            # one item, then exit
+
+`init` and the enrollment are the top-level README's "gonk on another machine"; the claims
+then carry this machine's identity and are stamped a machine's. ⚠ The ssh tunnel in step 7
+forwards **TCP**, which carries gonk's HTTP door. gonk's machine door is **QUIC, which is
+UDP**, and ssh does not forward UDP, so a worker that reaches gonk only through that tunnel
+cannot run the loop over QUIC: it needs gonk's QUIC port reachable directly (or gonk on the
+same machine, over its socket).
+
+**The configuration**, `.gonk/worker.toml` (git-ignored; [`worker.sample.toml`](worker.sample.toml)
+is the commented template):
+
+| key | default | what |
+| --- | --- | --- |
+| `labels` | (required) | `next` is narrowed to items carrying ALL of these, e.g. `["worker:<name>"]`; the dispatcher marks an item for this worker by labeling it |
+| `without` | none | items carrying ANY of these are never taken |
+| `[repos.<name>]` | (at least one) | `remote` (what `git clone` takes), `github` (`owner/name`, read from a github.com remote when omitted), `base` (default `main`) |
+| `[agent]` | (required) | `preset` (`claude`, `codex`, `hermes`, `hermes-profile` with `profile`) or `command`, a list with placeholders `{prompt}` `{prompt_file}` `{workdir}` `{branch}` `{item}` `{repo}` `{report_file}` `{profile}` |
+| `work_root` | `~/work` | worktrees go to `<work_root>/<repo>/item-<N>`; must be under agent's home |
+| `lease`, `renew_every` | `30m`, a third of the lease | the claim's lease, and the heartbeat that renews it |
+| `budget` | `45m` | wall-clock per item; the agent is stopped when it runs out |
+| `ci_wait`, `ci_poll` | `10m`, `20s` | how long to wait, after the agent exits, for its pull request's CI to finish |
+| `poll` | `60s` | between polls of `next` when nothing is ready |
+| `keep` | `false` | keep every worktree after its hand-back (`run --keep` for one run) |
+| `gh`, `stop_file` | `gh`, `.gonk/state/worker/stop` | the GitHub CLI; the file that stops the loop between items |
+
+The presets are each agent's documented non-interactive form (`claude -p`, `codex exec`,
+`hermes -z`). **None has run on a worker yet**: no agent is signed in on one. An unattended
+agent also needs its own permission settings (Claude Code's allowlist or permission mode,
+Codex's sandbox and approval policy); the worker does not choose them for you. Try an item
+of no consequence with `run --once` first.
+
+**What one item goes through:**
+
+1. **Pull.** `next` with the labels, then the first ranked item that is unclaimed, carries
+   exactly one `repo:<name>` label naming a configured repository, is not awaiting its
+   dispatcher (its newest comment is not an `Evidence:` hand-back; any later comment, such as
+   the dispatcher saying why the evidence did not hold, makes it ready again), was not
+   handed back by this worker before (`.gonk/state/worker/attempts.json`;
+   `worker.py forget <N>` allows it again), and whose repository has no active claim.
+2. **One agent per repository.** It refuses an item whose repository has an open item with a
+   live claim, held by anyone (an expired lease is a holder that stopped renewing, and does
+   not fence it), and runs one item per repository on this machine (a lock file per
+   repository). It re-reads after claiming and backs off if it then sees another claim.
+3. **Claim and heartbeat.** The claim takes the lease; every `renew_every` the worker reads
+   the item and renews. If the item is held by someone else, released, or closed, or the
+   renewal is refused, the claim is lost: it **stops the agent**, comments that on the item,
+   keeps the worktree, and **releases nothing** (a release would hand back someone else's
+   claim).
+4. **Workspace.** One clone per repository (`<work_root>/<repo>/.source`, fetched before each
+   item), and a fresh worktree on a new branch `worker/item-<N>-<time>` from `origin/<base>`.
+   A directory left by an earlier run is never reused: the next is `item-<N>.2`.
+5. **Agent.** The prompt is a fixed preamble (AGENTS.md's rules: reproduce first; work only
+   in this worktree; a pull request with green CI; never merge, never close; the evidence
+   file when it is not a defect), then the item's title and body. Its output goes to
+   `<work_root>/<repo>/item-<N>.log`, beside the worktree, inside hubdiag's view. When the
+   budget runs out the worker stops its whole process group (SIGTERM, then SIGKILL after
+   `grace`).
+6. **Hand-back.** The pull requests on the branch (`gh pr list --head`), and their CI:
+   `gh pr checks`, or, when the token may not read checks (a fine-grained token cannot), the
+   Actions runs for the head's **full** sha (`gh run list --commit`; a short sha answers `[]`
+   silently, so the worker never asks with one). The comment names which source answered.
+   Then `Evidence: <PR URL>` and the details go on the item as a comment, the claim is
+   released, and the worktree is removed (unless `keep`). With no pull request, the first
+   line of the agent's report file (a URL) is the evidence; with neither, the item goes back
+   with a note and no evidence. An overrun goes back the same way, naming the overrun.
+
+`run --once` exits 0 when it handed an item back with evidence, 3 when there was nothing to
+take, 4 when it took one and could not hand it back with evidence (lost, overrun, stopped,
+nothing to show), 1 on an error, 2 on a configuration error. The loop (`run`) polls until the
+stop file exists or it is signaled; on SIGTERM it stops the current agent and hands the item
+back with a note first.
+
+**As a service:** [`units/gonk-worker.service`](units/gonk-worker.service) (Linux, a systemd
+user unit of agent; agent lingers, so it runs with nobody logged in; its log is the journal)
+and [`units/dev.ikigai-rs.gonk-worker.plist`](units/dev.ikigai-rs.gonk-worker.plist) (macOS, a
+LaunchDaemon run as agent, since agent never logs in to the GUI; its log is
+`/tmp/ikigai-gonk-worker.log`). Each sets PATH itself, because a unit reads no `.profile`:
+`~/.cargo/bin` (ikigai) first, then `~/.local/bin` (the agents), then the system; on macOS
+Homebrew's, whose `python3` is new enough. Install steps are in each file's header. The
+plist has not run on a worker Mac yet; none exists.
+
+**What it will not do:** close an item, merge a pull request, work in a person's checkout,
+take an item without a `repo:` label, take one of a repository someone holds, or release a
+claim that is no longer its own.
+
+**What waits on the ledger** (items in ikigai's own ledger, on its gonk):
+
+- **One agent per repository is best-effort** until the ledger enforces it
+  ([#1140](http://localhost:1060/l/default/item/1140)): the worker reads the claims and then
+  claims, so two workers can both read "free" at once. The re-read after claiming narrows
+  that and does not close it.
+- **The brief is the item's body** behind the worker's fixed preamble, until briefs are
+  resources gonk serves ([#1141](http://localhost:1060/l/default/item/1141)).
+- **The grant is wider than the worker.** Today a machine identity is enrolled with
+  `<ledger>=write`, which can also close, relabel and file; the worker's code does none of
+  those, but nothing in gonk stops it, and the agent runs as the same account and could use
+  the same identity. A grant without close needs per-verb ledger capabilities
+  ([#1143](http://localhost:1060/l/default/item/1143)).
+- **Never merging is an instruction to the agent**, which holds a token that could merge.
+  What enforces it is the repository's branch protection (required checks and reviews).
+
 ## What this was learned on
 
 The Linux half was learned setting up the first worker by hand, a Pop!_OS 24.04 laptop with a
@@ -341,5 +456,8 @@ Windows (WSL2) is not covered yet.
 | --- | --- | --- |
 | [`worker-setup.sh`](worker-setup.sh) | on the worker, as root | setup (idempotent, `--dry-run`), and `--check` |
 | [`probe.sh`](probe.sh) | as the probed account | what this account can reach; read-only by construction |
+| [`../tools/worker.py`](../tools/worker.py) | on the worker, as agent | the worker loop (step 8) |
+| [`worker.sample.toml`](worker.sample.toml) | copied to `.gonk/worker.toml` | the loop's configuration, commented |
+| [`units/gonk-worker.service`](units/gonk-worker.service), [`units/dev.ikigai-rs.gonk-worker.plist`](units/dev.ikigai-rs.gonk-worker.plist) | as agent, by systemd or launchd | the loop as a service, with its PATH |
 | [`tests/probe-test.sh`](tests/probe-test.sh), [`tests/setup-test.sh`](tests/setup-test.sh) | anywhere, no root | the hermetic tests, run by `scripts/gates.sh` |
 | [`tests/ci-linux.sh`](tests/ci-linux.sh), [`tests/ci-macos.sh`](tests/ci-macos.sh) | on throwaway CI runners only | the boundary, end to end |

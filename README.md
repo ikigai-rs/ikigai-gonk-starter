@@ -39,10 +39,11 @@ artifacts/<name>/        one directory per deployable thing, any language each
   gonk.toml              the ledger this repository's work lives in
   queries/  scripts/     saved SPARQL and workflow scripts (reserved; see below)
 tools/gonk.py            init, seed, file, next, claim, release, report, close, status
+tools/worker.py          the worker loop: take an item, run an agent on it, hand it back
 tools/new.py             generate a repository with the library-lending sample in it
 templates/               what new.py generates from: the sample, and one directory per language
 hooks/claude/            an OPTIONAL Claude Code hook that refuses edits without a claim
-worker/                  set up a machine that does agentic work for a hub, and check it
+worker/                  set up a machine that does agentic work for a hub, check it, run the loop
 ```
 
 Everything is empty until you fill it, or until `tools/new.py` fills a copy for you. `tools/gonk.py` is standard-library Python (3.11 or
@@ -216,10 +217,33 @@ sudo ./worker/worker-setup.sh --check               # the boundary self-test, an
 ```
 
 [`worker/README.md`](worker/README.md) is the runbook, in order: the OS, the accounts, the
-GitHub token, never sleeping, a local model, ikigai and gonk, and reaching the worker from the
-hub, plus the two things a hub reads over ssh (the probe's output and the facts file). CI runs
-the whole setup for real on throwaway Ubuntu and macOS runners, then re-creates each mistake it
-exists to catch and proves the check red.
+GitHub token, never sleeping, a local model, ikigai and gonk, reaching the worker from the
+hub, and the worker loop, plus the two things a hub reads over ssh (the probe's output and the
+facts file). CI runs the whole setup for real on throwaway Ubuntu and macOS runners, then
+re-creates each mistake it exists to catch and proves the check red.
+
+### The worker loop
+
+`tools/worker.py` is what runs on a worker, as its own account. It pulls `next` narrowed to
+the labels the dispatcher marks work with (`worker:<name>`), takes the first item it may,
+claims it on a lease and renews the lease while it works, branches a fresh worktree from
+`origin/main` under its own home, runs the configured agent (Claude Code, Codex, Hermes, or a
+command of your own) with the item as its brief behind a fixed preamble of this file's rules,
+and hands the item back: the pull request it opened and that pull request's CI, as an
+`Evidence:` comment, then the claim released. **It never closes and never merges**: the
+dispatcher checks the evidence and does both.
+
+```sh
+cp worker/worker.sample.toml .gonk/worker.toml       # labels, repositories, agent, budget
+python3 tools/worker.py plan                         # what it would take, and why not the rest
+python3 tools/worker.py run --once                   # one item, then exit
+python3 tools/worker.py run                          # the loop; worker/units/ runs it as a service
+```
+
+One agent per repository: it takes no item whose repository already has a live claim held by
+anyone, and runs one item per repository on its machine. Until gonk's ledger enforces that
+rule itself, it is best-effort (two workers can read "free" at the same moment); the worker
+README says what else waits on the ledger.
 
 ## Coming next
 
@@ -227,11 +251,12 @@ exists to catch and proves the check red.
   ([#1135](http://localhost:1060/l/default/item/1135))
 - **A second spec format**, beside OpenSpec, lifted to the same graph and ledger items by a
   mapping file rather than code. ([#1136](http://localhost:1060/l/default/item/1136))
-- **Remote dispatch: a gonk worker.** A loop on another machine that pulls `next`, claims an
-  item with a lease, runs the configured agent, renews the lease while it works, reports with
-  evidence and hands the item back, all over that machine's QUIC identity. Closing stays with
-  the dispatcher. ([#1139](http://localhost:1060/l/default/item/1139), with the worker's
-  narrower grant in [#1143](http://localhost:1060/l/default/item/1143))
+- **The worker's gaps, in the ledger.** One agent per repository enforced by the ledger rather
+  than read before claiming ([#1140](http://localhost:1060/l/default/item/1140)); briefs as
+  resources gonk serves, beyond the item's body
+  ([#1141](http://localhost:1060/l/default/item/1141)); and a worker grant that can claim,
+  renew, comment and release but not close
+  ([#1143](http://localhost:1060/l/default/item/1143)).
 - **The gonk Book's chapters** on a project of your own, walking the generated sample from
   a spec change to a closed item. ([#1137](http://localhost:1060/l/default/item/1137))
 
@@ -245,8 +270,9 @@ just gates          # or scripts/gates.sh: ruff check, ruff format --check, the 
                     # the sample, generated for every target, running its own tests
 ```
 
-The tests are standard-library `unittest`, and include the worker scripts' hermetic tests
-and the **public-tree guard** (`tests/test_tree_guard.py`): this repository is public, so no
+The tests are standard-library `unittest`, and include the worker scripts' hermetic tests,
+the worker loop's (an in-memory ledger, a scratch git origin, a stub `gh` and a fake agent, so
+no real agent and no network), and the **public-tree guard** (`tests/test_tree_guard.py`): this repository is public, so no
 tracked file may hold a path under a person's home, an mDNS `.local` host name, a non-loopback
 IPv4 address, or the name of one of the project's own machines. The integration tests start
 a scratch gonk of their own (a temporary directory, an ephemeral port, its own socket) when
