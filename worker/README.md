@@ -122,6 +122,7 @@ says `holds no gh token` or `no gh installed`).
 | `result: PASS` or `result: FAIL` | its verdict, followed by each failing line indented two spaces (`  FAIL …`) |
 | `[agent]`, `[<admin>]` | the account the following lines are about |
 | `INFO gh-token: …` | whether that account holds a gh token, and of what kind, **by prefix only**: `github_pat_` fine-grained, `ghp_` classic, `gho_` gh's OAuth login (the token is never printed or stored) |
+| `INFO gh-version: …` or `WARN gh-version: …` | the system's gh and its version; a WARN below 2.50.0, the first gh with `gh pr checks --json`, with the upgrade line (GitHub's apt repository on Debian and Ubuntu, whose own 24.04 package is 2.45.0). The worker still works with an older gh: it reads CI from the Actions runs instead, the less exact path |
 | `INFO tool <name>: <path>  (<version>)` or `… absent` | the tools in that account's home and on the system |
 | `INFO ai-agent <claude\|codex\|hermes>: <path>  (<version>) · login: …` | the coding agents, and whether a login is held, **by the presence of its credential file only** (`~/.claude/.credentials.json`, `~/.codex/auth.json`, `~/.hermes/auth.json` or `.env`; never opened) |
 | `INFO ai-agent hermes-profile <name>[ (active)]: provider …, model … · login: …` | each hermes profile, with only those two keys of its `config.yaml` |

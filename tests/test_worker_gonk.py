@@ -111,6 +111,41 @@ class TheWorkerAgainstARealGonk(unittest.TestCase):
         self.assertEqual(item["claim"]["holder"], "someone-else")
         self.assertTrue(any("lost its claim" in c["text"] for c in item["comments"]))
 
+    def handed_back_without_evidence(self, n: int, *says: str) -> None:
+        """The item is released, still open, and carries exactly one comment: the note."""
+        item = self.item(n)
+        self.assertIsNone(item["claim"])
+        self.assertEqual(item["status"], "open")
+        texts = [c["text"] for c in item["comments"]]
+        self.assertEqual(len(texts), 1, texts)
+        for words in says:
+            self.assertIn(words, texts[0])
+
+    def test_a_failed_agent_leaves_one_comment_naming_the_failure(self):
+        # Ledger item 1229: a release note piped to a DELETE never reached the ledger.
+        n = self.file("Gives up", "worker:w1,repo:lib")
+        self.rig.agent_flags = ["--no-pr", "--exit", "1"]
+        self.rig.configure()
+        outcome = self.rig.worker(self.ikigai).run_once()
+        self.assertEqual(outcome.code, worker.NOT_HANDED_BACK, outcome.summary)
+        self.handed_back_without_evidence(n, "without evidence", "exited 1")
+
+    def test_an_overrun_leaves_one_comment_naming_the_budget(self):
+        n = self.file("Too big", "worker:w1,repo:lib")
+        self.rig.agent_flags = ["--sleep", "60"]
+        self.rig.configure(budget='"2s"')
+        outcome = self.rig.worker(self.ikigai).run_once()
+        self.assertEqual(outcome.code, worker.NOT_HANDED_BACK, outcome.summary)
+        self.handed_back_without_evidence(n, "its budget of 0m02s ran out")
+
+    def test_a_failed_step_leaves_one_comment_naming_it(self):
+        n = self.file("No origin", "worker:w1,repo:lib")
+        self.rig.configure()
+        self.rig.origin.rename(self.rig.origin.with_name("moved.git"))
+        outcome = self.rig.worker(self.ikigai).run_once()
+        self.assertEqual(outcome.code, worker.ERROR, outcome.summary)
+        self.handed_back_without_evidence(n, "failed on", "git clone")
+
 
 if __name__ == "__main__":
     unittest.main()

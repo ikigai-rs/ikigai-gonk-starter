@@ -114,6 +114,30 @@ for case in "github_pat_11ABCDEFG0123456789:FINE-GRAINED" "ghp_abcdefghijklmnop:
     if [ -n "$tok" ]; then hasnt "the token itself is not printed" "${tok#*_}" "$out"; fi
 done
 
+echo "── gh: its version, and a WARN below 2.50.0, the first with \`gh pr checks --json\`"
+for case in "gh version 2.45.0 (2024-03-04 Ubuntu 2.45.0-1ubuntu0.3):WARN gh-version" \
+            "gh version 2.49.2 (2024-05-13):WARN gh-version" \
+            "gh version 2.50.0 (2024-05-29):INFO gh-version" \
+            "gh version 2.81.0 (2025-10-01):INFO gh-version" \
+            "gh version 3.0.0 (2027-01-01):INFO gh-version" \
+            "gh is not answering:WARN gh-version"; do
+    gv="${case%:*}" want="${case##*:}"
+    printf '#!/bin/sh\n[ "$1" = --version ] && echo "%s"\n[ "$1 $2" = "auth token" ] && printf ghp_SECRETTOKEN\nexit 0\n' "$gv" > "$sb/bin/gh"; chmod +x "$sb/bin/gh"
+    out="$(bash "$probe" --sections gh --gh-bin "$sb/bin/gh" 2>&1)"; st=$?
+    has "$gv: $want" "$want" "$out"
+    expect_exit "$gv: a version is never a failure" 0 "$st"
+    hasnt "$gv: the token is not printed" "SECRETTOKEN" "$out"
+done
+printf '#!/bin/sh\n[ "$1" = --version ] && echo "gh version 2.45.0 (2024-03-04)"\nexit 0\n' > "$sb/bin/gh"
+out="$(bash "$probe" --sections gh --gh-bin "$sb/bin/gh" 2>&1)"
+has "an old gh names the version that added it" "older than 2.50.0, which added \`gh pr checks --json\`" "$out"
+if [ "$(uname -s)" = Darwin ]; then
+    has "and the upgrade (Homebrew on macOS)" "brew upgrade gh" "$out"
+elif command -v dpkg >/dev/null 2>&1; then
+    has "and the upgrade (GitHub's apt repository)" "https://cli.github.com/packages stable main" "$out"
+    has "with the architecture left for the reader's shell" 'arch=$(dpkg --print-architecture)' "$out"
+fi
+
 echo "── agents: claude, codex, hermes by path, version and credential-file PRESENCE"
 ah="$sb/agenthome"
 mkdir -p "$ah/.local/bin" "$ah/.claude" "$ah/.codex" "$ah/.hermes/profiles/work"

@@ -447,6 +447,28 @@ if want gh; then
     if [ -z "$ghbin" ]; then
         info gh-token "$me: no gh installed"
     else
+        # The worker reads a pull request's CI with `gh pr checks --json`, which gh 2.50.0 added
+        # (its release notes: "add json output for `gh pr checks`", cli/cli#9079). An older gh
+        # refuses the flag and the worker falls back to the Actions runs for the head's full sha,
+        # the less exact path. Ubuntu 24.04's own apt package is 2.45.0; GitHub's apt repository
+        # is current.
+        gv="$("$ghbin" --version 2>/dev/null | head -1)"
+        ver="$(printf '%s' "$gv" | sed -n 's/^gh version \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p')"
+        if [ -z "$ver" ]; then
+            warn gh-version "$ghbin: version not recognized (${gv:-no answer to --version}); \`gh pr checks --json\` needs gh 2.50.0 or later"
+        elif [ "${ver%%.*}" -gt 2 ] || { [ "${ver%%.*}" -eq 2 ] && [ "$(printf '%s' "$ver" | cut -d. -f2)" -ge 50 ]; }; then
+            info gh-version "$ghbin is gh $ver (\`gh pr checks --json\` needs 2.50.0 or later)"
+        else
+            if [ "$os" = Darwin ]; then
+                how="brew upgrade gh"
+            elif command -v dpkg >/dev/null 2>&1; then
+                # GitHub's apt repository (cli/cli docs/install_linux.md), printed, never run.
+                how='sudo mkdir -p -m 755 /etc/apt/keyrings && wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg >/dev/null && sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null && sudo apt update && sudo apt install gh'
+            else
+                how="see https://github.com/cli/cli#installation"
+            fi
+            warn gh-version "$ghbin is gh $ver, older than 2.50.0, which added \`gh pr checks --json\`: the worker falls back to the Actions runs for the head's full sha. Upgrade: $how"
+        fi
         t="$("$ghbin" auth token 2>/dev/null)"
         case "$t" in
             github_pat_*) info gh-token "$me holds a FINE-GRAINED token (prefix github_pat_)" ;;

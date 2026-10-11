@@ -234,6 +234,30 @@ class AgainstARealGonk(unittest.TestCase):
         code, out = tool(one, "next")
         self.assertIn("nothing is ready", out)
 
+    def test_a_release_note_reaches_the_item(self):
+        # Ledger item 1229: a note piped to the claim's DELETE never reached the ledger.
+        g = ScratchGonk(quic=False)
+        self.addCleanup(g.stop)
+        g.start()
+        one = scratch_repo(self)
+        code, out = tool(
+            one, "init", "--ledger", "acme", "--socket", str(g.socket), "--holder", "one"
+        )
+        self.assertEqual(code, 0, out)
+        code, out = tool(one, "file", "Will not finish")
+        self.assertEqual(code, 0, out)
+        code, out = tool(one, "claim", "1")
+        self.assertEqual(code, 0, out)
+        code, out = tool(one, "release", "--note", "blocked on the schema change")
+        self.assertEqual(code, 0, out)
+        self.assertIn("released", out)
+        self.assertFalse((one / ".gonk" / "state" / "claim.toml").exists())
+        cfg = gonk.load(one)
+        item, err = gonk.item_json(cfg, gonk.Ikigai(gonk.Target(socket=str(g.socket))), 1)
+        self.assertIsNone(err)
+        self.assertIsNone(item["claim"])
+        self.assertEqual([c["text"] for c in item["comments"]], ["blocked on the schema change"])
+
     def test_a_machine_identity_over_quic(self):
         g = ScratchGonk(quic=True)
         self.addCleanup(g.stop)

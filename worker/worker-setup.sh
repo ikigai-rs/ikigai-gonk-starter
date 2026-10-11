@@ -294,7 +294,7 @@ if [ "$check" = 1 ]; then
         for u in "$agent" "$admin"; do
             user_exists "$u" || continue
             echo "[$u]"
-            probe_as "$u" --sections gh,tools,agents --home "$(home_of "$u")" < /dev/null 2>/dev/null | grep '^INFO'
+            probe_as "$u" --sections gh,tools,agents --home "$(home_of "$u")" < /dev/null 2>/dev/null | grep -E '^(INFO|WARN)'
             # The newest program in this account's own bin directories, now. hubdiag cannot see
             # them (the home is closed to it), so this is how worker-check can say what an
             # install made after this check would NOT be reflected in.
@@ -302,7 +302,7 @@ if [ "$check" = 1 ]; then
             [ -n "$newest" ] && echo "newest-bin: $newest"
         done
     } > "$tmp/facts"
-    cat "$tmp/facts" | grep -E '^(checked|result|\[|INFO gh-token)'
+    cat "$tmp/facts" | grep -E '^(checked|result|\[|INFO gh-token|WARN gh-version)'
     if [ -d "$view_root" ]; then
         install -m 0640 -o root -g "$(id -gn "$hubdiag")" "$tmp/facts" "$facts" && echo "   wrote $facts"
     else

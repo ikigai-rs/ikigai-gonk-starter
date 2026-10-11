@@ -331,8 +331,14 @@ class Ledger:
         command = f"sink {self.cfg.resource('claim')} item={number} lease={lease}"
         return self.ikigai.run(command, stdin=holder)
 
-    def release(self, number: int, note: str = "") -> gonk.Answer:
-        return self.ikigai.run(f"delete {self.cfg.resource('claim')} item={number}", stdin=note)
+    def release(self, number: int, holder: str) -> gonk.Answer:
+        """Release the claim only if `holder` still holds it: `from=` makes the DELETE a
+        compare-and-set, refused with nothing released when the claim changed hands. It
+        carries no note. The cli gives a batch's stdin only to a content-less SINK, never to a
+        DELETE, so a note piped here never reached the item (ledger item 1229): post a note
+        with `comment` first."""
+        command = f"delete {self.cfg.resource('claim')} item={number} from={holder}"
+        return self.ikigai.run(command, stdin="")
 
     def comment(self, number: int, text: str) -> gonk.Answer:
         return self.ikigai.run(f"sink {self.cfg.resource('comment')} item={number}", stdin=text)
@@ -846,7 +852,7 @@ class Worker:
         log(f"claimed {display} for `{holder}` on a {self.wc.lease} lease (repo:{repo.name})")
         other = self.repo_holder(repo.name, gonk.iso_now(), exclude=number)
         if other:
-            self.ledger.release(number, "")
+            self.ledger.release(number, holder)
             return Outcome(NOTHING, f"backed off {display}: repo:{repo.name} is busy: {other}")
         beat = Heartbeat(self.ledger, number, holder, self.wc.lease, self.wc.renew_every)
         beat.start()
@@ -1040,15 +1046,19 @@ class Worker:
         return url if gonk.EVIDENCE_SHAPE.match(url) else None
 
     def release_if_ours(self, number: int, note: str) -> bool:
-        """Release only a claim that is still this worker's: a claim's DELETE releases
-        whoever holds it. A note that cannot ride the release is posted as a comment."""
+        """Post the note, then release only a claim that is still this worker's. The note is
+        always a comment of its own, posted first, whoever holds the claim: one handed to the
+        release never reached the item (ledger item 1229). The release is a compare-and-set on
+        this worker's holder, since a claim's DELETE without `from=` releases whoever holds it."""
+        if note:
+            posted = self.ledger.comment(number, note)
+            if not posted.ok:
+                log(f"could not post the hand-back note on item {number}: {posted.text()}")
         item, _ = self.ledger.item(number)
         held = ((item or {}).get("claim") or {}).get("holder")
         if held != self.cfg.holder:
-            if note:
-                self.ledger.comment(number, note)
             return False
-        return self.ledger.release(number, note).ok
+        return self.ledger.release(number, self.cfg.holder).ok
 
     # ----------------------------------------------------------------- the loop
 

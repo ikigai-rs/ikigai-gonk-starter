@@ -246,9 +246,7 @@ class TheLoop(unittest.TestCase):
         item = self.ledger.items[n]
         self.assertIsNone(item["claim"])
         self.assertEqual(evidence_comments(item), [])
-        [note] = [c["text"] for c in item["comments"]]
-        self.assertIn("its budget of 0m02s ran out", note)
-        self.assertIn("worktree is kept", note)
+        self.released_with_one_note(n, "its budget of 0m02s ran out", "worktree is kept")
 
     def test_one_agent_per_repository(self):
         busy = self.ledger.file("Someone is on lib", ["repo:lib"])
@@ -316,11 +314,7 @@ class TheLoop(unittest.TestCase):
         n = self.ledger.file("Gives up", ["worker:w1", "repo:lib"])
         outcome = self.run_once()
         self.assertEqual(outcome.code, worker.NOT_HANDED_BACK, outcome.summary)
-        item = self.ledger.items[n]
-        self.assertIsNone(item["claim"])
-        [note] = [c["text"] for c in item["comments"]]
-        self.assertIn("without evidence", note)
-        self.assertIn("exited 1", note)
+        self.released_with_one_note(n, "without evidence", "exited 1")
 
         # Not taken again by this worker, until forgotten.
         self.assertEqual(self.rig.worker(self.ledger).run_once().code, worker.NOTHING)
@@ -332,6 +326,75 @@ class TheLoop(unittest.TestCase):
         self.assertEqual(code, 0)
         take, _, _ = self.rig.worker(self.ledger).candidates()
         self.assertEqual([i["number"] for i, _ in take], [n])
+
+    # Every way an item goes back WITHOUT evidence leaves exactly one comment saying why, and
+    # a release that carries no content: the cli gives a batch's stdin only to a content-less
+    # SINK, never to a DELETE, so a note handed to the release never reached the item (ledger
+    # item 1229). The release is a compare-and-set on this worker's holder (`from=`).
+    def released_with_one_note(self, n: int, *says: str) -> str:
+        item = self.ledger.items[n]
+        self.assertIsNone(item["claim"])
+        self.assertEqual(item["status"], "open")
+        texts = [c["text"] for c in item["comments"]]
+        self.assertEqual(len(texts), 1, texts)
+        for words in says:
+            self.assertIn(words, texts[0])
+        deletes = [(c, stdin) for c, stdin in self.ledger.calls if c.startswith("delete")]
+        self.assertEqual(deletes, [(f"delete urn:gk:iki:ledger:acme:claim item={n} from=w1", "")])
+        return texts[0]
+
+    def test_a_stopped_worker_hands_the_item_back_with_a_note(self):
+        self.rig.agent_flags = ["--sleep", "60"]
+        n = self.ledger.file("Interrupted", ["worker:w1", "repo:lib"])
+        self.rig.configure()
+        w = self.rig.worker(self.ledger)
+
+        def stop():
+            while not (self.rig.record / f"started-{n}").exists():
+                time.sleep(0.05)
+            w.shutdown.set()
+
+        thread = threading.Thread(target=stop)
+        thread.start()
+        outcome = w.run_once()
+        thread.join()
+        self.assertEqual(outcome.code, worker.NOT_HANDED_BACK, outcome.summary)
+        self.released_with_one_note(n, "the worker was stopped", "without evidence")
+
+    def test_a_failed_step_hands_the_item_back_with_a_note(self):
+        n = self.ledger.file("No origin", ["worker:w1", "repo:lib"])
+        self.rig.configure()
+        self.rig.origin.rename(self.rig.origin.with_name("moved.git"))
+        outcome = self.rig.worker(self.ledger).run_once()
+        self.assertEqual(outcome.code, worker.ERROR, outcome.summary)
+        self.released_with_one_note(n, "failed on acme#", "and hands it back", "git clone")
+
+    def test_evidence_the_ledger_refuses_is_named_in_the_note(self):
+        n = self.ledger.file("Refused evidence", ["worker:w1", "repo:lib"])
+        self.ledger.refuse_comments = 1  # the evidence; the note after it lands
+        outcome = self.run_once()
+        self.assertEqual(outcome.code, worker.NOT_HANDED_BACK, outcome.summary)
+        note = self.released_with_one_note(n, "could not post its evidence", "the store refused")
+        self.assertIn("https://github.com/acme/lib/pull/1", note)
+
+    def test_a_note_on_a_claim_no_longer_ours_is_posted_and_nothing_released(self):
+        n = self.ledger.file("Changed hands", ["worker:w1", "repo:lib"])
+        self.rig.configure()
+        w = self.rig.worker(self.ledger)
+        self.ledger.force_claim(n, "someone-else")
+        self.assertFalse(w.release_if_ours(n, "gonk worker `w1` gives up"))
+        item = self.ledger.items[n]
+        self.assertEqual(item["claim"]["holder"], "someone-else")
+        self.assertEqual([c["text"] for c in item["comments"]], ["gonk worker `w1` gives up"])
+        self.assertFalse(any(c.startswith("delete") for c, _ in self.ledger.calls))
+
+    def test_the_release_is_a_compare_and_set_on_the_holder(self):
+        n = self.ledger.file("Raced", ["worker:w1", "repo:lib"])
+        self.rig.configure()
+        w = self.rig.worker(self.ledger)
+        self.ledger.force_claim(n, "someone-else")
+        self.assertFalse(w.ledger.release(n, "w1").ok)  # the race the pre-read cannot close
+        self.assertEqual(self.ledger.items[n]["claim"]["holder"], "someone-else")
 
     def test_not_a_defect_is_reported_with_the_agents_evidence(self):
         url = "https://github.com/acme/lib/actions/runs/7"

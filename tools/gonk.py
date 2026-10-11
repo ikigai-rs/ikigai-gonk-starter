@@ -1207,8 +1207,15 @@ def cmd_release(args, cfg: Config, make_ikigai) -> int:
     number = args.item if args.item is not None else (held or {}).get("item")
     if number is None:
         raise ConfigError("this working tree holds no claim; name the item to release")
-    command = f"delete {cfg.resource('claim')} item={number}"
-    answer = make_ikigai(cfg.target).run(command, stdin=args.note or "")
+    ikigai = make_ikigai(cfg.target)
+    if args.note and args.note.strip():
+        # The note is a comment of its own, posted first, as `report` posts its evidence: the
+        # cli gives a batch's stdin only to a content-less SINK, never to a DELETE, so a note
+        # piped to the release never reached the item (ledger item 1229).
+        posted = ikigai.run(f"sink {cfg.resource('comment')} item={number}", stdin=args.note)
+        if not posted.ok:
+            return show(posted)
+    answer = ikigai.run(f"delete {cfg.resource('claim')} item={number}", stdin="")
     if answer.ok and held and held.get("item") == number:
         cfg.claim_file.unlink(missing_ok=True)
     return show(answer)

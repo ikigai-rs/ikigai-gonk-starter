@@ -42,6 +42,7 @@ class FakeLedger:
         self.closes: list[int] = []
         self.lock = threading.Lock()
         self.refuse_renewals = False
+        self.refuse_comments = 0  # refuse this many comments, then answer them again
         self.tick = 0
 
     # -- the test's own hands on it
@@ -153,11 +154,25 @@ class FakeLedger:
             item["claim"] = {"holder": holder, "kind": "machine", "expires": expires}
             return gonk.Answer(0, f"claimed by {holder} until {expires}\n", "")
         if verb == "delete" and name == "claim":
+            # No note, whatever is piped: the cli gives a batch's stdin only to a content-less
+            # SINK, never to a DELETE, so gonk's ledger never sees one (ledger item 1229). An
+            # earlier fake recorded it as a comment, and hid exactly that defect.
+            held = item["claim"]
+            if "from" in args:
+                if held is None:
+                    return gonk.Answer(1, "", f"conflict: {display} is not claimed")
+                if held["holder"] != args["from"]:
+                    return gonk.Answer(
+                        1,
+                        "",
+                        f"conflict: {display} is held by {held['holder']}, not {args['from']}",
+                    )
             item["claim"] = None
-            if stdin.strip():
-                self.add_comment(item["number"], stdin.strip())
-            return gonk.Answer(0, f"released {display}\n", "")
+            return gonk.Answer(0, f"{display} released\n", "")
         if verb == "sink" and name == "comment":
+            if self.refuse_comments:
+                self.refuse_comments -= 1
+                return gonk.Answer(1, "", f"error: the store refused the comment on {display}")
             self.add_comment(item["number"], stdin.strip())
             return gonk.Answer(0, f"commented on {display}\n", "")
         if verb == "sink" and name == "close":

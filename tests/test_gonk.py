@@ -337,6 +337,37 @@ class Claims(unittest.TestCase):
         )
         self.assertFalse((self.repo / ".gonk" / "state" / "claim.toml").exists())
 
+    def test_release_comments_the_note_then_releases_with_no_content(self):
+        # Ledger item 1229: the cli never gives a batch's stdin to a DELETE, so a note piped
+        # to the release was dropped. It is a comment of its own, posted first.
+        fake = FakeIkigai(
+            [(":claim", ok("acme#12 claimed by agent-1\n")), (":comment", ok("commented\n"))]
+        )
+        run(self.repo, ["claim", "12"], fake)
+        code, _, _ = run(self.repo, ["release", "--note", "blocked on the schema"], fake)
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            fake.calls[1:],
+            [
+                ("sink urn:gk:iki:ledger:acme:comment item=12", "blocked on the schema"),
+                ("delete urn:gk:iki:ledger:acme:claim item=12", ""),
+            ],
+        )
+        self.assertFalse((self.repo / ".gonk" / "state" / "claim.toml").exists())
+
+    def test_a_release_whose_note_is_refused_releases_nothing(self):
+        fake = FakeIkigai(
+            [
+                (":claim item=12 lease", ok("acme#12 claimed by agent-1\n")),
+                (":comment", gonk.Answer(1, "", "error: denied")),
+            ]
+        )
+        run(self.repo, ["claim", "12"], fake)
+        code, _, _ = run(self.repo, ["release", "--note", "why"], fake)
+        self.assertEqual(code, 1)
+        self.assertFalse(any(c.startswith("delete") for c, _ in fake.calls))
+        self.assertTrue((self.repo / ".gonk" / "state" / "claim.toml").exists())
+
     def test_close_needs_evidence_and_releases_this_trees_claim(self):
         code, _, err = run(self.repo, ["close", "12", "--evidence", "merged"])
         self.assertEqual(code, 2)
