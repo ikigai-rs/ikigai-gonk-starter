@@ -87,11 +87,11 @@ def spoken(total: float) -> str:
 # --------------------------------------------------------------------------- config
 
 # The agents a worker can run, as command templates. Each is the documented non-interactive
-# form of that agent's command line; none has run on a worker yet (none is signed in on one),
-# so check yours with `run --once` on an item of no consequence first. The placeholders are
-# listed in TOKENS. An unattended agent also needs its own permission settings (Claude Code's
-# allowlist or permission mode, Codex's sandbox and approval policy); the worker does not
-# choose them for you.
+# form of that agent's command line. The hermes preset has run an item end to end on a Linux
+# worker; the others are untested, so try one with `run --once` on an item of no consequence
+# first. The placeholders are listed in TOKENS. An unattended agent also needs its own
+# permission settings (Claude Code's allowlist or permission mode, Codex's sandbox and
+# approval policy); the worker does not choose them for you.
 PRESETS: dict[str, list[str]] = {
     "claude": ["claude", "-p", "{prompt}"],
     "codex": ["codex", "exec", "{prompt}"],
