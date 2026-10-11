@@ -249,9 +249,12 @@ class AgainstARealGonk(unittest.TestCase):
         code, out = tool(repo, "seed")
         self.assertEqual(code, 0, out)
         self.assertIn("seed: 8 filed, 0 already filed", out)
+        self.assertIn("6 order link(s) added", out)  # 5 in add-holds, 1 in cap-late-fees
+        self.assertIn("ordered     library#1 blocks library#2 (add-holds 1.1 before 1.2)", out)
         code, out = tool(repo, "seed")
         self.assertEqual(code, 0, out)
         self.assertIn("seed: 0 filed, 8 already filed", out)
+        self.assertIn("0 order link(s) added", out)
 
         cfg = gonk.load(repo)
         item, err = gonk.item_json(cfg, gonk.Ikigai(cfg.target), 1)
@@ -263,9 +266,17 @@ class AgainstARealGonk(unittest.TestCase):
             item["about"],
         )
 
+        # next, in task order: the first open task of each change is ready, and each later
+        # task waits on the one before it. Without the links all 8 were ready, newest first,
+        # so cap-late-fees 1.2 ranked above 1.1.
         code, out = tool(repo, "next")
         self.assertEqual(code, 0, out)
-        self.assertIn("ready: 8", out)
+        self.assertIn("ready: 2   excluded: 6", out)
+        ranked = re.findall(r"^ ?\d+\. (library#\d+) ", out, re.MULTILINE)
+        self.assertEqual(sorted(ranked), ["library#1", "library#7"], out)
+        for later, earlier in [(2, 1), (3, 2), (4, 3), (5, 4), (6, 5), (8, 7)]:
+            self.assertIn(f"not library#{later}: blocked by library#{earlier}", out)
+        self.assertNotIn("[uncacheable]", out)  # the CLI's cache trailer is not gonk's answer
         code, out = tool(repo, "claim", "7")
         self.assertEqual(code, 0, out)
         code, out = tool(repo, "status")
@@ -285,6 +296,17 @@ class AgainstARealGonk(unittest.TestCase):
         self.assertTrue(any(r.endswith('"me"') for r in rows), rows)  # item 7's holder
         rows = graph_select(cfg.target, queries / "open-work-by-change.rq", "library")
         self.assertEqual([r.split("\t")[0] for r in rows], ['"add-holds"', '"cap-late-fees"'])
+
+        # Closing a change's first task makes its second ready, and only its second (item 7,
+        # cap-late-fees 1.1, is claimed above, so it is not offered either).
+        code, out = tool(repo, "close", "1", "--evidence", "https://example.com/pull/1")
+        self.assertEqual(code, 0, out)
+        code, out = tool(repo, "next")
+        self.assertEqual(code, 0, out)
+        ranked = re.findall(r"^ ?\d+\. (library#\d+) ", out, re.MULTILINE)
+        self.assertEqual(ranked, ["library#2"], out)
+        self.assertIn("not library#3: blocked by library#2", out)
+        self.assertIn("not library#7: claimed by me", out)
 
         done = subprocess.run(
             [sys.executable, "scripts/test.py"], cwd=repo, capture_output=True, text=True

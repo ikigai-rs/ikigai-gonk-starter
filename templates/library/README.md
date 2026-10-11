@@ -20,6 +20,8 @@ tests/                   the check that the specs and the vectors name the same 
 .gonk/queries/           saved SPARQL over the ledger and the spec graph
 .gonk/scripts/           a workflow script: next, for one artifact
 tools/gonk.py            init, seed, file, next, claim, release, report, close, status
+tools/worker.py          the worker loop, for a machine that takes items unattended
+worker/                  its configuration template, and its launchd and systemd units
 ```
 
 Standard-library Python 3.11 or later; nothing to install.
@@ -60,9 +62,11 @@ python3 tools/gonk.py claim 1       # a 30-minute lease on item 1
 
 `seed` files each unchecked task of `openspec/changes/<id>/tasks.md` as an item, labeled
 `change:<id>` and `artifact:<name>` for each artifact the change's proposal names, *about* the
-task and the requirement its parentheses cite. Then the loop in `AGENTS.md`: reproduce, write
-the scenario's vector first (it fails), change the code until it passes, open a pull request,
-check the task's box, and report with the pull request as evidence.
+task and the requirement its parentheses cite, and links each task to the next with `blocks`:
+`next` offers the first open task of each change, and closing it makes the next one ready.
+Then the loop in `AGENTS.md`: reproduce, write the scenario's vector first (it fails), change
+the code until it passes, open a pull request, check the task's box, and report with the pull
+request as evidence.
 
 `cap-late-fees` is the small change: one requirement modified, one artifact. `add-holds` adds a
 capability and touches both artifacts, so its items show up under either artifact:
@@ -72,6 +76,12 @@ python3 tools/gonk.py init          # once gonk offers urn:script:, this publish
 ikigai --mount urn:gk:=$HOME/.ikigai/gonk.sock \
   -c 'source urn:gk:script:library-open-items-for-artifact:result artifact=cli'
 ```
+
+An unattended machine can take items too: `tools/worker.py` claims what `next` offers under a
+label, runs an agent on it in a fresh worktree, and hands it back with the pull request as
+evidence (`worker/worker.sample.toml` is its configuration, and `just worker-plan` shows what
+it would take). Setting up the machine it runs on, as its own account, is the starter's
+[worker README](https://github.com/ikigai-rs/ikigai-gonk-starter/blob/main/worker/README.md).
 
 ## The spec is the tests
 

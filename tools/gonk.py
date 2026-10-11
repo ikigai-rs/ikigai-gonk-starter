@@ -491,12 +491,57 @@ def seed_request(change: Change, task: Task) -> tuple[str, str, str]:
     return " ".join(words), content, f"{change.id} {task.number}: {task.title}"
 
 
+@dataclass
+class Seeded:
+    """One open task's item, as `append` answered for it."""
+
+    task: Task
+    display: str  # `library#3`
+    iri: str
+    new: bool  # filed by this run, rather than already carrying the task's key
+
+    @property
+    def number(self) -> int:
+        return int(self.display.rsplit("#", 1)[1])
+
+
+def blocks(item: dict, iri: str) -> bool:
+    """Does this item (its JSON face) already carry a `blocks` link to `iri`?"""
+    return any(
+        link.get("type") == "blocks" and (link.get("target") or {}).get("iri") == iri
+        for link in item.get("links") or []
+    )
+
+
+def order_pairs(change: Change, seeded: dict[str, Seeded]) -> list[tuple[Task, Task]]:
+    """Each open task of a change and the open task after it, in the order of tasks.md.
+
+    A checked-off task is skipped, so the tasks either side of it are linked to each other:
+    the order still holds across it. A task with no item (its append failed) breaks the chain
+    there, and the next seed, which files it, links it in."""
+    open_tasks = [t for t in change.tasks if not t.done]
+    return [
+        (a, b)
+        for a, b in zip(open_tasks, open_tasks[1:], strict=False)
+        if a.iri in seeded and b.iri in seeded
+    ]
+
+
 def cmd_seed(args, cfg: Config, make_ikigai) -> int:
-    """File one ledger item per open task of every change in flight, keyed by the task's IRI.
+    """File one ledger item per open task of every change in flight, keyed by the task's IRI,
+    then link each task's item to the next one's with `blocks`.
+
+    The order of an OpenSpec tasks.md IS a dependency (1.2 is written assuming 1.1 is done),
+    and without it the ledger's `next` ranks unprioritized items newest first, so freshly
+    seeded tasks would come out last-first. With the links, only the first open task of each
+    change is ready; closing it makes the next one ready.
 
     Idempotent through the ledger itself: an append whose key an item already carries files
     nothing and answers `existing`, in the same store update that would have filed it, so two
-    seeds at once cannot both file a task."""
+    seeds at once cannot both file a task. A link is added only when it is missing (a link
+    from an item filed by this run always is), so a rerun changes nothing. Reordering a
+    tasks.md after seeding leaves the old links in place; `next` names any cycle that makes,
+    with the `delete` that removes a link."""
     changes = open_changes(cfg.repo, cfg.layout)
     todo = [(c, t) for c in changes for t in c.tasks if not t.done]
     checked = sum(1 for c in changes for t in c.tasks if t.done)
@@ -505,30 +550,73 @@ def cmd_seed(args, cfg: Config, make_ikigai) -> int:
     if not todo:
         print(f"seed: no open tasks in {len(changes)} change(s) in flight; nothing to file")
         return 0
-    ikigai = None if args.dry_run else make_ikigai(cfg.target)
+    if args.dry_run:
+        for change, task in todo:
+            _, _, what = seed_request(change, task)
+            print(f"would file  {what}\n            key={task.iri}")
+        planned = {t.iri: None for _, t in todo}
+        pairs = [p for c in changes for p in order_pairs(c, planned)]
+        for a, b in pairs:
+            print(f"would link  {a.change} {a.number} blocks {b.number}")
+        print(
+            f"\nseed --dry-run: {len(todo)} open task(s) would be filed, in "
+            f"{len(pairs)} order link(s); {checked} checked off"
+        )
+        return 0
+    ikigai = make_ikigai(cfg.target)
     filed = existing = failed = 0
+    seeded: dict[str, Seeded] = {}
     for change, task in todo:
         words, content, what = seed_request(change, task)
-        if ikigai is None:
-            print(f"would file  {what}\n            key={task.iri}")
-            continue
         answer = ikigai.run(f"sink {cfg.resource('append')} {words}", stdin=content)
         m = APPENDED.search(answer.out) if answer.ok else None
         if m is None:
             failed += 1
             print(f"failed      {what}: {answer.text() or f'exit {answer.code}'}", file=sys.stderr)
-        elif m.group(3):
+            continue
+        seeded[task.iri] = Seeded(task, m.group(1), m.group(2), new=not m.group(3))
+        if m.group(3):
             existing += 1
             print(f"existing    {m.group(1)} {what} ({m.group(4)})")
         else:
             filed += 1
             print(f"filed       {m.group(1)} {what}")
-    if ikigai is None:
-        print(f"\nseed --dry-run: {len(todo)} open task(s) would be filed; {checked} checked off")
-        return 0
+    linked = 0
+    for change in changes:
+        for a, b in order_pairs(change, seeded):
+            first, then = seeded[a.iri], seeded[b.iri]
+            what = (
+                f"{first.display} blocks {then.display} ({a.change} {a.number} before {b.number})"
+            )
+            if not (first.new or then.new):
+                # Both were there before this run: the link is too, unless an earlier seed
+                # stopped between filing and linking. Ask rather than write, so a rerun
+                # leaves every item's modified time alone.
+                item, err = item_json(cfg, ikigai, first.number)
+                if item is None:
+                    failed += 1
+                    print(
+                        f"failed      {what}: could not read {first.display}: {err}",
+                        file=sys.stderr,
+                    )
+                    continue
+                if blocks(item, then.iri):
+                    continue
+            # The object goes in by pipe, where `link` takes it (`content`); an IRI rather than
+            # `library#3`, since `#` starts a comment in the engine grammar.
+            command = f"sink {cfg.resource('link')} item={first.iri} type=blocks"
+            answer = ikigai.run(command, stdin=then.iri)
+            if answer.ok:
+                linked += 1
+                print(f"ordered     {what}")
+            else:
+                failed += 1
+                print(
+                    f"failed      {what}: {answer.text() or f'exit {answer.code}'}", file=sys.stderr
+                )
     print(
-        f"\nseed: {filed} filed, {existing} already filed, {checked} checked off (not filed)"
-        + (f", {failed} FAILED" if failed else "")
+        f"\nseed: {filed} filed, {existing} already filed, {checked} checked off (not filed), "
+        f"{linked} order link(s) added" + (f", {failed} FAILED" if failed else "")
     )
     return 1 if failed else 0
 
@@ -651,7 +739,21 @@ class Ikigai:
             return Answer(127, "", f"`{self.binary}` is not on PATH")
         except subprocess.TimeoutExpired:
             return Answer(124, "", f"no answer within {TIMEOUT_S}s from {self.target.describe()}")
-        return Answer(done.returncode, done.stdout, done.stderr)
+        return Answer(done.returncode, done.stdout, without_cache_trailer(done.stderr))
+
+
+# What `ikigai -c` writes to stderr after every answer: how the kernel's cache treated it
+# (`[uncacheable]`, `[cached]`, `[2 cached · 1 computed]`). It is for a person at the REPL,
+# and echoed here it read as part of what gonk said.
+CACHE_TRAILER = re.compile(
+    r"^\[(?:\d+ )?(?:cached|computed|uncacheable)(?: · \d+ (?:cached|computed|uncacheable))*\]$"
+)
+
+
+def without_cache_trailer(err: str) -> str:
+    return "".join(
+        ln for ln in err.splitlines(keepends=True) if not CACHE_TRAILER.match(ln.strip())
+    )
 
 
 LEDGERS_ROW = re.compile(r"^\s*(\S+)\s+(\d+) open\s+(\d+) total\b")
@@ -894,7 +996,7 @@ def cmd_init(args, cfg: Config, make_ikigai) -> int:
                         "ledger has no create: it exists once something is filed in it "
                         '(`python3 tools/gonk.py file "<title>"`)',
                     )
-                for what, name, about in OPTIONAL_FAMILIES:
+                for what, name, about, meanwhile in OPTIONAL_FAMILIES:
                     found = offered(ikigai.run(f"describe {PREFIX}{name[4:]}"))
                     if found:
                         row("ok", what, f"gonk offers `{name}`: {about}")
@@ -909,8 +1011,8 @@ def cmd_init(args, cfg: Config, make_ikigai) -> int:
                         row(
                             "absent",
                             what,
-                            f"gonk does not offer `{name}` yet, so {about} stay files in this "
-                            f"repository{ready}; nothing to do until it does",
+                            f"gonk does not offer `{name}` yet, so {meanwhile}{ready}; "
+                            "nothing to do until it does",
                         )
                     else:
                         row("unknown", what, f"could not ask gonk about `{name}`")
@@ -965,9 +1067,22 @@ def identity_rows(cfg: Config, row) -> None:
         )
 
 
+# (row, the family's resource, what it offers, what holds until gonk offers it). The last is
+# a clause of its own per family, since one template over both read "drafting a query from a
+# sentence stay files".
 OPTIONAL_FAMILIES = [
-    ("scripts", "urn:script:catalog", "saved queries and workflow scripts (ikigai-script)"),
-    ("nl", "urn:nl:sparql", "drafting a query from a sentence (ikigai-nl)"),
+    (
+        "scripts",
+        "urn:script:catalog",
+        "saved queries and workflow scripts (ikigai-script)",
+        "saved queries and workflow scripts (ikigai-script) stay files in this repository",
+    ),
+    (
+        "nl",
+        "urn:nl:sparql",
+        "drafting a query from a sentence (ikigai-nl)",
+        "a query is written by hand rather than drafted from a sentence (ikigai-nl)",
+    ),
 ]
 
 GONK_TOML_HEADER = """\

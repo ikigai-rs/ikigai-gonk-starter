@@ -41,7 +41,7 @@
     <key>PATH</key>
     <string>/Users/agent/.cargo/bin:/Users/agent/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     <key>HOME</key>
-    <string>/Users/agent/</string>
+    <string>/Users/agent</string>
   </dict>
   <key>ProgramArguments</key>
   <array>

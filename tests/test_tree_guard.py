@@ -44,7 +44,10 @@ DENIED_WORD_HASHES = {
     "f1ad6ee4db08bff75f77d1d65b99d273cea298f69ebd45c7fd172f0892554142",
 }
 
-HOME_PATH = re.compile(r"/(?:Users|home)/([\w$<{\u2026-]*)")
+# The account name: a placeholder's opening character (`$`, `<`, `{`, an ellipsis) may only
+# START it. With `<` anywhere in the class, `/Users/agent</string>` in a plist read as the
+# account `agent<` and failed.
+HOME_PATH = re.compile(r"/(?:Users|home)/([$<{\u2026]?[\w-]*)")
 MDNS_HOST = re.compile(r"[A-Za-z0-9-]\.local(?![\w/-]|\.\w)")
 IPV4 = re.compile(r"(?<![\w.])(\d{1,3}(?:\.\d{1,3}){3})(?!\w|\.\d)")
 WORD = re.compile(r"[a-z0-9]+")
@@ -132,9 +135,16 @@ class TheGuardItself(unittest.TestCase):
             "fixadmin/src",
             "$u",
             "<admin>",
+            "{user}/x",
+            "\u2026/x",
+            "agent</string>",  # a home at the end of an XML element (the worker's plist)
+            "agent<",
         ]:
             self.assertEqual(home_paths(users + fine), [], fine)
             self.assertEqual(home_paths(home + fine), [], fine)
+        # Markup after a name that is not the design's is still that name, and still caught.
+        self.assertEqual(home_paths(users + "someone</string>"), [users + "someone"])
+        self.assertEqual(home_paths(f'"{home}someone"'), [home + "someone"])
 
     def test_mdns_host_names(self):
         local = "." + "local"

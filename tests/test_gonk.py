@@ -7,6 +7,7 @@ import contextlib
 import hashlib
 import io
 import json
+import tempfile
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
@@ -34,6 +35,25 @@ def item(holder=None, expires=None, status="open", number=12):
     claim = {"holder": holder, "kind": "machine", "expires": expires} if holder else None
     doc = {"display": f"acme#{number}", "status": status, "claim": claim}
     return ok(json.dumps({"schema": 1, "ledger": "acme", "item": doc}))
+
+
+class CacheTrailer(unittest.TestCase):
+    """`ikigai -c` writes how the kernel's cache treated each answer to stderr (`[uncacheable]`):
+    for a person at the REPL, not part of what gonk said, so `next` and `claim` drop it."""
+
+    def test_the_trailer_is_dropped_and_everything_else_kept(self):
+        for trailer in ["[uncacheable]", "[cached]", "[computed]", "[2 cached · 1 uncacheable]"]:
+            self.assertEqual(gonk.without_cache_trailer(f"{trailer}\n"), "", trailer)
+        err = "error: refused\n[uncacheable]\n"
+        self.assertEqual(gonk.without_cache_trailer(err), "error: refused\n")
+        self.assertEqual(gonk.without_cache_trailer("[a note]\n"), "[a note]\n")
+
+    def test_the_runner_drops_it(self):
+        fake_bin = Path(self.enterContext(tempfile.TemporaryDirectory())) / "ikigai"
+        fake_bin.write_text("#!/bin/sh\necho ' 1. acme#1  open'\necho '[uncacheable]' >&2\n")
+        fake_bin.chmod(0o755)
+        answer = gonk.Ikigai(gonk.Target(socket="/nowhere"), binary=str(fake_bin)).run("x")
+        self.assertEqual((answer.code, answer.out, answer.err), (0, " 1. acme#1  open\n", ""))
 
 
 class Names(unittest.TestCase):
@@ -90,11 +110,11 @@ class Fingerprints(unittest.TestCase):
             gonk.cert_fingerprint("-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----")
 
     def test_the_operator_lines_name_the_four_writer_tokens_and_the_close_caveat(self):
-        lines = "\n".join(gonk.enrollment_lines("ff00", "bug-worker", "acme"))
+        lines = "\n".join(gonk.enrollment_lines("ff00", "build-box", "acme"))
         self.assertIn(
-            "ikigai-gonk client add bug-worker --cert client.crt --ledger acme=write", lines
+            "ikigai-gonk client add build-box --cert client.crt --ledger acme=write", lines
         )
-        self.assertIn('"ff00": {"grant": "bug-worker"}', lines)
+        self.assertIn('"ff00": {"grant": "build-box"}', lines)
         for token in gonk.ledger_write_tokens("acme"):
             self.assertIn(token, lines)
         self.assertIn("1143", lines)
@@ -196,6 +216,19 @@ class Init(unittest.TestCase):
         self.assertIn("`acme` holds 5 item(s), 3 open", out)
         self.assertRegex(out, r"absent\s+scripts\s+gonk does not offer `urn:script:catalog`")
         self.assertRegex(out, r"absent\s+nl\s+gonk does not offer `urn:nl:sparql`")
+        # Each family says what holds meanwhile in its own words (one template over both read
+        # "drafting a query from a sentence (ikigai-nl) stay files").
+        self.assertIn(
+            "saved queries and workflow scripts (ikigai-script) stay files in this repository; "
+            "nothing to do until it does",
+            out,
+        )
+        self.assertIn(
+            "yet, so a query is written by hand rather than drafted from a sentence "
+            "(ikigai-nl); nothing to do until it does",
+            out,
+        )
+        self.assertNotIn("stay files in this repository; nothing", out.split("absent   nl")[1])
         self.assertIn("ikigai mcp --override urn:iki:ledger:=", out)
 
     def test_a_ledger_with_nothing_filed_is_a_note_not_a_failure(self):
@@ -217,15 +250,13 @@ class Init(unittest.TestCase):
         der = b"machine certificate bytes"
         pem = "-----BEGIN CERTIFICATE-----\n" + base64.encodebytes(der).decode()
         (certs / "client.crt").write_text(pem + "-----END CERTIFICATE-----\n")
-        args = ["init", "--ledger", "acme", "--holder", "bug-worker"]
+        args = ["init", "--ledger", "acme", "--holder", "build-box"]
         args += ["--quic", "quic://gonk-host:1060", "--cert-dir", str(certs)]
         fake = FakeIkigai([("ledgers", ok("")), ("describe", ok("x"))])
         code, out, _ = run(repo, args, fake)
         fp = hashlib.sha256(der).hexdigest()
         self.assertIn(f"urn:iki:gonk:client:{fp}", out)
-        self.assertIn(
-            "ikigai-gonk client add bug-worker --cert client.crt --ledger acme=write", out
-        )
+        self.assertIn("ikigai-gonk client add build-box --cert client.crt --ledger acme=write", out)
         self.assertRegex(out, r"missing\s+server\s+no server.crt")
         self.assertEqual(code, 1)
         self.assertEqual(fake.target.mount_args()[1], "urn:gk:=quic://gonk-host:1060")

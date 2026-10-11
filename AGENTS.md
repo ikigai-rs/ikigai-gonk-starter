@@ -105,8 +105,9 @@ as `PR #N`, or `owner/repo#N` for another repository. In a commit message, write
   publishes them when gonk offers `urn:script:`, and until then says they are ready but
   unpublished; do not publish them any other way.
 - **Seeding.** `python3 tools/gonk.py seed` files each open task of a change in flight as a
-  ledger item, keyed by the task, so running it again files nothing new. Check a task's box
-  in `tasks.md` when its work is done.
+  ledger item, keyed by the task, so running it again files nothing new, and links each task
+  to the next with `blocks`, so `next` offers a change's tasks in the order `tasks.md` lists
+  them. Check a task's box in `tasks.md` when its work is done.
 
 ## Optional: a hook for Claude Code
 

@@ -427,19 +427,17 @@ plist has not run on a worker Mac yet; none exists.
 take an item without a `repo:` label, take one of a repository someone holds, or release a
 claim that is no longer its own.
 
-**What waits on the ledger** (items in ikigai's own ledger, on its gonk):
+**What waits on the ledger:**
 
-- **One agent per repository is best-effort** until the ledger enforces it
-  ([#1140](http://localhost:1060/l/default/item/1140)): the worker reads the claims and then
-  claims, so two workers can both read "free" at once. The re-read after claiming narrows
-  that and does not close it.
+- **One agent per repository is best-effort** until the ledger enforces it: the worker reads
+  the claims and then claims, so two workers can both read "free" at once. The re-read after
+  claiming narrows that and does not close it.
 - **The brief is the item's body** behind the worker's fixed preamble, until briefs are
-  resources gonk serves ([#1141](http://localhost:1060/l/default/item/1141)).
+  resources gonk serves.
 - **The grant is wider than the worker.** Today a machine identity is enrolled with
   `<ledger>=write`, which can also close, relabel and file; the worker's code does none of
   those, but nothing in gonk stops it, and the agent runs as the same account and could use
-  the same identity. A grant without close needs per-verb ledger capabilities
-  ([#1143](http://localhost:1060/l/default/item/1143)).
+  the same identity. A grant without close needs per-verb ledger capabilities.
 - **Never merging is an instruction to the agent**, which holds a token that could merge.
   What enforces it is the repository's branch protection (required checks and reviews).
 

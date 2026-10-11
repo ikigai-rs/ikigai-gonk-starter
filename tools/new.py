@@ -13,6 +13,7 @@ The result is a repository that works the way this starter teaches: AGENTS.md an
   artifacts/cli/          a command-line client of that API
   .gonk/queries/          saved SPARQL over the ledger and the spec graph
   .gonk/scripts/          a workflow script (a plan): next, for one artifact
+  tools/worker.py         the worker loop, for a machine that takes items unattended
 
 Three layers are copied in order, a later one replacing a file an earlier one wrote: this
 starter's own files (so a generated repository always carries the current tools), the
@@ -39,6 +40,12 @@ STARTER_FILES = [
     "AGENTS.md",
     ".gitignore",
     "tools/gonk.py",
+    # The worker loop, so a generated project can hand items to an unattended machine (the
+    # justfile's `worker` recipes run it): the loop, its configuration's commented template,
+    # and the service units in STARTER_DIRS. Setting up the worker MACHINE (its accounts and
+    # boundary, worker/README.md and worker-setup.sh) stays in this starter.
+    "tools/worker.py",
+    "worker/worker.sample.toml",
     "hooks/claude/README.md",
     "hooks/claude/require-claim.py",
     "hooks/claude/settings.sample.json",
@@ -53,6 +60,9 @@ STARTER_FILES = [
     "openspec/changes/README.md",
     "artifacts/README.md",
 ]
+
+# This starter's directories whose every file a generated repository carries, unchanged.
+STARTER_DIRS = ["worker/units"]
 
 # Recipes of this starter's justfile that belong to the starter, not to what it generates.
 STARTER_ONLY_RECIPES = {"gates", "new"}
@@ -119,6 +129,9 @@ def generate(dest: Path, target: str) -> list[Path]:
         raise SystemExit(f"new.py: {dest} exists and is not empty; name a new directory")
     target_dir = TEMPLATES / target
     plan: dict[Path, Path] = {Path(rel): ROOT / rel for rel in STARTER_FILES}
+    for top in STARTER_DIRS:
+        for rel in files_under(ROOT / top):
+            plan[top / rel] = ROOT / top / rel
     for layer in (SAMPLE, target_dir):
         for rel in files_under(layer):
             if rel != Path(RECIPES):

@@ -79,9 +79,11 @@ directory and runs its tests, so a template that has gone stale fails.
 task's IRI (`urn:openspec:change:<id>:task:<number>`, the name the
 [gonk Book](https://ikigai-rs.github.io/ikigai-tutorial/gonk/spec/ledger.html)'s OpenSpec
 mapping gives it), labeled `change:<id>` and `artifact:<name>`, and *about* the requirement the
-task's parentheses cite. A second `seed` files nothing: the ledger answers `existing` for a key
-it already holds. The sample also carries three saved SPARQL queries and a workflow script
-(below).
+task's parentheses cite. It then links each task's item to the next task's with `blocks`, since
+the order of a tasks list is a dependency: `next` offers the first open task of each change,
+and closing it makes the next one ready. A second `seed` files and links nothing: the ledger
+answers `existing` for a key it already holds, and the links are already there. The sample
+also carries three saved SPARQL queries and a workflow script (below).
 
 ## Setting it up
 
@@ -119,7 +121,7 @@ own identity, so its private key never leaves it:
 
 ```sh
 ikigai cert generate --dir ~/gonk-cert
-python3 tools/gonk.py init --ledger acme --holder bug-worker \
+python3 tools/gonk.py init --ledger acme --holder build-box \
     --quic quic://gonk-host:1060 --cert-dir ~/gonk-cert
 ```
 
@@ -248,19 +250,13 @@ README says what else waits on the ledger.
 ## Coming next
 
 - **More languages** for the generator: Deno, Rust and Go, each passing the same vectors.
-  ([#1135](http://localhost:1060/l/default/item/1135))
 - **A second spec format**, beside OpenSpec, lifted to the same graph and ledger items by a
-  mapping file rather than code. ([#1136](http://localhost:1060/l/default/item/1136))
+  mapping file rather than code.
 - **The worker's gaps, in the ledger.** One agent per repository enforced by the ledger rather
-  than read before claiming ([#1140](http://localhost:1060/l/default/item/1140)); briefs as
-  resources gonk serves, beyond the item's body
-  ([#1141](http://localhost:1060/l/default/item/1141)); and a worker grant that can claim,
-  renew, comment and release but not close
-  ([#1143](http://localhost:1060/l/default/item/1143)).
+  than read before claiming; briefs as resources gonk serves, beyond the item's body; and a
+  worker grant that can claim, renew, comment and release but not close.
 - **The gonk Book's chapters** on a project of your own, walking the generated sample from
-  a spec change to a closed item. ([#1137](http://localhost:1060/l/default/item/1137))
-
-(The `#` links are items in ikigai's own ledger, on its gonk.)
+  a spec change to a closed item.
 
 ## Developing this starter
 

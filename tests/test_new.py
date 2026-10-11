@@ -10,6 +10,8 @@ from __future__ import annotations
 import importlib.util
 import os
 import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -47,6 +49,49 @@ class Generate(unittest.TestCase):
             self.assertEqual((self.repo / rel).read_bytes(), (ROOT / rel).read_bytes(), rel)
         self.assertEqual(os.readlink(self.repo / "CLAUDE.md"), "AGENTS.md")
         self.assertTrue(os.access(self.repo / "tools" / "gonk.py", os.X_OK))
+
+    def test_the_worker_loop_comes_along(self):
+        """A generated project can run a worker: the loop, its sample configuration and its
+        service units, unchanged, and the justfile recipes that run it. The machine's setup
+        (accounts, boundary probe) stays in the starter."""
+        units = sorted(p.name for p in (ROOT / "worker" / "units").iterdir())
+        self.assertEqual(units, ["dev.ikigai-rs.gonk-worker.plist", "gonk-worker.service"])
+        for rel in [
+            "tools/worker.py",
+            "worker/worker.sample.toml",
+            *(f"worker/units/{name}" for name in units),
+        ]:
+            self.assertEqual((self.repo / rel).read_bytes(), (ROOT / rel).read_bytes(), rel)
+            self.assertIn(Path(rel), self.written)
+            self.assertEqual((self.repo / rel).stat().st_mode, (ROOT / rel).stat().st_mode, rel)
+        names = [n for n, _ in new.recipe_blocks((self.repo / "justfile").read_text()) if n]
+        for recipe in ["worker", "worker-once", "worker-plan", "worker-forget"]:
+            self.assertIn(recipe, names)
+        for rel in [
+            "worker/README.md",
+            "worker/worker-setup.sh",
+            "worker/probe.sh",
+            "worker/tests",
+        ]:
+            self.assertFalse((self.repo / rel).exists(), rel)
+
+    def test_the_generated_worker_runs_from_the_generated_tree(self):
+        """Its `plan`, as a separate process in the generated repository: worker.py finds
+        gonk.py beside it, reads the sample configuration copied into place and the gonk
+        wiring init writes, and gets as far as asking gonk (a socket nobody listens on)."""
+        repo = scratch(self)
+        new.generate(repo, "python")
+        sample = (repo / "worker" / "worker.sample.toml").read_bytes()
+        (repo / ".gonk" / "worker.toml").write_bytes(sample)
+        (repo / ".gonk" / "gonk.toml").write_text('ledger = "library"\n')
+        (repo / ".gonk" / "local.toml").write_text(
+            f'transport = "socket"\nsocket = "{repo / "none.sock"}"\nholder = "w1"\n'
+        )
+        done = subprocess.run(
+            [sys.executable, "tools/worker.py", "plan"], cwd=repo, capture_output=True, text=True
+        )
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        self.assertIn("gonk did not answer next", done.stderr)
 
     def test_the_sample_and_the_target_are_both_there(self):
         for rel in [
