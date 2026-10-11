@@ -129,8 +129,9 @@ python3 tools/gonk.py init --ledger acme --holder build-box \
 
 `init` prints the machine's identity, `urn:iki:host:gonk:client:<fingerprint>` (the name gonk
 puts on every request it makes, on every item it files, and in its access log), and the
-lines gonk's operator adds for it: one `ikigai-gonk client add … --cert client.crt --ledger
-acme=write` command, or the `clients.json` and `grants.json` entries by hand. The operator
+lines gonk's operator adds for it: `ikigai-gonk client add … --cert client.crt --worker acme`
+for an unattended machine or `--ledger acme=write` for a person's, or the `clients.json` and
+`grants.json` entries by hand. The operator
 restarts gonk and sends back the `server.crt` from the bundle `client add` wrote; copy it
 over the one in `~/gonk-cert` (`cert generate` wrote a server identity of its own there,
 which is not gonk's, so this machine could not pin gonk with it). Then `init` reports the

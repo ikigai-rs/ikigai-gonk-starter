@@ -112,15 +112,52 @@ class Fingerprints(unittest.TestCase):
         with self.assertRaises(gonk.ConfigError):
             gonk.cert_fingerprint("-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----")
 
-    def test_the_operator_lines_name_the_four_writer_tokens_and_the_close_caveat(self):
+    # The authoritative worker grant, exactly as gonk computes it: `src/grants.rs`,
+    # `grants_for(ledger, Authority::Worker)`, whose doctest is the contract. Renew and release
+    # ride on the claim token (they are not capabilities of their own), and a worker NEEDS the
+    # ledger graph's store WRITE token, because every ledger write goes to the store under the
+    # caller's capability — without it a hand-enrolled worker cannot claim or comment.
+    WORKER_TOKENS = [
+        "urn:cap:ledger:read:acme",
+        "urn:cap:store:read:graph:urn:iki:ledger:graph:acme",
+        "urn:cap:ledger:claim:acme",
+        "urn:cap:ledger:comment:acme",
+        "urn:cap:store:write:graph:urn:iki:ledger:graph:acme",
+    ]
+
+    def test_the_worker_tokens_are_exactly_gonks_worker_grant(self):
+        # EQUALITY, in gonk's order: a missing store WRITE token (the old bug) fails here.
+        self.assertEqual(gonk.worker_tokens("acme"), self.WORKER_TOKENS)
+
+    def test_the_operator_lines_print_the_worker_and_the_writer_grants(self):
         lines = "\n".join(gonk.enrollment_lines("ff00", "build-box", "acme"))
+        # the --worker form for an unattended machine first: the grant init exists to print
+        self.assertIn("ikigai-gonk client add build-box --cert client.crt --worker acme", lines)
+        # =write stays as the option for a person, beside it
         self.assertIn(
             "ikigai-gonk client add build-box --cert client.crt --ledger acme=write", lines
         )
         self.assertIn('"ff00": {"grant": "build-box"}', lines)
-        for token in gonk.ledger_write_tokens("acme"):
-            self.assertIn(token, lines)
-        self.assertIn("1143", lines)
+        # the by-hand grants.json entry is the worker grant: exactly gonk's tokens, in its order
+        for token in self.WORKER_TOKENS:
+            self.assertIn(f'"{token}"', lines)
+        self.assertNotIn("urn:cap:ledger:renew", lines)
+        self.assertNotIn("urn:cap:ledger:release", lines)
+        self.assertNotIn("urn:cap:ledger:close", lines)
+        self.assertNotIn("urn:cap:ledger:write:acme", lines)
+        self.assertNotIn("1143", lines)
+
+    def test_the_write_grants_tokens_are_still_the_four_writer_tokens(self):
+        # =write is still the option for a person, and its by-hand tokens are unchanged.
+        self.assertEqual(
+            gonk.ledger_write_tokens("acme"),
+            [
+                "urn:cap:ledger:read:acme",
+                "urn:cap:store:read:graph:urn:iki:ledger:graph:acme",
+                "urn:cap:ledger:write:acme",
+                "urn:cap:store:write:graph:urn:iki:ledger:graph:acme",
+            ],
+        )
 
 
 class Layout(unittest.TestCase):

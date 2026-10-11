@@ -516,7 +516,10 @@ claim that is no longer its own.
 - **The grant is wider than the worker.** Today a machine identity is enrolled with
   `<ledger>=write`, which can also close, relabel and file; the worker's code does none of
   those, but nothing in gonk stops it, and the agent runs as the same account and could use
-  the same identity. A grant without close needs per-verb ledger capabilities.
+  the same identity. The worker grant exists now (`ikigai-gonk client add <name> --cert
+  client.crt --worker <ledger>`, per-verb ledger capabilities, no close), and `init` prints
+  it for an unattended machine; enrolling a worker with it is still a step the operator does
+  by hand.
 - **Never merging is an instruction to the agent**, which holds a token that could merge.
   What enforces it is the repository's branch protection (required checks and reviews).
 
