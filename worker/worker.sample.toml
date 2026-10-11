@@ -32,6 +32,13 @@ poll = "60s"           # between polls of `next` when nothing is ready
 # {branch} {item} {repo} {report_file} {profile}. An unattended agent also needs its own
 # permission settings; the worker does not choose them for you.
 preset = "claude"
+# Unattended, an agent commits, pushes and opens a pull request, so it runs with its own
+# checks opened and the agent's Unix account as the boundary (worker/README.md, step 8).
+# Claude Code (as the first claude run used; authenticate with `claude auth login` as this
+# account, or CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token` in the worker's environment,
+# never in this file):
+# command = ["claude", "-p", "--permission-mode", "bypassPermissions", "{prompt}"]
+# Codex:
 # command = ["codex", "exec", "--full-auto", "{prompt}"]
 # profile = "coder"
 

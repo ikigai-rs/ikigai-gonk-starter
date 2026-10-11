@@ -372,13 +372,46 @@ is the commented template):
 | `gh`, `stop_file` | `gh`, `.gonk/state/worker/stop` | the GitHub CLI; the file that stops the loop between items |
 
 The presets are each agent's documented non-interactive form (`claude -p`, `codex exec`,
-`hermes -z`). **Hermes and Codex have each run an item end to end on a Linux worker**: hermes
-as its preset, and Codex with its sandbox opened, `command = ["codex", "exec", "--sandbox",
-"danger-full-access", "{prompt}"]`, because it commits, pushes and opens the pull request,
-which its default sandbox refuses; the agent's own Unix account is the boundary. Claude Code
-is untested, so try it on an item of no consequence with `run --once` first. An unattended
-agent also needs its own permission settings (Claude Code's allowlist or permission mode,
-Codex's sandbox and approval policy); the worker does not choose them for you.
+`hermes -z`). **Hermes, Codex and Claude Code have each run an item end to end on a Linux
+worker**: hermes as its preset, Codex with its sandbox opened, `command = ["codex", "exec",
+"--sandbox", "danger-full-access", "{prompt}"]`, and Claude Code with its permission checks
+off, `command = ["claude", "-p", "--permission-mode", "bypassPermissions", "{prompt}"]`
+(below). Both open up for the same reason: the agent commits, pushes and opens the pull
+request, which their defaults refuse or stop to ask about with nobody there to answer; the
+agent's own Unix account is the boundary. An unattended agent needs its own permission
+settings (Claude Code's permission mode, Codex's sandbox and approval policy); the worker
+does not choose them for you, and the bare presets leave each agent's default in place.
+
+**Claude Code, unattended.** What the first run (ledger item 1236, Claude Code 2.1.296 on
+the Pop!_OS 24.04 worker, `run --once`) showed, and what is still to try:
+
+- **Install** it as agent with Anthropic's native installer (`curl -fsSL
+  https://claude.ai/install.sh | bash` under `sudo -iu agent`), not npm. It puts the binary
+  under `~/.local/share/claude/versions/<version>` and the `claude` link in `~/.local/bin`,
+  the directory the units already put on PATH; `claude --version` checks it.
+- **Authenticate** in one of two ways, and never put the token in `.gonk/worker.toml`, the
+  unit file or the repository:
+  - *A login held by the account* (what the first run used): `claude auth login` once as
+    agent, which stores it in `~/.claude/.credentials.json` (mode 600), the file the probe's
+    `login:` reports by presence. `claude auth status` says which method is in use
+    (`"authMethod": "claude.ai"`) without printing the secret.
+  - *A long-lived token* (the documented route for unattended runs; not yet run here):
+    `claude setup-token` ("Set up a long-lived authentication token (requires Claude
+    subscription)") prints a token with the line `export CLAUDE_CODE_OAUTH_TOKEN=<token>`.
+    The CLI reads it from that environment variable, and the worker passes its own
+    environment to the agent, so the token must be in the **worker's** environment: for the
+    systemd unit, a drop-in (`systemctl --user edit gonk-worker`) with
+    `EnvironmentFile=%h/.config/gonk-worker/claude.env`, a file of agent's at mode 600 that
+    holds the one `CLAUDE_CODE_OAUTH_TOKEN=` line. Such a token is limited to inference,
+    which is all a worker needs. While the variable is set it wins over the stored login.
+- **Permissions:** `claude -p` alone keeps the default permission mode, which asks before
+  edits and shell commands, and an unattended run has nobody to answer.
+  `--permission-mode bypassPermissions` (or `--dangerously-skip-permissions`, "Bypass all
+  permission checks") lets it edit, run the gates, commit, push and run `gh pr create`
+  without asking. That is why `[agent]` sets a `command` rather than the bare `preset = "claude"`.
+  The boundary is the one Codex's note names: agent's Unix account, with no sudo, no
+  password and its own fine-grained GitHub token, and branch protection on the repository
+  for the merge it is told not to do.
 
 **What one item goes through:**
 
