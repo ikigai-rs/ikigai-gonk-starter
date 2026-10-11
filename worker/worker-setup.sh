@@ -51,6 +51,8 @@
 #   --listen PORT     the remote forward hubdiag may open (default 1060, gonk's tunnel); repeatable
 #   --dry-run         print what would change; change nothing
 #   --check           the boundary self-test (needs root: it acts AS hubdiag and AS agent)
+#   --fstab FILE      read the mount table from FILE, not /etc/fstab. TEST-ONLY, used by
+#                     tests/setup-test.sh so a dry run never reads the host's real /etc/fstab.
 #
 # ⚠ bash 3.2 (macOS /bin/bash): no associative arrays, no mapfile.
 set -u
@@ -58,7 +60,7 @@ set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 os="$(uname -s)"
 orig=("$@")
-key="" admin="${SUDO_USER:-}" hubdiag=hubdiag agent=agent dry=0 check=0
+key="" admin="${SUDO_USER:-}" hubdiag=hubdiag agent=agent dry=0 check=0 fstab=/etc/fstab
 views=() listens=()
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -70,7 +72,8 @@ while [ $# -gt 0 ]; do
         --listen) listens+=("$2"); shift 2 ;;
         --dry-run) dry=1; shift ;;
         --check) check=1; shift ;;
-        -h|--help) sed -n '2,55p' "$0"; exit 0 ;;
+        --fstab) fstab="$2"; shift 2 ;;   # tests: the mount table the views step reads
+        -h|--help) sed -n '2,57p' "$0"; exit 0 ;;
         *) echo "worker-setup: unknown argument: $1 (try --help)" >&2; exit 2 ;;
     esac
 done
@@ -370,11 +373,11 @@ linux_view() { # name, source
     line="$src $dst none bind,ro 0 0"
     [ -d "$src" ] || [ "$dry" = 1 ] || die "view source $src does not exist"
     if [ -d "$dst" ]; then have "mount point $dst"; else change "mount point $dst" install -d -m 0755 "$dst"; fi
-    if awk -v d="$dst" '$2 == d' /etc/fstab | grep -q .; then
-        if awk -v d="$dst" '$2 == d' /etc/fstab | grep -q "^$src $dst none bind,ro "; then have "fstab: $line"
-        else die "/etc/fstab already mounts something else at $dst: fix it by hand: $(awk -v d="$dst" '$2 == d' /etc/fstab)"; fi
+    if awk -v d="$dst" '$2 == d' "$fstab" | grep -q .; then
+        if awk -v d="$dst" '$2 == d' "$fstab" | grep -q "^$src $dst none bind,ro "; then have "fstab: $line"
+        else die "$fstab already mounts something else at $dst: fix it by hand: $(awk -v d="$dst" '$2 == d' "$fstab")"; fi
     else
-        change "fstab: $line" sh -c "printf '%s\n' '$line' >> /etc/fstab"
+        change "fstab: $line" sh -c "printf '%s\n' '$line' >> $fstab"
         change "systemd reads the new fstab" systemctl daemon-reload
     fi
     local opts; opts="$(findmnt -no OPTIONS "$dst" 2>/dev/null)"

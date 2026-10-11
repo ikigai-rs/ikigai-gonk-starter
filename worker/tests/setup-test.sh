@@ -21,10 +21,16 @@ ssh-keygen -q -t ed25519 -N '' -C test -f "$sb/k"
 # Pick names no machine has, so a dry run plans every step.
 H="hubdiagtest$$" A="agenttest$$"
 
+# Every dry run reads a SCRATCH mount table, never this machine's /etc/fstab: on a machine
+# that is already a worker, the real one mounts the view at /srv/hubdiag/work from a different
+# source, and the script rightly refuses a mount point it does not own (ledger 1233). The test
+# asks for it with --fstab, a seam used only here.
+fstab="$sb/fstab"; : > "$fstab"
+
 echo "── a dry run plans every step and changes nothing"
 snap() { ls -la /etc/ssh/sshd_config.d 2>/dev/null; cat /etc/fstab 2>/dev/null; ls /Library/LaunchDaemons 2>/dev/null | grep hubdiag; }
 before="$(snap)"
-out="$(bash "$setup" --dry-run --admin "$me" --hubdiag "$H" --agent "$A" --key "$sb/k.pub" 2>&1)"; st=$?
+out="$(bash "$setup" --dry-run --admin "$me" --hubdiag "$H" --agent "$A" --key "$sb/k.pub" --fstab "$fstab" 2>&1)"; st=$?
 expect_exit "exit 0" 0 "$st"
 has "says it is a dry run" "DRY RUN" "$out"
 has "plans the hub's account" "would: create account $H" "$out"
@@ -51,7 +57,7 @@ id "$H" >/dev/null 2>&1 && { echo "  FAIL the dry run created $H"; fail=$((fail+
 [ "$before" = "$(snap)" ] && { echo "  ok   sshd.d, fstab and LaunchDaemons unchanged"; pass=$((pass+1)); } || { echo "  FAIL system state changed"; fail=$((fail+1)); }
 
 echo "── the dry run needs no --admin when not under sudo, and the wording is plain"
-out="$(env -u SUDO_USER bash "$setup" --dry-run --hubdiag "$H" --agent "$A" --key "$sb/k.pub" 2>&1)"; st=$?
+out="$(env -u SUDO_USER bash "$setup" --dry-run --hubdiag "$H" --agent "$A" --key "$sb/k.pub" --fstab "$fstab" 2>&1)"; st=$?
 expect_exit "no --admin, no sudo: exit 0" 0 "$st"
 has "says which admin it assumed" "assuming the admin is $me (you)" "$out"
 has "and uses it" "admin=$me" "$out"
@@ -65,17 +71,24 @@ expect_exit "a real run without root still refuses (exit 2)" 2 "$st"
 has "naming the sudo line, not asking who the admin is" "sudo $setup" "$out"
 
 echo "── views are configurable"
-out="$(bash "$setup" --dry-run --admin "$me" --hubdiag "$H" --agent "$A" --key "$sb/k.pub" --view work=/x/work --view src=/x/src 2>&1)"
+out="$(bash "$setup" --dry-run --admin "$me" --hubdiag "$H" --agent "$A" --key "$sb/k.pub" --fstab "$fstab" --view work=/x/work --view src=/x/src 2>&1)"
 has "both views planned" "view src: /x/src" "$out"
-out="$(bash "$setup" --dry-run --admin "$me" --key "$sb/k.pub" --view relative 2>&1)"; st=$?
+out="$(bash "$setup" --dry-run --admin "$me" --hubdiag "$H" --agent "$A" --key "$sb/k.pub" --fstab "$fstab" --view relative 2>&1)"; st=$?
 expect_exit "a view without NAME=/abs is refused" 1 "$st"
 has "with the reason" "NAME=/absolute/dir" "$out"
 
+echo "── the mount table is injectable; a foreign mount at the point is refused"
+printf '%s\n' '/some/other/src /srv/hubdiag/work none bind,ro 0 0' > "$fstab"
+out="$(bash "$setup" --dry-run --admin "$me" --hubdiag "$H" --agent "$A" --key "$sb/k.pub" --fstab "$fstab" 2>&1)"; st=$?
+expect_exit "a different source at the mount point is refused" 1 "$st"
+has "naming the file it read" "$fstab already mounts something else at /srv/hubdiag/work: fix it by hand: /some/other/src /srv/hubdiag/work none bind,ro 0 0" "$out"
+: > "$fstab"
+
 echo "── without root it refuses and says how"
-out="$(bash "$setup" --admin "$me" --key "$sb/k.pub" 2>&1)"; st=$?
+out="$(bash "$setup" --admin "$me" --key "$sb/k.pub" --hubdiag "$H" --agent "$A" --fstab "$fstab" 2>&1)"; st=$?
 expect_exit "exit 2" 2 "$st"
 has "prints the sudo line" "sudo $setup --admin $me --key $sb/k.pub" "$out"
-out="$(bash "$setup" --admin "$me" --check 2>&1)"; st=$?
+out="$(bash "$setup" --admin "$me" --hubdiag "$H" --agent "$A" --check 2>&1)"; st=$?
 expect_exit "--check without root: exit 2" 2 "$st"
 
 echo "── bad input is refused before anything happens"
