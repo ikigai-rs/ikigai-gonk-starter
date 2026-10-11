@@ -112,15 +112,24 @@ class Fingerprints(unittest.TestCase):
         with self.assertRaises(gonk.ConfigError):
             gonk.cert_fingerprint("-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----")
 
-    def test_the_operator_lines_name_the_four_writer_tokens_and_the_close_caveat(self):
+    def test_the_operator_lines_print_the_worker_and_the_writer_grants(self):
         lines = "\n".join(gonk.enrollment_lines("ff00", "build-box", "acme"))
+        # the --worker form for an unattended machine first: the grant init exists to print
+        self.assertIn("ikigai-gonk client add build-box --cert client.crt --worker acme", lines)
+        # =write stays as the option for a person, beside it
         self.assertIn(
             "ikigai-gonk client add build-box --cert client.crt --ledger acme=write", lines
         )
         self.assertIn('"ff00": {"grant": "build-box"}', lines)
-        for token in gonk.ledger_write_tokens("acme"):
+        for token in gonk.worker_tokens("acme"):
             self.assertIn(token, lines)
-        self.assertIn("1143", lines)
+        # the grant is per-verb (ledger 0.8): no close, no file, no relabel in the worker entry
+        self.assertNotIn("urn:cap:ledger:close", lines)
+        self.assertNotIn("urn:cap:ledger:file", lines)
+        self.assertNotIn("1143", lines)
+
+    def test_the_write_grants_tokens_are_still_the_four_writer_tokens(self):
+        self.assertEqual(len(gonk.ledger_write_tokens("acme")), 4)
 
 
 class Layout(unittest.TestCase):

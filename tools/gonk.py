@@ -226,23 +226,36 @@ def legacy_client_iri(fingerprint: str) -> str:
     return LEGACY_CLIENT_IRI_PREFIX + fingerprint
 
 
+def worker_tokens(ledger: str) -> list[str]:
+    """`ikigai-gonk grants <ledger> worker`: the per-verb worker grant of one ledger."""
+    graph = f"urn:iki:ledger:graph:{ledger}"
+    return [
+        f"urn:cap:ledger:read:{ledger}",
+        f"urn:cap:store:read:graph:{graph}",
+        f"urn:cap:ledger:claim:{ledger}",
+        f"urn:cap:ledger:renew:{ledger}",
+        f"urn:cap:ledger:comment:{ledger}",
+        f"urn:cap:ledger:release:{ledger}",
+    ]
+
+
 def enrollment_lines(fingerprint: str, grant: str, ledger: str) -> list[str]:
     """What the gonk operator adds for this machine, by command or by hand."""
-    tokens = ledger_write_tokens(ledger)
-    grants = json.dumps({grant: tokens}, indent=2).splitlines()
+    worker = json.dumps({grant: worker_tokens(ledger)}, indent=2).splitlines()
     return [
         "on the gonk machine, with this machine's client.crt copied there:",
+        f"  ikigai-gonk client add {grant} --cert client.crt --worker {ledger}",
+        "  (an unattended machine: the worker grant reads, claims, renews, comments and",
+        "  releases, and cannot close, relabel or file)",
         f"  ikigai-gonk client add {grant} --cert client.crt --ledger {ledger}=write",
+        "  (a person's machine: the writer grant also files, closes and relabels)",
         "or by hand, in the config home's gonk/ directory:",
         f'  clients.json  {{"clients": {{"{fingerprint}": {{"grant": "{grant}"}}}}}}',
-        "  grants.json   " + grants[0],
-        *("                " + line for line in grants[1:]),
+        "  grants.json   " + worker[0],
+        *("                " + line for line in worker[1:]),
         "then restart gonk: it reads the certificates it trusts at startup. Copy the server.crt",
         "from the bundle `client add` wrote over the one in this machine's certificate directory:",
         "the one `ikigai cert generate` wrote is a server identity of its own, not gonk's.",
-        f"Today `{ledger}=write` lets this identity file, close and relabel as well as claim and",
-        "comment; a narrower worker grant (claim, renew, release, comment, read; no close) needs",
-        "the ledger to express it, which is ledger item 1143 on ikigai's own ledger.",
     ]
 
 
