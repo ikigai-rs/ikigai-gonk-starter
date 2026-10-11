@@ -127,7 +127,7 @@ python3 tools/gonk.py init --ledger acme --holder build-box \
     --quic quic://gonk-host:1060 --cert-dir ~/gonk-cert
 ```
 
-`init` prints the machine's identity, `urn:iki:gonk:client:<fingerprint>` (the name gonk
+`init` prints the machine's identity, `urn:iki:host:gonk:client:<fingerprint>` (the name gonk
 puts on every request it makes, on every item it files, and in its access log), and the
 lines gonk's operator adds for it: one `ikigai-gonk client add … --cert client.crt --ledger
 acme=write` command, or the `clients.json` and `grants.json` entries by hand. The operator
@@ -136,6 +136,10 @@ over the one in `~/gonk-cert` (`cert generate` wrote a server identity of its ow
 which is not gonk's, so this machine could not pin gonk with it). Then `init` reports the
 machine ready. This works the same for an unattended machine as for a person's laptop,
 and a claim from it is stamped a **machine**'s by gonk, never the caller's choice.
+Records written before gonk adopted that name (item authors, its access log) spell it
+`urn:iki:gonk:client:<fingerprint>`: gonk keeps that spelling as a permanent alias, never
+mints it again, and reads both as this one machine, so `init` prints it beside the identity
+for searching older records.
 
 **Why not HTTP for a remote machine?** gonk's HTTP door listens on loopback only and refuses
 any other bind until it has TLS and a real domain for passkeys. A tunnel to that port would

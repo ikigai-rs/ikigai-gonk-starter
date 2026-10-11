@@ -192,7 +192,14 @@ def expand(path: str, base: Path) -> str:
     return str(p.resolve())
 
 
-CLIENT_IRI_PREFIX = "urn:iki:gonk:client:"
+# What gonk names a QUIC client, by every host's convention `urn:iki:host:{name}:client:<fp>`
+# (ikigai-gonk PR 126, ledger item 1183). The older spelling is a permanent alias: gonk never
+# mints it again and never rewrites it where it is stored (item authors, its access log), and
+# treats both spellings of one fingerprint as one machine. This tool compares no principals (a
+# claim is compared by its holder NAME, free text the ledger matches exactly), so the alias is
+# only ever printed, as what older records say.
+CLIENT_IRI_PREFIX = "urn:iki:host:gonk:client:"
+LEGACY_CLIENT_IRI_PREFIX = "urn:iki:gonk:client:"
 PEM_CERT = re.compile(r"-----BEGIN CERTIFICATE-----\s*(.+?)\s*-----END CERTIFICATE-----", re.DOTALL)
 
 
@@ -210,7 +217,13 @@ def cert_fingerprint(pem: str) -> str:
 
 
 def client_iri(fingerprint: str) -> str:
+    """The name gonk gives the QUIC client with this certificate fingerprint."""
     return CLIENT_IRI_PREFIX + fingerprint
+
+
+def legacy_client_iri(fingerprint: str) -> str:
+    """The same client's older spelling, which records written before the change still carry."""
+    return LEGACY_CLIENT_IRI_PREFIX + fingerprint
 
 
 def enrollment_lines(fingerprint: str, grant: str, ledger: str) -> list[str]:
@@ -1057,6 +1070,12 @@ def identity_rows(cfg: Config, row) -> None:
         return
     fingerprint = cert_fingerprint(crt.read_text(encoding="utf-8"))
     row("ok", "identity", f"{client_iri(fingerprint)} (from {crt})")
+    row(
+        "ok",
+        "alias",
+        f"older records name it {legacy_client_iri(fingerprint)}: gonk reads that spelling as "
+        "this machine too, and never mints it again",
+    )
     cfg.enrollment = enrollment_lines(fingerprint, cfg.holder or "<name>", cfg.ledger or "<ledger>")
     if not server.is_file():
         row(

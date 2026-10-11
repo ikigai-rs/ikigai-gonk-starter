@@ -101,9 +101,12 @@ class Fingerprints(unittest.TestCase):
         body = base64.encodebytes(der).decode()
         pem = f"-----BEGIN CERTIFICATE-----\n{body}-----END CERTIFICATE-----\n"
         self.assertEqual(gonk.cert_fingerprint(pem), hashlib.sha256(der).hexdigest())
-        self.assertTrue(
-            gonk.client_iri("ab").startswith("urn:iki:gonk:client:"), "gonk's client prefix"
-        )
+
+    def test_a_client_is_named_the_way_gonk_mints_it_now(self):
+        # gonk mints urn:iki:host:gonk:client:<fp> (ikigai-gonk PR 126, ledger 1183); the old
+        # spelling is an alias it never mints again, so this tool never prints it as the name.
+        self.assertEqual(gonk.client_iri("ab12"), "urn:iki:host:gonk:client:ab12")
+        self.assertEqual(gonk.legacy_client_iri("ab12"), "urn:iki:gonk:client:ab12")
 
     def test_a_file_with_no_certificate_is_refused(self):
         with self.assertRaises(gonk.ConfigError):
@@ -255,7 +258,12 @@ class Init(unittest.TestCase):
         fake = FakeIkigai([("ledgers", ok("")), ("describe", ok("x"))])
         code, out, _ = run(repo, args, fake)
         fp = hashlib.sha256(der).hexdigest()
-        self.assertIn(f"urn:iki:gonk:client:{fp}", out)
+        # The identity row names the machine as gonk mints it, and the older spelling only as
+        # what records written before the change still say.
+        identity = next(line for line in out.splitlines() if " identity " in f" {line} ")
+        self.assertIn(f"urn:iki:host:gonk:client:{fp} (from ", identity)
+        self.assertNotIn("urn:iki:gonk:client:", identity)
+        self.assertIn(f"older records name it urn:iki:gonk:client:{fp}", out)
         self.assertIn("ikigai-gonk client add build-box --cert client.crt --ledger acme=write", out)
         self.assertRegex(out, r"missing\s+server\s+no server.crt")
         self.assertEqual(code, 1)
@@ -397,6 +405,17 @@ class CheckClaim(unittest.TestCase):
         allowed, why = self.check(gonk.Answer(1, "", "connect: no such file"))
         self.assertFalse(allowed)
         self.assertIn("could not read item 12", why)
+
+    def test_a_holder_name_is_compared_exactly_even_when_it_spells_a_client(self):
+        # A holder is free text. gonk aliases a client's two IRI spellings for the PRINCIPAL it
+        # mints, never for a holder name: the ledger matches a renewal's holder exactly and
+        # refuses one under the other spelling (`held by …, not …`). So the other spelling is
+        # not this tree's claim, and saying it was would only defer the refusal to the renewal.
+        state = self.repo / ".gonk" / "state" / "claim.toml"
+        state.write_text('ledger = "acme"\nitem = 12\nholder = "urn:iki:host:gonk:client:ab12"\n')
+        allowed, why = self.check(item("urn:iki:gonk:client:ab12", "2026-10-10T21:30:00Z"))
+        self.assertFalse(allowed)
+        self.assertIn("taken over", why)
 
     def test_no_claim_file(self):
         (self.repo / ".gonk" / "state" / "claim.toml").unlink()

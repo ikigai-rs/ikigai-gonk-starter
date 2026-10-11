@@ -209,8 +209,13 @@ class AgainstARealGonk(unittest.TestCase):
         args += ["--quic", f"quic://127.0.0.1:{g.port}", "--cert-dir", str(g.bundle("worker"))]
         code, out = tool(repo, *args)
         self.assertEqual(code, 0, out)
-        # The identity init computes is the one gonk enrolled.
-        self.assertIn(principal, out)
+        # The identity init computes is the one gonk enrolled, named as gonk mints it now. A
+        # gonk from before ikigai-gonk PR 126 prints the older spelling of the same machine, so
+        # the two are compared by fingerprint (both spellings name one client to gonk).
+        [identity] = re.findall(r"identity\s+(\S+) \(from ", out)
+        fingerprint = re.fullmatch(r"urn:iki:(?:host:)?gonk:client:([0-9a-f]+)", principal)
+        self.assertIsNotNone(fingerprint, principal)
+        self.assertEqual(identity, gonk.client_iri(fingerprint.group(1)))
         self.assertIn("ikigai-gonk client add worker --cert client.crt --ledger acme=write", out)
 
         code, out = tool(repo, "file", "Run unattended")
