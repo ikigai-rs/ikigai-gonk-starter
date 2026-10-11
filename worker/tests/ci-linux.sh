@@ -159,6 +159,7 @@ systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target 
 hubprobe
 expect_exit "the probe passes" 0 "$st"; [ "$st" = 0 ] || printf '%s\n' "$out" | grep -E 'FAIL|WARN'
 has "masked is the pass state" "PASS sleep: suspend.target is masked" "$out"
+has "and the suspend-attempts line is there" "INFO suspend-attempts:" "$out"
 has "hubdiag reads the journal" "PASS journal: hubdiag reads the system journal" "$out"
 facts="$(ssh "${sshopt[@]}" hubdiag@127.0.0.1 cat /srv/hubdiag/facts 2>&1)"
 has "hubdiag reads the facts the root-side check wrote" "result: PASS" "$facts"

@@ -14,6 +14,7 @@
 #
 #   probe.sh [--sections LIST] [--closed DIR]... [--view DIR]... [--no-write DIR]...
 #            [--forbid-group G]... [--expect-group G]... [--home DIR]... [--candidates]
+#            [--gh-bin PATH] [--journalctl-bin PATH]
 #
 #   --sections      comma list from: identity,closed,view,nowrite,journal,linger,sleep,hw,tools,gh,
 #                   agents (default: identity,closed,view,nowrite,journal)
@@ -32,6 +33,9 @@
 #                   the agent's homes; that is the full form of the leak test. Without it the
 #                   closed section tries a fixed list of guessable names, which is what an
 #                   unprivileged caller (the hub over ssh) can do.
+#   --gh-bin PATH        tests: the gh to classify a token with (default: the system's)
+#   --journalctl-bin PATH  tests: the journalctl to read the sleep section's journal with
+#                        (default: journalctl on PATH)
 #
 # Output: one line per finding, `PASS|FAIL|WARN|INFO <check>: <detail>`, then a summary line.
 # Exit: 0 no FAIL · 1 at least one FAIL · 2 usage.
@@ -41,7 +45,7 @@ set -u
 
 sections="identity,closed,view,nowrite,journal"
 closed=() views=() nowrite=() forbid=() expect=() homes=() lingers=()
-candidates=0 ghbin=""
+candidates=0 ghbin="" jcbin=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --sections) sections="$2"; shift 2 ;;
@@ -54,7 +58,8 @@ while [ $# -gt 0 ]; do
         --linger) lingers+=("$2"); shift 2 ;;
         --candidates) candidates=1; shift ;;
         --gh-bin) ghbin="$2"; shift 2 ;;   # tests: a stub gh
-        -h|--help) sed -n '2,39p' "$0" 2>/dev/null; exit 0 ;;
+        --journalctl-bin) jcbin="$2"; shift 2 ;;   # tests: a stub journalctl
+        -h|--help) sed -n '2,42p' "$0" 2>/dev/null; exit 0 ;;
         *) echo "probe.sh: unknown argument: $1" >&2; exit 2 ;;
     esac
 done
@@ -244,8 +249,18 @@ fi
 # sleep: a worker that can suspend is a worker that silently stops. The first worker (a laptop,
 # on AC, lid open) suspended at 15:06 on 2026-10-10 from COSMIC's idle auto-suspend, and nothing
 # at the system level prevented it. A FAIL here, never a warning (a design decision, 2026-10-10).
+#
+# The masks stop the SLEEP, but not the ATTEMPT: a desktop's own idle-suspend (COSMIC's
+# cosmic_idle, GNOME's gsd-power) still calls logind's Suspend, logind still broadcasts "The
+# system will suspend now!" to every tty, and only then does it find suspend.target masked and
+# refuse (2026-10-11: exactly that on the first worker, harmless but alarming to read). Masking
+# the targets cannot silence it — logind's only pre-checks are the sleep.conf Allow* booleans
+# and whether suspend is supported at all, and neither knows about a masked target. Turning the
+# desktop's automatic suspend OFF is the fix; the count below is the INFO that says whether it
+# has been done.
 if want sleep; then
     if [ "$os" = Linux ]; then
+        jc="${jcbin:-journalctl}"
         for t in sleep suspend hibernate hybrid-sleep suspend-then-hibernate; do
             s="$(systemctl is-enabled "$t.target" 2>/dev/null)"
             case "$s" in
@@ -270,9 +285,21 @@ if want sleep; then
             esac
         done
         info power "battery:${bat:- none} · AC:${ac:- none reported}"
-        n="$(journalctl -b -q --no-pager -k -g 'PM: suspend entry' 2>/dev/null | wc -l | tr -d ' ')"
-        last="$(journalctl -b -q --no-pager -k -g 'PM: suspend entry' -o short-iso 2>/dev/null | tail -1 | cut -c1-25)"
+        n="$("$jc" -b -q --no-pager -k -g 'PM: suspend entry' 2>/dev/null | wc -l | tr -d ' ')"
+        last="$("$jc" -b -q --no-pager -k -g 'PM: suspend entry' -o short-iso 2>/dev/null | tail -1 | cut -c1-25)"
         info suspends "$n in this boot${last:+ (last: $last)}"
+        # The refusals: logind's "Unit suspend.target is masked, refusing operation." (a start of
+        # a masked target), and, if the desktop instead called a sleep verb directly, logind's own
+        # "Failed to execute suspend operation: …" or its "Requested suspend operation not
+        # supported, ignoring." Both mean a desktop tried and the mask said no. INFO, not FAIL:
+        # nothing was suspended, and this is exactly what a correctly masked machine looks like
+        # until the desktop's automatic suspend is turned off too.
+        refused="$("$jc" -b -q --no-pager -g 'Unit (sleep|suspend|hibernate|hybrid-sleep|suspend-then-hibernate)\.target is .*, refusing operation|Failed to execute (suspend|hibernate|hybrid-sleep|suspend-then-hibernate) operation|Requested (suspend|hibernate|hybrid-sleep|suspend-then-hibernate) operation not supported' 2>/dev/null | wc -l | tr -d ' ')"
+        if [ "${refused:-0}" -gt 0 ]; then
+            info suspend-attempts "$refused refused in this boot: the desktop's automatic suspend is still on. A sleep call was made and the mask refused it — no sleep, but a logind wall broadcast to every tty first. Turn the desktop's own automatic suspend off: COSMIC Settings > Power & Battery > Automatic suspend > Never; GNOME: gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type 'nothing'"
+        else
+            info suspend-attempts "none refused in this boot"
+        fi
     else
         # pmset(1): "-c" is the charger (wall power) profile; "sleep 0" disables system sleep.
         acsleep="$(pmset -g custom 2>/dev/null | awk '/^AC Power:/ {ac=1; next} /^[A-Za-z].*:$/ {ac=0} ac && $1 == "sleep" {print $2; exit}')"

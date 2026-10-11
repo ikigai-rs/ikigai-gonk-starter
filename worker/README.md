@@ -233,6 +233,29 @@ the only pass), logind's `HandleLidSwitch*`, the battery and AC state, and the s
 boot (`PM: suspend entry` in the kernel journal); on macOS the AC profile's `sleep` and any
 `SleepDisabled`, and the sleep events in `pmset -g log` since boot.
 
+**Masking the targets is not the whole fix: the desktop has to be told to stop trying.** On
+2026-10-11 the first worker's COSMIC idle daemon ran `systemctl suspend`; logind broadcast *The
+system will suspend now!* to every tty, and only then found `suspend.target` masked and refused
+(`Unit suspend.target is masked, refusing operation.`). Nothing slept — the mask works — but a
+wall message on every console reads like the machine is about to go down, and it is noise a hub
+has to explain. The mask cannot prevent it: logind decides to broadcast and to start the target
+before it ever looks at the target's state, and its only pre-checks are `sleep.conf`'s `Allow*`
+booleans and whether the kernel supports sleep at all, neither of which knows a target is masked.
+So turn the desktop's OWN automatic suspend off as well; the mask stays as the backstop for
+everything else (a stray `systemctl suspend`, a lid switch, another tool).
+
+- **COSMIC** (what the first worker runs): Settings > **Power & Battery** > **Automatic suspend**
+  (and *Automatic suspend when plugged in* / *on battery power*) > **Never**.
+- **GNOME:** `gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type 'nothing'`
+  (and `sleep-inactive-battery-type` on a laptop), or Settings > Power > Automatic Suspend > Off.
+- **KDE:** System Settings > Power Management > *Suspend session* > Never.
+- **Xfce:** `xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/inactivity-on-ac -s 0`.
+
+The probe's `sleep` section reports it: `INFO suspend-attempts: N refused in this boot …` names the
+count and says which setting to turn off, or `none refused in this boot` when the desktop is
+already quiet. It is INFO and not a FAIL (the machine is up; the mask held), so a masked machine
+that still shows a count is telling you the desktop half of the fix is outstanding.
+
 **Linux**, as the admin (a desktop's own idle-suspend setting then has nothing to call):
 
     sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
