@@ -13,7 +13,10 @@
 # to stop. Install it with: python3 -m venv .venv && .venv/bin/pip install ruff==0.16.1
 #
 # The integration tests start a scratch gonk when `ikigai-gonk` and `ikigai` are on PATH,
-# and skip, saying why, when they are not (as in CI).
+# and skip, saying why, when they are not (as in CI). The unittest step also runs the worker
+# scripts' hermetic tests (tests/test_worker.py: worker/tests/probe-test.sh and setup-test.sh,
+# no root, nothing changed) and the public-tree guard (tests/test_tree_guard.py). The worker's
+# end-to-end tests are CI jobs of their own, on throwaway runners only.
 
 set -u
 cd "$(dirname "$0")/.." || exit 2

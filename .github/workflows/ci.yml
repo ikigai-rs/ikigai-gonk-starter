@@ -25,3 +25,29 @@ jobs:
         # target of tools/new.py into a scratch directory and runs that repository's own
         # tests, so a template that has gone stale fails here.
         run: scripts/gates.sh
+
+  # THE WORKER BOUNDARY, END TO END (worker/README.md). worker-setup.sh creates accounts, mounts
+  # and sshd configuration, so it cannot be tested on a developer's machine, and the gates above
+  # run only its hermetic halves (worker/tests/probe-test.sh, setup-test.sh). These jobs run it
+  # for real on THROWAWAY runners (the scripts refuse to run anywhere else), prove --check green,
+  # then re-create each mistake it exists to catch and prove it RED: first the first worker's own
+  # (2026-10-10), traverse on the admin's home that made ~/.bash_history readable. Linux and
+  # macOS are different code paths (bind mounts, systemd-journal and linger; dscl accounts
+  # outside staff, the ACL deny on the admin's home, the LaunchDaemon copy as the view).
+  worker-linux:
+    name: worker boundary (linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: setup, check green, re-create each leak, check red, repair
+        run: sudo -E ./worker/tests/ci-linux.sh
+
+  worker-macos:
+    name: worker boundary (macos)
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: setup, check green, re-create the leak, check red, repair
+        run: sudo -E ./worker/tests/ci-macos.sh

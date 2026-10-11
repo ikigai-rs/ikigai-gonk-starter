@@ -42,6 +42,7 @@ tools/gonk.py            init, seed, file, next, claim, release, report, close, 
 tools/new.py             generate a repository with the library-lending sample in it
 templates/               what new.py generates from: the sample, and one directory per language
 hooks/claude/            an OPTIONAL Claude Code hook that refuses edits without a claim
+worker/                  set up a machine that does agentic work for a hub, and check it
 ```
 
 Everything is empty until you fill it, or until `tools/new.py` fills a copy for you. `tools/gonk.py` is standard-library Python (3.11 or
@@ -198,6 +199,28 @@ The sample ships `open-items-for-artifact`, `open-work-by-change` and
 `requirements-with-open-work` (the spec graph joined with the ledger), and the plan
 `next-for-artifact` (the ledger's own `next`, narrowed to one artifact's items).
 
+## Worker machines
+
+A **worker** is a machine that does agentic work for a hub: it claims an item, works in a
+fresh worktree as an account of its own, and opens a pull request. [`worker/`](worker/README.md)
+sets one up (Linux with systemd, or macOS) and proves its boundary: two accounts, `agent` (the
+worker, which never works in a person's checkouts) and `hubdiag` (the hub's read-only eyes),
+each closed out of the admin's home; read-only views of the agent's work for the hub; sshd
+allowing the hub one tunnel and nothing else; and a self-test that tries every file in the
+admin's home as each account and fails on any that opens.
+
+```sh
+./worker/worker-setup.sh --dry-run --key hub.pub    # every change it would make, as a list
+sudo ./worker/worker-setup.sh --key hub.pub         # make them (idempotent; repairs drift)
+sudo ./worker/worker-setup.sh --check               # the boundary self-test, and the facts file
+```
+
+[`worker/README.md`](worker/README.md) is the runbook, in order: the OS, the accounts, the
+GitHub token, never sleeping, a local model, ikigai and gonk, and reaching the worker from the
+hub, plus the two things a hub reads over ssh (the probe's output and the facts file). CI runs
+the whole setup for real on throwaway Ubuntu and macOS runners, then re-creates each mistake it
+exists to catch and proves the check red.
+
 ## Coming next
 
 - **More languages** for the generator: Deno, Rust and Go, each passing the same vectors.
@@ -222,9 +245,12 @@ just gates          # or scripts/gates.sh: ruff check, ruff format --check, the 
                     # the sample, generated for every target, running its own tests
 ```
 
-The tests are standard-library `unittest`. The integration tests start a scratch gonk of
-their own (a temporary directory, an ephemeral port, its own socket) when `ikigai-gonk` and
-`ikigai` are on PATH, and skip, saying why, when they are not, as in CI.
+The tests are standard-library `unittest`, and include the worker scripts' hermetic tests
+and the **public-tree guard** (`tests/test_tree_guard.py`): this repository is public, so no
+tracked file may hold a path under a person's home, an mDNS `.local` host name, a non-loopback
+IPv4 address, or the name of one of the project's own machines. The integration tests start
+a scratch gonk of their own (a temporary directory, an ephemeral port, its own socket) when
+`ikigai-gonk` and `ikigai` are on PATH, and skip, saying why, when they are not, as in CI.
 
 ## License
 

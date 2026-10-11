@@ -218,7 +218,7 @@ class Init(unittest.TestCase):
         pem = "-----BEGIN CERTIFICATE-----\n" + base64.encodebytes(der).decode()
         (certs / "client.crt").write_text(pem + "-----END CERTIFICATE-----\n")
         args = ["init", "--ledger", "acme", "--holder", "bug-worker"]
-        args += ["--quic", "quic://plasma:1060", "--cert-dir", str(certs)]
+        args += ["--quic", "quic://gonk-host:1060", "--cert-dir", str(certs)]
         fake = FakeIkigai([("ledgers", ok("")), ("describe", ok("x"))])
         code, out, _ = run(repo, args, fake)
         fp = hashlib.sha256(der).hexdigest()
@@ -228,7 +228,7 @@ class Init(unittest.TestCase):
         )
         self.assertRegex(out, r"missing\s+server\s+no server.crt")
         self.assertEqual(code, 1)
-        self.assertEqual(fake.target.mount_args()[1], "urn:gk:=quic://plasma:1060")
+        self.assertEqual(fake.target.mount_args()[1], "urn:gk:=quic://gonk-host:1060")
 
 
 class Claims(unittest.TestCase):
