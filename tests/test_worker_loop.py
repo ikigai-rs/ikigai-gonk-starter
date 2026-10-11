@@ -450,6 +450,35 @@ class TheLoop(unittest.TestCase):
         self.assertEqual(self.run_once(keep="true").code, worker.HANDED_BACK)
         self.assertTrue((self.rig.home / "work" / "lib" / f"item-{n}").is_dir())
 
+    def test_the_brief_carries_the_items_comments_from_the_dispatcher(self):
+        n = self.ledger.file("Fix the due dates", ["worker:w1", "repo:lib"], body="They are off.")
+        self.ledger.add_comment(
+            n, "Actually, the premise was wrong: see the spec at openspec/specs."
+        )
+        self.ledger.add_comment(n, "Correction: the issue is in the timezone handling.")
+        self.ledger.add_comment(n, "Evidence: https://github.com/acme/lib/pull/99")
+        self.ledger.add_comment(n, "gonk worker `w1` handed this back: ...")
+        outcome = self.run_once()
+        self.assertEqual(outcome.code, worker.HANDED_BACK, outcome.summary)
+        prompt = self.rig.prompt(n)
+        self.assertIn("Later notes from the dispatcher and others", prompt)
+        self.assertIn("Actually, the premise was wrong", prompt)
+        self.assertIn("Correction: the issue is in the timezone handling", prompt)
+        # The worker's own hand-back comments are NOT in the brief
+        self.assertNotIn("Evidence: https://github.com/acme/lib/pull/99", prompt)
+        self.assertNotIn("gonk worker `w1` handed this back", prompt)
+
+    def test_the_brief_bounds_the_comments_it_carries(self):
+        n = self.ledger.file("Fix the due dates", ["worker:w1", "repo:lib"], body="They are off.")
+        long_text = "x" * 5000
+        self.ledger.add_comment(n, long_text)
+        outcome = self.run_once()
+        self.assertEqual(outcome.code, worker.HANDED_BACK, outcome.summary)
+        prompt = self.rig.prompt(n)
+        self.assertIn("Later notes from the dispatcher and others", prompt)
+        self.assertIn("[...]", prompt)  # truncated
+        self.assertNotIn(long_text, prompt)
+
     def test_a_second_run_of_one_item_gets_a_fresh_directory(self):
         n = self.ledger.file("Again", ["worker:w1", "repo:lib"])
         self.assertEqual(self.run_once(keep="true").code, worker.HANDED_BACK)

@@ -487,7 +487,9 @@ claim that is no longer its own.
   the claims and then claims, so two workers can both read "free" at once. The re-read after
   claiming narrows that and does not close it.
 - **The brief is the item's body** behind the worker's fixed preamble, until briefs are
-  resources gonk serves.
+  resources gonk serves. The item's comments (from the dispatcher and others, oldest
+  first, excluding the worker's own hand-back comments) are included as a marked
+  block, bounded in size.
 - **The grant is wider than the worker.** Today a machine identity is enrolled with
   `<ledger>=write`, which can also close, relabel and file; the worker's code does none of
   those, but nothing in gonk stops it, and the agent runs as the same account and could use

@@ -714,6 +714,53 @@ The item, {display} on the ledger `{ledger}`:
 """
 
 
+# The worker's own hand-back comments, which the brief does not carry back to it
+HAND_BACK_PREFIXES = ("Evidence:", "gonk worker")
+
+# Bounds on the comments the brief carries: enough for a real correction, not a flood
+MAX_COMMENTS_IN_BRIEF = 20
+MAX_COMMENT_LINES = 40
+MAX_COMMENT_TEXT = 2000
+MAX_BRIEF_COMMENTS = 8000
+
+
+def brief_comments(item: dict) -> str:
+    """The item's comments, oldest first, as a marked block for the brief.
+
+    The worker's own hand-back comments (`Evidence:` and `gonk worker`) are left out:
+    they are what the worker said back, not what the dispatcher or others said. The
+    block is bounded: a flood of comments must not push the item itself out of the
+    prompt.
+    """
+    comments = sorted(item.get("comments") or [], key=lambda c: c.get("time") or "")
+    kept, total = [], 0
+    for comment in comments:
+        text = (comment.get("text") or "").strip()
+        if not text or text.startswith(HAND_BACK_PREFIXES):
+            continue
+        lines = text.splitlines()
+        if len(lines) > MAX_COMMENT_LINES:
+            text = "\n".join(lines[:MAX_COMMENT_LINES]) + "\n[...]"
+        if len(text) > MAX_COMMENT_TEXT:
+            text = text[:MAX_COMMENT_TEXT] + "[...]"
+        if total + len(text) > MAX_BRIEF_COMMENTS:
+            kept.append("[... further comments truncated ...]")
+            break
+        kept.append(text)
+        total += len(text)
+        if len(kept) >= MAX_COMMENTS_IN_BRIEF:
+            kept.append("[... further comments truncated ...]")
+            break
+    if not kept:
+        return ""
+    return (
+        "\n\nLater notes from the dispatcher and others (oldest first, "
+        + f"{len(kept)} of {len(comments)} comments):\n\n"
+        + "\n\n---\n\n".join(kept)
+        + "\n"
+    )
+
+
 def brief(item: dict, ledger: str, ws: Workspace, repo: Repo, budget: int) -> str:
     values = {
         "{display}": str(item.get("display") or f"#{item.get('number')}"),
@@ -729,7 +776,10 @@ def brief(item: dict, ledger: str, ws: Workspace, repo: Repo, budget: int) -> st
         text = text.replace(token, value)
     title = (item.get("title") or "").strip()
     body = (item.get("body") or "").strip()
-    return f"{text}\n# {title}\n\n{body}\n" if body else f"{text}\n# {title}\n"
+    comments = brief_comments(item)
+    if body:
+        return f"{text}\n# {title}\n\n{body}\n{comments}"
+    return f"{text}\n# {title}\n\n{comments}" if comments else f"{text}\n# {title}\n"
 
 
 def agent_argv(command: list[str], values: dict[str, str]) -> list[str]:
