@@ -10,7 +10,7 @@ works by.
 ## What is in it
 
 ```text
-AGENTS.md                the rules (CLAUDE.md is a link to it)
+AGENTS.md                the rules (CLAUDE.md imports it)
 openspec/specs/          what the library does now: catalog, members, loans, renewals, overdue
 openspec/changes/        two changes in flight: cap-late-fees (small), add-holds (both artifacts)
 openspec/vectors.json    every scenario of the specs, as steps any language's tests run

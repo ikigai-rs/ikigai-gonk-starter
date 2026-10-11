@@ -31,7 +31,7 @@ through a pull request with green CI, evidence on every report and close, and ne
 
 ```text
 AGENTS.md                the rules, for every agent and every person
-CLAUDE.md -> AGENTS.md   the same file, under the name Claude Code reads
+CLAUDE.md                `@AGENTS.md`: Claude Code imports the same rules (not a symlink; see below)
 openspec/                specs (what the system does now) and changes (what is proposed)
 artifacts/<name>/        one directory per deployable thing, any language each
 .gonk/                   which ledger, how to reach gonk, and where everything lives
@@ -44,6 +44,8 @@ tools/new.py             generate a repository with the library-lending sample i
 templates/               what new.py generates from: the sample, and one directory per language
 hooks/claude/            an OPTIONAL Claude Code hook that refuses edits without a claim
 worker/                  set up a machine that does agentic work for a hub, check it, run the loop
+docs/windows.md          Windows: WSL2, and what each agent does there
+.gitattributes           LF in every checkout, whatever core.autocrlf says
 ```
 
 Everything is empty until you fill it, or until `tools/new.py` fills a copy for you. `tools/gonk.py` is standard-library Python (3.11 or
@@ -163,16 +165,23 @@ walks through it, including the client-side `--grant` ceiling.
 
 | agent | reads | what to do |
 | --- | --- | --- |
-| Claude Code | `CLAUDE.md` | nothing: it is a link to `AGENTS.md` |
+| Claude Code | `CLAUDE.md` | nothing: its one line, `@AGENTS.md`, imports the rules ([docs](https://code.claude.com/docs/en/memory)) |
 | Codex | `AGENTS.md` | nothing: Codex reads `AGENTS.md` from the project root down to the working directory ([docs](https://developers.openai.com/codex/guides/agents-md)) |
 | Hermes Agent | `AGENTS.md` | nothing, unless the project also has a `.hermes.md` or `HERMES.md`, which Hermes ranks first and reads INSTEAD ([docs](https://hermes-agent.nousresearch.com/docs/user-guide/features/context-files)) |
 | pi | `AGENTS.md` or `CLAUDE.md` | nothing: pi loads context files from its agent directory, the working directory and its parents ([docs](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/configuration.md)) |
 
 Checked against each project's documentation on 2026-10-10. Two things that documentation
 does not say, so this does not claim them: whether pi reads BOTH `AGENTS.md` and `CLAUDE.md`
-when one directory holds both (here they are one file, so at worst it reads the rules twice),
-and whether pi or Hermes can be pointed at a differently named file. Codex can, with
-`project_doc_fallback_filenames`, but has no need to here.
+when one directory holds both, and whether pi or Hermes can be pointed at a differently named
+file. Codex can, with `project_doc_fallback_filenames`, but has no need to here. pi's source
+answers the first: it takes the first of `AGENTS.md` and `CLAUDE.md` it finds in a directory,
+in that order, so it never reads `CLAUDE.md` here; Hermes documents the same order.
+
+`CLAUDE.md` is an import rather than a symlink because of Windows: Git for Windows checks a
+symlink out as a file holding the target's name unless `core.symlinks` is on, and Claude Code
+would read that one line instead of the rules. [`docs/windows.md`](docs/windows.md) has that,
+the line-ending trap `.gitattributes` closes, WSL2 setup, and what each agent is documented to
+do on native Windows and in WSL2.
 
 ## The optional Claude Code hook
 

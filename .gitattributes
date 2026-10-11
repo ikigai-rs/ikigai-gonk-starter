@@ -1,0 +1,26 @@
+# Line endings: LF in the repository AND in every checkout, whatever core.autocrlf says.
+#
+# Git for Windows installs with core.autocrlf=true by default, which checks text files out
+# with CRLF. A shell script with CRLF does not run (`bad interpreter: /bin/bash^M`), a
+# systemd unit or a justfile may misread its lines, and a file compared byte for byte (the
+# spec vectors) differs. `eol=lf` on a path overrides core.autocrlf for it. A repository
+# generated from this starter carries this file too. docs/windows.md says more, and
+# tests/test_windows.py clones the way Git for Windows does and checks.
+* text=auto eol=lf
+
+# Named explicitly, so content detection can never decide them: the scripts, the shared
+# vectors and the other data the tests read, the templates the generator copies, the
+# service units and the rules.
+*.sh        text eol=lf
+*.py        text eol=lf
+*.json      text eol=lf
+*.toml      text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.md        text eol=lf
+*.rq        text eol=lf
+*.ttl       text eol=lf
+*.service   text eol=lf
+*.plist     text eol=lf
+*.recipes   text eol=lf
+justfile    text eol=lf

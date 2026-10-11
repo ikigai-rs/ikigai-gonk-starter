@@ -35,10 +35,16 @@ TEMPLATES = ROOT / "templates"
 SAMPLE = TEMPLATES / "library"
 
 # This starter's files that every generated repository carries, unchanged. The justfile is
-# assembled (see `justfile`), and CLAUDE.md is made as a link to AGENTS.md.
+# assembled (see `justfile`). CLAUDE.md is a one-line file, `@AGENTS.md`, which Claude Code
+# expands into the rules, never a symlink: a checkout with symlinks off (Git for Windows by
+# default) turns a link into a file holding the target's NAME. .gitattributes keeps every
+# checkout LF whatever core.autocrlf says. docs/windows.md says why for both.
 STARTER_FILES = [
     "AGENTS.md",
+    "CLAUDE.md",
     ".gitignore",
+    ".gitattributes",
+    "docs/windows.md",
     "tools/gonk.py",
     # The worker loop, so a generated project can hand items to an unattended machine (the
     # justfile's `worker` recipes run it): the loop, its configuration's commented template,
@@ -142,9 +148,9 @@ def generate(dest: Path, target: str) -> list[Path]:
         (dest / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(source, dest / rel)  # contents and permission bits
         written.append(rel)
-    (dest / "justfile").write_text(justfile(target_dir), encoding="utf-8")
-    os.symlink("AGENTS.md", dest / "CLAUDE.md")
-    return sorted([*written, Path("justfile"), Path("CLAUDE.md")])
+    # newline="\n": written, not copied, so say LF explicitly (Python on Windows writes CRLF).
+    (dest / "justfile").write_text(justfile(target_dir), encoding="utf-8", newline="\n")
+    return sorted([*written, Path("justfile")])
 
 
 def main(argv: list[str] | None = None) -> int:

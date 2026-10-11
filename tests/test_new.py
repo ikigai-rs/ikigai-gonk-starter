@@ -45,9 +45,16 @@ class Generate(unittest.TestCase):
             self.assertTrue((ROOT / rel).is_file(), rel)
 
     def test_the_starters_tools_and_rules_are_copied_unchanged(self):
-        for rel in ["AGENTS.md", "tools/gonk.py", "hooks/claude/require-claim.py"]:
+        for rel in [
+            "AGENTS.md",
+            "CLAUDE.md",
+            ".gitattributes",
+            "docs/windows.md",
+            "tools/gonk.py",
+            "hooks/claude/require-claim.py",
+        ]:
             self.assertEqual((self.repo / rel).read_bytes(), (ROOT / rel).read_bytes(), rel)
-        self.assertEqual(os.readlink(self.repo / "CLAUDE.md"), "AGENTS.md")
+        self.assertFalse((self.repo / "CLAUDE.md").is_symlink(), "a symlink breaks on Windows")
         self.assertTrue(os.access(self.repo / "tools" / "gonk.py", os.X_OK))
 
     def test_the_worker_loop_comes_along(self):
