@@ -395,15 +395,29 @@ the Pop!_OS 24.04 worker, `run --once`) showed, and what is still to try:
     agent, which stores it in `~/.claude/.credentials.json` (mode 600), the file the probe's
     `login:` reports by presence. `claude auth status` says which method is in use
     (`"authMethod": "claude.ai"`) without printing the secret.
-  - *A long-lived token* (the documented route for unattended runs; not yet run here):
-    `claude setup-token` ("Set up a long-lived authentication token (requires Claude
-    subscription)") prints a token with the line `export CLAUDE_CODE_OAUTH_TOKEN=<token>`.
-    The CLI reads it from that environment variable, and the worker passes its own
-    environment to the agent, so the token must be in the **worker's** environment: for the
-    systemd unit, a drop-in (`systemctl --user edit gonk-worker`) with
-    `EnvironmentFile=%h/.config/gonk-worker/claude.env`, a file of agent's at mode 600 that
-    holds the one `CLAUDE_CODE_OAUTH_TOKEN=` line. Such a token is limited to inference,
-    which is all a worker needs. While the variable is set it wins over the stored login.
+  - *A long-lived token* (the documented route for unattended runs; it has run here, ledger
+    item 1238 being that run): `claude setup-token` ("Set up a long-lived authentication
+    token (requires Claude subscription)") prints a token with the line `export
+    CLAUDE_CODE_OAUTH_TOKEN=<token>`. The CLI reads it from that environment variable, and
+    the worker passes its own environment to the agent, so the token must be in the
+    **worker's** environment. Put it in `~/.config/gonk-worker/claude.env`, a file of
+    agent's at mode 600 that holds the one `CLAUDE_CODE_OAUTH_TOKEN=` line, and load it:
+    - *By hand* (`worker.py run --once` from a login shell): a line in `~/.profile`,
+      `set -a; [ -r ~/.config/gonk-worker/claude.env ] && . ~/.config/gonk-worker/claude.env; set +a`.
+      This is the route that has run: the worker was started from a login shell, carried the
+      variable and passed it to the agent.
+    - *The systemd unit* (untested): a drop-in (`systemctl --user edit gonk-worker`) with
+      `EnvironmentFile=%h/.config/gonk-worker/claude.env`.
+
+    Such a token is limited to inference, which is all a worker needs. While the variable is
+    set it wins over the stored login, so after the token works, `claude auth logout` removes
+    the stored login (`~/.claude/.credentials.json` is then absent) and the token is the
+    only credential, which is narrower: inference only, nothing else on the account.
+    **A trap:** from inside the agent the token looks absent. Claude Code hides its own auth
+    variable from the shell commands it runs, so there `claude auth status` says not logged
+    in and `test -n "$CLAUDE_CODE_OAUTH_TOKEN"` says unset, while the agent is running on
+    that very token. Do not diagnose a worker from inside an agent. The check is `claude
+    auth status` in a login shell of the worker account.
 - **Permissions:** `claude -p` alone keeps the default permission mode, which asks before
   edits and shell commands, and an unattended run has nobody to answer.
   `--permission-mode bypassPermissions` (or `--dangerously-skip-permissions`, "Bypass all
