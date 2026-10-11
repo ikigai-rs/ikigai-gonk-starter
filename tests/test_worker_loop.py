@@ -417,21 +417,33 @@ class TheLoop(unittest.TestCase):
         self.assertIn("from gh pr checks: gates: pass", comment)
         self.assertFalse(any(c[:2] == ["run", "list"] for c in self.rig.gh()["calls"]))
 
-    def test_a_pull_request_the_agent_merged_is_called_out(self):
-        n = self.ledger.file("Merged anyway", ["worker:w1", "repo:lib"])
-        real = worker.GitHub.pull_requests
-
-        def merged(gh, branch):
-            prs, err = real(gh, branch)
-            for pr in prs:
-                pr.state = "MERGED"
-            return prs, err
-
-        worker.GitHub.pull_requests = merged
-        self.addCleanup(setattr, worker.GitHub, "pull_requests", real)
+    def merged_by(self, at: str) -> str:
+        state = self.rig.gh()
+        state["merge"] = {"at": at, "by": "dispatcher-login"}
+        self.rig.gh_state.write_text(json.dumps(state))
+        n = self.ledger.file("Merged", ["worker:w1", "repo:lib"])
         self.assertEqual(self.run_once().code, worker.HANDED_BACK)
         [comment] = evidence_comments(self.ledger.items[n])
-        self.assertIn("WARNING: merged by the agent, against its rules", comment)
+        return comment
+
+    def test_a_pull_request_merged_while_the_agent_ran_is_called_out(self):
+        comment = self.merged_by("2026-01-01T00:00:00Z")
+        self.assertIn(
+            "- WARNING: merged at 2026-01-01T00:00:00Z by dispatcher-login before the agent "
+            "exited: by the agent, against its rules, unless someone else merged it while it ran",
+            comment,
+        )
+        self.assertNotIn("after the agent exited", comment)
+
+    def test_a_pull_request_merged_after_the_agent_exited_is_not_the_agents(self):
+        # Ledger item 1232: a merge by the dispatcher after the agent exited read as the agent's.
+        comment = self.merged_by("now")
+        self.assertNotIn("WARNING", comment)
+        self.assertRegex(
+            comment,
+            r"- https://github.com/acme/lib/pull/1 was merged by dispatcher-login at \S+, after "
+            r"the agent exited",
+        )
 
     def test_keep_leaves_the_worktree(self):
         n = self.ledger.file("Keep it", ["worker:w1", "repo:lib"])

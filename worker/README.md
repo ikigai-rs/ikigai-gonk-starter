@@ -369,8 +369,11 @@ is the commented template):
 | `gh`, `stop_file` | `gh`, `.gonk/state/worker/stop` | the GitHub CLI; the file that stops the loop between items |
 
 The presets are each agent's documented non-interactive form (`claude -p`, `codex exec`,
-`hermes -z`). **The hermes preset has run an item end to end on a Linux worker**. The others
-are untested, so try one on an item of no consequence with `run --once` first. An unattended
+`hermes -z`). **Hermes and Codex have each run an item end to end on a Linux worker**: hermes
+as its preset, and Codex with its sandbox opened, `command = ["codex", "exec", "--sandbox",
+"danger-full-access", "{prompt}"]`, because it commits, pushes and opens the pull request,
+which its default sandbox refuses; the agent's own Unix account is the boundary. Claude Code
+is untested, so try it on an item of no consequence with `run --once` first. An unattended
 agent also needs its own permission settings (Claude Code's allowlist or permission mode,
 Codex's sandbox and approval policy); the worker does not choose them for you.
 

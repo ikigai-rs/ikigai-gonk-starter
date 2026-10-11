@@ -8,8 +8,8 @@
 
 The state file holds the pull requests, how `pr checks` answers (`"checks": "refused"` is a
 fine-grained token, which GitHub offers no Checks permission for; `"ok"` answers), the runs
-per head sha, and every call made. Anything else (`pr merge` above all) is recorded under
-`forbidden` and fails, so a test can assert the worker never merged.
+per head sha, someone else's merge (`"merge"`), and every call made. Anything else (`pr merge`
+above all) is recorded under `forbidden` and fails, so a test can assert the worker never merged.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ import json
 import re
 import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -51,6 +52,16 @@ def main() -> int:
         out = url + "\n"
     elif argv[:2] == ["pr", "list"]:
         head = flag(argv, "--head")
+        # `"merge": {"at": "now" | <ISO time>, "by": <login>}`: someone merges every pull
+        # request on the branch, as of the first listing (the worker lists after the agent
+        # exits, so "now" is a merge after the exit).
+        merge = state.get("merge")
+        for pr in state["prs"]:
+            if merge and pr["headRefName"] == head and pr["state"] != "MERGED":
+                at = merge.get("at", "now")
+                if at == "now":
+                    at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+                pr.update(state="MERGED", mergedAt=at, mergedBy={"login": merge.get("by", "")})
         fields = flag(argv, "--json", "number").split(",")
         rows = [{f: pr.get(f) for f in fields} for pr in state["prs"] if pr["headRefName"] == head]
         out = json.dumps(rows)
