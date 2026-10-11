@@ -135,7 +135,9 @@ restarts gonk and sends back the `server.crt` from the bundle `client add` wrote
 over the one in `~/gonk-cert` (`cert generate` wrote a server identity of its own there,
 which is not gonk's, so this machine could not pin gonk with it). Then `init` reports the
 machine ready. This works the same for an unattended machine as for a person's laptop,
-and a claim from it is stamped a **machine**'s by gonk, never the caller's choice.
+and a claim from it is stamped a **machine**'s by gonk, never the caller's choice. An
+unattended worker is enrolled with `--worker <ledger>` instead of `--ledger acme=write`: that
+grant can claim, renew, comment and release, but not close.
 Records written before gonk adopted that name (item authors, its access log) spell it
 `urn:iki:gonk:client:<fingerprint>`: gonk keeps that spelling as a permanent alias, never
 mints it again, and reads both as this one machine, so `init` prints it beside the identity
@@ -266,8 +268,7 @@ README says what else waits on the ledger.
 - **A second spec format**, beside OpenSpec, lifted to the same graph and ledger items by a
   mapping file rather than code.
 - **The worker's gaps, in the ledger.** One agent per repository enforced by the ledger rather
-  than read before claiming; briefs as resources gonk serves, beyond the item's body; and a
-  worker grant that can claim, renew, comment and release but not close.
+  than read before claiming; and briefs as resources gonk serves, beyond the item's body.
 - **The gonk Book's chapters** on a project of your own, walking the generated sample from
   a spec change to a closed item.
 
