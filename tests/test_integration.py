@@ -103,13 +103,43 @@ class ScratchGonk:
         shutil.rmtree(self.dir, ignore_errors=True)
 
 
+def offers_scripts(target: gonk.Target) -> bool:
+    """Whether the gonk under test mounts ikigai-script (`urn:script:`).
+
+    Asked directly rather than through the tool's own `offered`, so a test cannot agree with a
+    tool that misreads the answer. A gonk from before the mount refuses the catalog naming
+    `no endpoint resolved`; any other failure is not an answer either way and stops the test."""
+    answer = gonk.Ikigai(target).run("source urn:gk:script:catalog")
+    if answer.ok:
+        return True
+    if "no endpoint resolved for urn:script:catalog" in answer.text():
+        return False
+    raise RuntimeError(f"could not ask the scratch gonk about urn:script: {answer.text()}")
+
+
+def tsv_rows(text: str) -> list[str]:
+    """A tab-separated answer's rows, without the header and the CLI's `[…]` trailer."""
+    rows = [ln for ln in text.splitlines() if ln and not ln.startswith("[")]
+    return rows[1:]
+
+
+def script_result(target: gonk.Target, name: str, **params: str) -> list[str]:
+    """Run a published script as a read (`urn:script:{name}:result`), answering its rows."""
+    args = " ".join(f"{k}={v}" for k, v in params.items())
+    command = f"source urn:gk:script:{name}:result {args} as=text/tab-separated-values"
+    answer = gonk.Ikigai(target).run(command)
+    assert answer.ok, answer.text()
+    return tsv_rows(answer.out)
+
+
 def graph_select(target: gonk.Target, query: Path, ledger: str, **params: str) -> list[str]:
     """Run a saved query through gonk's store as ikigai-script would, answering its rows.
 
-    gonk does not mount `urn:script:` yet, so this does by hand what a published query's
-    `:result` will: `LEDGER` replaced by the ledger, the `# @param` block dropped, each
-    parameter bound to a literal (ikigai-script binds terms in the algebra; for a string in a
-    FILTER the two agree), and the graphs it names given to the store's graph-select door."""
+    For a gonk without `urn:script:`, this does by hand what a published query's `:result`
+    does: `LEDGER` replaced by the ledger, the `# @param` block dropped, each parameter bound
+    to a literal (ikigai-script binds terms in the algebra; for a string in a FILTER the two
+    agree), and the graphs it names given to the store's graph-select door. On a gonk with it,
+    the test asks both and requires the same rows."""
     lines = [ln for ln in query.read_text().splitlines() if not ln.lstrip().startswith("#")]
     text = "\n".join(lines).replace("LEDGER", ledger)
     for name, value in params.items():
@@ -122,8 +152,7 @@ def graph_select(target: gonk.Target, query: Path, ledger: str, **params: str) -
     )
     answer = gonk.Ikigai(target).run(command)
     assert answer.ok, answer.text()
-    rows = [ln for ln in answer.out.splitlines() if ln and not ln.startswith("[")]
-    return rows[1:]  # without the header
+    return tsv_rows(answer.out)
 
 
 def tool(repo: Path, *argv: str) -> tuple[int, str]:
@@ -149,7 +178,13 @@ class AgainstARealGonk(unittest.TestCase):
         code, out = tool(one, "init", "--ledger", "acme", "--socket", sock, "--holder", "one")
         self.assertEqual(code, 0, out)
         self.assertIn("holds nothing yet", out)
-        self.assertRegex(out, r"absent\s+scripts")
+        # init reports `urn:script:` as the gonk under test has it: offered by a gonk that
+        # mounts ikigai-script, absent from one from before the mount.
+        if offers_scripts(gonk.Target(socket=sock)):
+            self.assertRegex(out, r"ok\s+scripts\s+gonk offers `urn:script:catalog`")
+            self.assertNotRegex(out, r"absent\s+scripts")
+        else:
+            self.assertRegex(out, r"absent\s+scripts")
         code, out = tool(two, "init", "--ledger", "acme", "--socket", sock, "--holder", "two")
         self.assertEqual(code, 0, out)
 
@@ -249,7 +284,27 @@ class AgainstARealGonk(unittest.TestCase):
         code, out = tool(repo, *args)
         self.assertEqual(code, 0, out)
         self.assertIn("8 open task(s) in 2 change(s) in flight", out)
-        self.assertIn("4 saved here are ready but unpublished", out)
+        # The sample's four saved files (three queries, one plan): published by init when the
+        # gonk under test mounts ikigai-script, ready but unpublished when it does not.
+        target = gonk.Target(socket=str(g.socket))
+        scripts = offers_scripts(target)
+        saved = [
+            "library-open-items-for-artifact",
+            "library-open-work-by-change",
+            "library-requirements-with-open-work",
+            "library-next-for-artifact",
+        ]
+        if scripts:
+            self.assertRegex(out, r"ok\s+scripts\s+published 4: ")
+            self.assertNotIn("was refused", out)
+            self.assertNotIn("ready but unpublished", out)
+            catalog = gonk.Ikigai(target).run("source urn:gk:script:catalog")
+            self.assertTrue(catalog.ok, catalog.text())
+            for name in saved:
+                self.assertIn(f"urn:script:{name}", out)
+                self.assertRegex(catalog.out, rf"urn:script:{name}\s+published\s")
+        else:
+            self.assertIn("4 saved here are ready but unpublished", out)
 
         code, out = tool(repo, "seed")
         self.assertEqual(code, 0, out)
@@ -288,18 +343,24 @@ class AgainstARealGonk(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn("held by `me`", out)
 
-        # The saved queries, against the ledger seed filed.
+        # The saved queries, against the ledger seed filed. Published, each runs as a read at
+        # its own `:result` and must answer what the by-hand route through the store answers;
+        # unpublished, the by-hand route is the only one.
         queries = repo / ".gonk" / "queries"
-        rows = graph_select(
-            cfg.target, queries / "open-items-for-artifact.rq", "library", artifact="cli"
-        )
+
+        def ask(stem: str, **params: str) -> list[str]:
+            by_hand = graph_select(cfg.target, queries / f"{stem}.rq", "library", **params)
+            if scripts:
+                published = script_result(cfg.target, f"library-{stem}", **params)
+                self.assertEqual(published, by_hand, stem)
+            return by_hand
+
+        rows = ask("open-items-for-artifact", artifact="cli")
         self.assertEqual(len(rows), 6, rows)  # add-holds touches the cli; cap-late-fees does not
-        rows = graph_select(
-            cfg.target, queries / "open-items-for-artifact.rq", "library", artifact="service"
-        )
+        rows = ask("open-items-for-artifact", artifact="service")
         self.assertEqual(len(rows), 8, rows)
         self.assertTrue(any(r.endswith('"me"') for r in rows), rows)  # item 7's holder
-        rows = graph_select(cfg.target, queries / "open-work-by-change.rq", "library")
+        rows = ask("open-work-by-change")
         self.assertEqual([r.split("\t")[0] for r in rows], ['"add-holds"', '"cap-late-fees"'])
 
         # Closing a change's first task makes its second ready, and only its second (item 7,
