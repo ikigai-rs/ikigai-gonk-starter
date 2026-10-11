@@ -18,8 +18,10 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install ruff (a development tool; the tools themselves have no dependencies)
         run: python -m pip install ruff==0.16.1
-      - name: Gates (ruff check · ruff format --check · unittest)
+      - name: Gates (ruff check · ruff format --check · unittest · the generated sample's tests)
         # The same script `just gates` runs locally, so the two cannot drift. The
         # integration tests need a real gonk (`ikigai-gonk` and `ikigai` on PATH), which
-        # this runner does not have; they skip and print why.
+        # this runner does not have; they skip and print why. The last gate generates every
+        # target of tools/new.py into a scratch directory and runs that repository's own
+        # tests, so a template that has gone stale fails here.
         run: scripts/gates.sh

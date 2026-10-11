@@ -1,0 +1,773 @@
+{
+  "schema": 1,
+  "about": [
+    "The scenarios of openspec/specs/, as steps any language's tests can run. Each scenario's id",
+    "is the IRI the OpenSpec mapping gives it; a test checks that every scenario in the specs has",
+    "exactly one entry here and that every entry names a scenario in the specs or in a change in",
+    "flight. A step runs one operation on the date `on` (the scenario's date until a step moves",
+    "it); `expect` is its whole answer, `refused` its refusal code, and a step with neither must",
+    "succeed. `given` names fixtures, run first, in order."
+  ],
+  "today": "2026-10-01",
+  "fixtures": {
+    "shelf": [
+      {
+        "op": "add_title",
+        "args": {
+          "isbn": "9780141439518",
+          "title": "Pride and Prejudice",
+          "author": "Jane Austen"
+        }
+      },
+      {
+        "op": "add_title",
+        "args": {
+          "isbn": "9780141439471",
+          "title": "Frankenstein",
+          "author": "Mary Shelley"
+        }
+      },
+      {
+        "op": "add_copy",
+        "args": {
+          "copy": "pp-1",
+          "isbn": "9780141439518"
+        }
+      },
+      {
+        "op": "add_copy",
+        "args": {
+          "copy": "pp-2",
+          "isbn": "9780141439518"
+        }
+      },
+      {
+        "op": "add_copy",
+        "args": {
+          "copy": "fr-1",
+          "isbn": "9780141439471"
+        }
+      },
+      {
+        "op": "add_copy",
+        "args": {
+          "copy": "fr-2",
+          "isbn": "9780141439471"
+        }
+      },
+      {
+        "op": "add_member",
+        "args": {
+          "member": "ada",
+          "name": "Ada Lovelace"
+        }
+      },
+      {
+        "op": "add_member",
+        "args": {
+          "member": "grace",
+          "name": "Grace Hopper"
+        }
+      }
+    ]
+  },
+  "scenarios": [
+    {
+      "id": "urn:openspec:spec:catalog:requirement:a-title-is-cataloged-once:scenario:cataloging-a-title",
+      "steps": [
+        {
+          "op": "add_title",
+          "args": {
+            "isbn": "9780141439518",
+            "title": "Pride and Prejudice",
+            "author": "Jane Austen"
+          },
+          "expect": {
+            "isbn": "9780141439518",
+            "title": "Pride and Prejudice",
+            "author": "Jane Austen"
+          }
+        }
+      ]
+    },
+    {
+      "id": "urn:openspec:spec:catalog:requirement:a-title-is-cataloged-once:scenario:cataloging-an-isbn-twice-is-refused",
+      "given": [
+        "shelf"
+      ],
+      "steps": [
+        {
+          "op": "add_title",
+          "args": {
+            "isbn": "9780141439518",
+            "title": "Emma",
+            "author": "Jane Austen"
+          },
+          "refused": "duplicate-title"
+        }
+      ]
+    },
+    {
+      "id": "urn:openspec:spec:catalog:requirement:a-copy-is-of-a-cataloged-title:scenario:adding-a-copy",
+      "given": [
+        "shelf"
+      ],
+      "steps": [
+        {
+          "op": "add_copy",
+          "args": {
+            "copy": "pp-3",
+            "isbn": "9780141439518"
+          },
+          "expect": {
+            "copy": "pp-3",
+            "isbn": "9780141439518",
+            "status": "available",
+            "loan": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "urn:openspec:spec:catalog:requirement:a-copy-is-of-a-cataloged-title:scenario:a-copy-of-an-unknown-title-is-refused",
+      "given": [
+        "shelf"
+      ],
+      "steps": [
+        {
+          "op": "add_copy",
+          "args": {
+            "copy": "x-1",
+            "isbn": "9780000000000"
+          },
+          "refused": "unknown-title"
+        }
+      ]
+    },
+    {
+      "id": "urn:openspec:spec:catalog:requirement:a-copy-is-of-a-cataloged-title:scenario:a-copy-id-is-used-once",
+      "given": [
+        "shelf"
+      ],
+      "steps": [
+        {
+          "op": "add_copy",
+          "args": {
+            "copy": "pp-1",
+            "isbn": "9780141439471"
+          },
+          "refused": "duplicate-copy"
+        }
+      ]
+    },
+    {
+      "id": "urn:openspec:spec:members:requirement:a-member-is-registered-once:scenario:registering-a-member",
+      "steps": [
+        {
+          "op": "add_member",
+          "args": {
+            "member": "ada",
+            "name": "Ada Lovelace"
+          },
+          "expect": {
+            "member": "ada",
+            "name": "Ada Lovelace"
+          }
+        }
+      ]
+    },
+    {
+      "id": "urn:openspec:spec:members:requirement:a-member-is-registered-once:scenario:registering-a-member-id-twice-is-refused",
+      "given": [
+        "shelf"
+      ],
+      "steps": [
+        {
+          "op": "add_member",
+          "args": {
+            "member": "ada",
+            "name": "Ada King"
+          },
+          "refused": "duplicate-member"
+        }
+      ]
+    },
+    {
+      "id": "urn:openspec:spec:loans:requirement:a-loan-is-due-three-weeks-after-it-is-made:scenario:lending-an-available-copy",
+      "given": [
+        "shelf"
+      ],
+      "steps": [
+        {
+          "op": "lend",
+          "args": {
+            "member": "ada",
+            "copy": "pp-1"
+          },
+          "expect": {
+            "copy": "pp-1",
+            "member": "ada",
+            "lent": "2026-10-01",
+            "due": "2026-10-22",
+            "renewals": 0
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "copy": "pp-1"
+          },
+          "expect": {
+            "copy": "pp-1",
+            "isbn": "9780141439518",
+            "status": "on-loan",
+            "loan": {
+              "copy": "pp-1",
+              "member": "ada",
+              "lent": "2026-10-01",
+              "due": "2026-10-22",
+              "renewals": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "urn:openspec:spec:loans:requirement:a-copy-is-lent-to-one-member-at-a-time:scenario:lending-a-copy-that-is-out-is-refused",
+      "given": [
+        "shelf"
+      ],
+      "steps": [
+        {
+          "op": "lend",
+          "args": {
+            "member": "ada",
+            "copy": "pp-1"
+          }
+        },
+        {
+          "op": "lend",
+          "args": {
+            "member": "grace",
+            "copy": "pp-1"
+          },
+          "refused": "copy-on-loan"
+        }
+      ]
+    },
+    {
+      "id": "urn:openspec:spec:loans:requirement:only-a-registered-member-borrows-a-known-copy:scenario:an-unknown-member-is-refused",
+      "given": [
+        "shelf"
+      ],
+      "steps": [
+        {
+          "op": "lend",
+          "args": {
+            "member": "nobody",
+            "copy": "pp-1"
+          },
+          "refused": "unknown-member"
+        }
+      ]
+    },
+    {
+      "id": "urn:openspec:spec:loans:requirement:only-a-registered-member-borrows-a-known-copy:scenario:an-unknown-copy-is-refused",
+      "given": [
+        "shelf"
+      ],
+      "steps": [
+        {
+          "op": "lend",
+          "args": {
+            "member": "ada",
+            "copy": "pp-9"
+          },
+          "refused": "unknown-copy"
+        }
+      ]
+    },
+    {
+      "id": "urn:openspec:spec:loans:requirement:a-member-has-at-most-three-loans:scenario:a-fourth-loan-is-refused",
+      "given": [
+        "shelf"
+      ],
+      "steps": [
+        {
+          "op": "lend",
+          "args": {
+            "member": "ada",
+            "copy": "pp-1"
+          }
+        },
+        {
+          "op": "lend",
+          "args": {
+            "member": "ada",
+            "copy": "pp-2"
+          }
+        },
+        {
+          "op": "lend",
+          "args": {
+            "member": "ada",
+            "copy": "fr-1"
+          }
+        },
+        {
+          "op": "lend",
+          "args": {
+            "member": "ada",
+            "copy": "fr-2"
+          },
+          "refused": "loan-limit"
+        }
+      ]
+    },
+    {
+      "id": "urn:openspec:spec:loans:requirement:a-returned-copy-can-be-lent-again:scenario:returning-a-copy",
+      "given": [
+        "shelf"
+      ],
+      "steps": [
+        {
+          "op": "lend",
+          "args": {
+            "member": "ada",
+            "copy": "pp-1"
+          }
+        },
+        {
+          "on": "2026-10-15",
+          "op": "return",
+          "args": {
+            "copy": "pp-1"
+          },
+          "expect": {
+            "copy": "pp-1",
+            "member": "ada",
+            "returned": "2026-10-15",
+            "days_late": 0,
+            "fee_cents": 0
+          }
+        },
+        {
+          "op": "lend",
+          "args": {
+            "member": "grace",
+            "copy": "pp-1"
+          },
+          "expect": {
+            "copy": "pp-1",
+            "member": "grace",
+            "lent": "2026-10-15",
+            "due": "2026-11-05",
+            "renewals": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "urn:openspec:spec:loans:requirement:a-returned-copy-can-be-lent-again:scenario:returning-a-copy-that-is-not-out-is-refused",
+      "given": [
+        "shelf"
+      ],
+      "steps": [
+        {
+          "op": "return",
+          "args": {
+            "copy": "pp-1"
+          },
+          "refused": "not-on-loan"
+        }
+      ]
+    },
+    {
+      "id": "urn:openspec:spec:loans:requirement:a-member-s-loans-are-listed:scenario:listing-a-member-s-loans",
+      "given": [
+        "shelf"
+      ],
+      "steps": [
+        {
+          "op": "lend",
+          "args": {
+            "member": "ada",
+            "copy": "pp-2"
+          }
+        },
+        {
+          "on": "2026-10-05",
+          "op": "lend",
+          "args": {
+            "member": "ada",
+            "copy": "fr-1"
+          }
+        },
+        {
+          "op": "loans",
+          "args": {
+            "member": "ada"
+          },
+          "expect": {
+            "member": "ada",
+            "loans": [
+              {
+                "copy": "pp-2",
+                "isbn": "9780141439518",
+                "title": "Pride and Prejudice",
+                "due": "2026-10-22",
+                "renewals": 0,
+                "overdue": false,
+                "days_late": 0
+              },
+              {
+                "copy": "fr-1",
+                "isbn": "9780141439471",
+                "title": "Frankenstein",
+                "due": "2026-10-26",
+                "renewals": 0,
+                "overdue": false,
+                "days_late": 0
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "urn:openspec:spec:renewals:requirement:a-renewal-extends-a-loan-from-its-due-date:scenario:renewing-a-loan",
+      "given": [
+        "shelf"
+      ],
+      "steps": [
+        {
+          "op": "lend",
+          "args": {
+            "member": "ada",
+            "copy": "pp-1"
+          }
+        },
+        {
+          "on": "2026-10-20",
+          "op": "renew",
+          "args": {
+            "copy": "pp-1"
+          },
+          "expect": {
+            "copy": "pp-1",
+            "member": "ada",
+            "lent": "2026-10-01",
+            "due": "2026-11-12",
+            "renewals": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "urn:openspec:spec:renewals:requirement:a-loan-is-renewed-at-most-twice:scenario:a-third-renewal-is-refused",
+      "given": [
+        "shelf"
+      ],
+      "steps": [
+        {
+          "op": "lend",
+          "args": {
+            "member": "ada",
+            "copy": "pp-1"
+          }
+        },
+        {
+          "op": "renew",
+          "args": {
+            "copy": "pp-1"
+          },
+          "expect": {
+            "copy": "pp-1",
+            "member": "ada",
+            "lent": "2026-10-01",
+            "due": "2026-11-12",
+            "renewals": 1
+          }
+        },
+        {
+          "op": "renew",
+          "args": {
+            "copy": "pp-1"
+          },
+          "expect": {
+            "copy": "pp-1",
+            "member": "ada",
+            "lent": "2026-10-01",
+            "due": "2026-12-03",
+            "renewals": 2
+          }
+        },
+        {
+          "op": "renew",
+          "args": {
+            "copy": "pp-1"
+          },
+          "refused": "renewal-limit"
+        }
+      ]
+    },
+    {
+      "id": "urn:openspec:spec:renewals:requirement:an-overdue-loan-is-not-renewed:scenario:renewing-on-the-due-date",
+      "given": [
+        "shelf"
+      ],
+      "steps": [
+        {
+          "op": "lend",
+          "args": {
+            "member": "ada",
+            "copy": "pp-1"
+          }
+        },
+        {
+          "on": "2026-10-22",
+          "op": "renew",
+          "args": {
+            "copy": "pp-1"
+          },
+          "expect": {
+            "copy": "pp-1",
+            "member": "ada",
+            "lent": "2026-10-01",
+            "due": "2026-11-12",
+            "renewals": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "urn:openspec:spec:renewals:requirement:an-overdue-loan-is-not-renewed:scenario:renewing-after-the-due-date-is-refused",
+      "given": [
+        "shelf"
+      ],
+      "steps": [
+        {
+          "op": "lend",
+          "args": {
+            "member": "ada",
+            "copy": "pp-1"
+          }
+        },
+        {
+          "on": "2026-10-23",
+          "op": "renew",
+          "args": {
+            "copy": "pp-1"
+          },
+          "refused": "loan-overdue"
+        }
+      ]
+    },
+    {
+      "id": "urn:openspec:spec:overdue:requirement:a-loan-is-overdue-from-the-day-after-its-due-date:scenario:on-its-due-date-a-loan-is-not-overdue",
+      "given": [
+        "shelf"
+      ],
+      "steps": [
+        {
+          "op": "lend",
+          "args": {
+            "member": "ada",
+            "copy": "pp-1"
+          }
+        },
+        {
+          "on": "2026-10-22",
+          "op": "loans",
+          "args": {
+            "member": "ada"
+          },
+          "expect": {
+            "member": "ada",
+            "loans": [
+              {
+                "copy": "pp-1",
+                "isbn": "9780141439518",
+                "title": "Pride and Prejudice",
+                "due": "2026-10-22",
+                "renewals": 0,
+                "overdue": false,
+                "days_late": 0
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "urn:openspec:spec:overdue:requirement:a-loan-is-overdue-from-the-day-after-its-due-date:scenario:the-day-after-its-due-date-a-loan-is-overdue",
+      "given": [
+        "shelf"
+      ],
+      "steps": [
+        {
+          "op": "lend",
+          "args": {
+            "member": "ada",
+            "copy": "pp-1"
+          }
+        },
+        {
+          "on": "2026-10-23",
+          "op": "loans",
+          "args": {
+            "member": "ada"
+          },
+          "expect": {
+            "member": "ada",
+            "loans": [
+              {
+                "copy": "pp-1",
+                "isbn": "9780141439518",
+                "title": "Pride and Prejudice",
+                "due": "2026-10-22",
+                "renewals": 0,
+                "overdue": true,
+                "days_late": 1
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "urn:openspec:spec:overdue:requirement:a-member-with-an-overdue-loan-cannot-borrow:scenario:borrowing-while-a-loan-is-overdue-is-refused",
+      "given": [
+        "shelf"
+      ],
+      "steps": [
+        {
+          "op": "lend",
+          "args": {
+            "member": "ada",
+            "copy": "pp-1"
+          }
+        },
+        {
+          "on": "2026-10-23",
+          "op": "lend",
+          "args": {
+            "member": "ada",
+            "copy": "fr-1"
+          },
+          "refused": "member-has-overdue"
+        }
+      ]
+    },
+    {
+      "id": "urn:openspec:spec:overdue:requirement:a-late-return-owes-a-fee:scenario:returning-on-the-due-date-owes-nothing",
+      "given": [
+        "shelf"
+      ],
+      "steps": [
+        {
+          "op": "lend",
+          "args": {
+            "member": "ada",
+            "copy": "pp-1"
+          }
+        },
+        {
+          "on": "2026-10-22",
+          "op": "return",
+          "args": {
+            "copy": "pp-1"
+          },
+          "expect": {
+            "copy": "pp-1",
+            "member": "ada",
+            "returned": "2026-10-22",
+            "days_late": 0,
+            "fee_cents": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "urn:openspec:spec:overdue:requirement:a-late-return-owes-a-fee:scenario:returning-late-owes-25-cents-a-day",
+      "given": [
+        "shelf"
+      ],
+      "steps": [
+        {
+          "op": "lend",
+          "args": {
+            "member": "ada",
+            "copy": "pp-1"
+          }
+        },
+        {
+          "on": "2026-10-25",
+          "op": "return",
+          "args": {
+            "copy": "pp-1"
+          },
+          "expect": {
+            "copy": "pp-1",
+            "member": "ada",
+            "returned": "2026-10-25",
+            "days_late": 3,
+            "fee_cents": 75
+          }
+        }
+      ]
+    },
+    {
+      "id": "urn:openspec:spec:overdue:requirement:overdue-loans-are-listed:scenario:listing-overdue-loans",
+      "given": [
+        "shelf"
+      ],
+      "steps": [
+        {
+          "op": "lend",
+          "args": {
+            "member": "ada",
+            "copy": "pp-1"
+          }
+        },
+        {
+          "on": "2026-10-03",
+          "op": "lend",
+          "args": {
+            "member": "grace",
+            "copy": "fr-1"
+          }
+        },
+        {
+          "on": "2026-10-05",
+          "op": "lend",
+          "args": {
+            "member": "grace",
+            "copy": "pp-2"
+          }
+        },
+        {
+          "on": "2026-10-25",
+          "op": "overdue",
+          "args": {},
+          "expect": {
+            "overdue": [
+              {
+                "copy": "pp-1",
+                "member": "ada",
+                "due": "2026-10-22",
+                "days_late": 3
+              },
+              {
+                "copy": "fr-1",
+                "member": "grace",
+                "due": "2026-10-24",
+                "days_late": 1
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

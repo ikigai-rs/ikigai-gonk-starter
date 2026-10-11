@@ -1,0 +1,13 @@
+# How much of each change in flight is still open: open and closed items per change.
+# `seed` labels every item `change:<id>` for the OpenSpec change its task belongs to.
+PREFIX ledger: <https://ikigai-rs.dev/ns/ledger#>
+SELECT ?change (SUM(?isOpen) AS ?open) (COUNT(?item) AS ?items) WHERE {
+  GRAPH <urn:iki:ledger:graph:LEDGER> {
+    ?item a ledger:Item ; ledger:status ?status ; ledger:label ?label .
+    FILTER(STRSTARTS(?label, 'change:'))
+  }
+  BIND(STRAFTER(?label, 'change:') AS ?change)
+  BIND(IF(?status = ledger:open, 1, 0) AS ?isOpen)
+}
+GROUP BY ?change
+ORDER BY DESC(?open) ?change

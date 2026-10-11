@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""This repository's way to reach gonk: init, file, next, claim, release, report, close.
+"""This repository's way to reach gonk: init, seed, file, next, claim, release, report, close.
 
 Standard library only (Python 3.11 or later, for tomllib). Every request goes through the
 `ikigai` command line with an ALIAS mount, `--mount urn:gk:=<target>`, so a socket on this
@@ -351,6 +351,259 @@ def artifact_problems(repo: Path, layout: dict) -> list[str]:
     return bad
 
 
+# --------------------------------------------------------------------------- openspec
+
+# The IRIs below are the ones the gonk Book's OpenSpec mapping mints
+# (`urn:markdown:mapping:openspec`), so an item seeded here and a node in the lifted spec
+# graph are one name:
+#   urn:openspec:change:<id>:task:<number>
+#   urn:openspec:spec:<capability>:requirement:<slug>
+TASK_LINE = re.compile(r"^\s*[-*] \[( |x|X)\] (\d+(?:\.\d+)*) +(.+?)\s*$")
+CITES = re.compile(r"^(.*?) *\(([^()]+)\)$")
+DELTA_SECTION = re.compile(r"^## (ADDED|MODIFIED|REMOVED|RENAMED) Requirements\s*$")
+REQUIREMENT = re.compile(r"^### Requirement: (.+?)\s*$")
+
+
+def slug(name: str) -> str:
+    """The mapping's slug: lowercase, every run of other characters one `-`, none at the ends."""
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
+def requirement_iri(capability: str, name: str) -> str:
+    return f"urn:openspec:spec:{capability}:requirement:{slug(name)}"
+
+
+@dataclass
+class Task:
+    change: str
+    number: str
+    title: str
+    done: bool
+    cites: str | None  # the requirement named in the task's trailing parentheses
+    requirement: str | None  # its IRI, when the change's delta adds or modifies that name
+
+    @property
+    def iri(self) -> str:
+        return f"urn:openspec:change:{self.change}:task:{self.number}"
+
+
+@dataclass
+class Change:
+    id: str
+    title: str
+    artifacts: list[str]
+    tasks: list[Task]
+
+
+def openspec_root(repo: Path, layout: dict) -> Path | None:
+    for spec in layout.get("spec", []):
+        if spec.get("format") == "openspec" and spec.get("root"):
+            return repo / spec["root"]
+    return None
+
+
+def open_changes(repo: Path, layout: dict) -> list[Change]:
+    """Every change in flight (`changes/<id>/`, not `changes/archive/`), with its tasks."""
+    root = openspec_root(repo, layout)
+    if root is None or not (root / "changes").is_dir():
+        return []
+    marker = layout.get("artifacts", {}).get("marker", "Artifacts:")
+    changes = []
+    for folder in sorted(p for p in (root / "changes").iterdir() if p.is_dir()):
+        if folder.name == "archive":
+            continue
+        if not ARTIFACT_SHAPE.match(folder.name):
+            raise ConfigError(
+                f"{folder.relative_to(repo)}: a change id is lowercase letters, digits, `-` and "
+                "`_` (it becomes a ledger label and an IRI segment)"
+            )
+        title, artifacts = folder.name, []
+        proposal = folder / "proposal.md"
+        if proposal.is_file():
+            for line in proposal.read_text(encoding="utf-8").splitlines():
+                if line.startswith("# ") and title == folder.name:
+                    title = line[2:].strip()
+                text = line.strip().lstrip("-* ").strip()
+                if text.startswith(marker):
+                    artifacts += re.findall(r"`([^`]+)`", text[len(marker) :])
+        # The requirements this change's delta adds or modifies, by name: what a task's
+        # parenthesis may cite. A typo cites nothing, rather than the wrong requirement.
+        named: dict[str, str] = {}
+        for delta in sorted((folder / "specs").glob("*/spec.md")):
+            capability, section = delta.parent.name, None
+            for line in delta.read_text(encoding="utf-8").splitlines():
+                m = DELTA_SECTION.match(line)
+                if m:
+                    section = m.group(1)
+                    continue
+                m = REQUIREMENT.match(line)
+                if m and section in ("ADDED", "MODIFIED"):
+                    named[m.group(1)] = requirement_iri(capability, m.group(1))
+        tasks = []
+        tasks_md = folder / "tasks.md"
+        if tasks_md.is_file():
+            for line in tasks_md.read_text(encoding="utf-8").splitlines():
+                m = TASK_LINE.match(line)
+                if not m:
+                    continue
+                text, cites = m.group(3), None
+                c = CITES.match(text)
+                if c:
+                    text, cites = c.group(1), c.group(2)
+                tasks.append(
+                    Task(
+                        change=folder.name,
+                        number=m.group(2),
+                        title=text,
+                        done=m.group(1) != " ",
+                        cites=cites,
+                        requirement=named.get(cites) if cites else None,
+                    )
+                )
+        changes.append(Change(folder.name, title, artifacts, tasks))
+    return changes
+
+
+# What `append` answers: `acme#3 <iri>` when it filed, `acme#3 <iri> existing <status>` when
+# an item already carries the key (ikigai-ledger's keyed append).
+APPENDED = re.compile(r"^(\S+#\d+) (\S+)(?: (existing) (\S+))?\s*$", re.MULTILINE)
+
+
+def seed_request(change: Change, task: Task) -> tuple[str, str, str]:
+    """(the append's arguments, its content, a one-line description) for one open task."""
+    labels = ",".join([f"change:{change.id}", *(f"artifact:{a}" for a in change.artifacts)])
+    about = " ".join([task.iri, *([task.requirement] if task.requirement else [])])
+    words = [f"labels={labels}", f"key={task.iri}", f'about="{about}"']
+    body = [
+        f"Task {task.number} of the change `{change.id}` ({change.title}), "
+        f"openspec/changes/{change.id}/tasks.md.",
+    ]
+    if task.requirement:
+        body.append(f"It implements the requirement {task.cites!r} ({task.requirement}).")
+    elif task.cites:
+        body.append(
+            f"It cites {task.cites!r}, which the change's delta neither adds nor modifies, so "
+            "it is about the task alone."
+        )
+    if change.artifacts:
+        body.append("Artifacts: " + ", ".join(f"`{a}`" for a in change.artifacts))
+    content = f"{change.id} {task.number}: {task.title}\n\n" + "\n".join(body)
+    return " ".join(words), content, f"{change.id} {task.number}: {task.title}"
+
+
+def cmd_seed(args, cfg: Config, make_ikigai) -> int:
+    """File one ledger item per open task of every change in flight, keyed by the task's IRI.
+
+    Idempotent through the ledger itself: an append whose key an item already carries files
+    nothing and answers `existing`, in the same store update that would have filed it, so two
+    seeds at once cannot both file a task."""
+    changes = open_changes(cfg.repo, cfg.layout)
+    todo = [(c, t) for c in changes for t in c.tasks if not t.done]
+    checked = sum(1 for c in changes for t in c.tasks if t.done)
+    if not args.dry_run:
+        need(cfg, "ledger", "target")
+    if not todo:
+        print(f"seed: no open tasks in {len(changes)} change(s) in flight; nothing to file")
+        return 0
+    ikigai = None if args.dry_run else make_ikigai(cfg.target)
+    filed = existing = failed = 0
+    for change, task in todo:
+        words, content, what = seed_request(change, task)
+        if ikigai is None:
+            print(f"would file  {what}\n            key={task.iri}")
+            continue
+        answer = ikigai.run(f"sink {cfg.resource('append')} {words}", stdin=content)
+        m = APPENDED.search(answer.out) if answer.ok else None
+        if m is None:
+            failed += 1
+            print(f"failed      {what}: {answer.text() or f'exit {answer.code}'}", file=sys.stderr)
+        elif m.group(3):
+            existing += 1
+            print(f"existing    {m.group(1)} {what} ({m.group(4)})")
+        else:
+            filed += 1
+            print(f"filed       {m.group(1)} {what}")
+    if ikigai is None:
+        print(f"\nseed --dry-run: {len(todo)} open task(s) would be filed; {checked} checked off")
+        return 0
+    print(
+        f"\nseed: {filed} filed, {existing} already filed, {checked} checked off (not filed)"
+        + (f", {failed} FAILED" if failed else "")
+    )
+    return 1 if failed else 0
+
+
+# --------------------------------------------------------------------------- saved scripts
+
+# A saved query or script names its own ledger as `LEDGER` (`urn:iki:ledger:graph:LEDGER`,
+# `urn:iki:ledger:LEDGER:next`): a valid IRI segment as written, and never a ledger name
+# (those are lowercase), so the committed file is valid SPARQL or Turtle and `init` can
+# publish it for whichever ledger .gonk/gonk.toml names.
+LEDGER_TOKEN = "LEDGER"
+SCRIPT_LANGUAGES = {".rq": "sparql", ".plan.ttl": "plan", ".scm": "lisp", ".lisp": "lisp"}
+
+
+@dataclass
+class Saved:
+    path: Path
+    stem: str
+    language: str
+
+    def published_name(self, ledger: str) -> str:
+        """`urn:script:{ledger}-{stem}`: one gonk holds many repositories' scripts."""
+        return f"{ledger}-{self.stem}"
+
+    def text_for(self, ledger: str) -> str:
+        return self.path.read_text(encoding="utf-8").replace(LEDGER_TOKEN, ledger)
+
+
+def saved_scripts(repo: Path, layout: dict) -> tuple[list[Saved], list[str]]:
+    """(every saved query and script, what is wrong with any file that is neither)."""
+    found, bad = [], []
+    for section in ("queries", "scripts"):
+        root = layout.get(section, {}).get("root")
+        if not root or not (repo / root).is_dir():
+            continue
+        for p in sorted((repo / root).iterdir()):
+            if not p.is_file() or p.name == "README.md" or p.name.startswith("."):
+                continue
+            ext = next((e for e in SCRIPT_LANGUAGES if p.name.endswith(e)), None)
+            if ext is None:
+                bad.append(
+                    f"{p.relative_to(repo)}: not a script this tool knows "
+                    f"({', '.join(SCRIPT_LANGUAGES)})"
+                )
+                continue
+            stem = p.name[: -len(ext)]
+            if not ARTIFACT_SHAPE.match(stem):
+                bad.append(f"{p.relative_to(repo)}: a script name is lowercase, digits, `-`, `_`")
+                continue
+            found.append(Saved(p, stem, SCRIPT_LANGUAGES[ext]))
+    return found, bad
+
+
+def publish_rows(cfg: Config, ikigai: Ikigai, saved: list[Saved], row) -> None:
+    """Publish each saved query and script to gonk's `urn:script:` (ikigai-script)."""
+    if not cfg.ledger:
+        row(
+            "missing",
+            "scripts",
+            "name the ledger first: the saved scripts are published per ledger",
+        )
+        return
+    published, failed = [], []
+    for s in saved:
+        name = s.published_name(cfg.ledger)
+        command = f"sink {PREFIX}script:{name} language={s.language}"
+        answer = ikigai.run(command, stdin=s.text_for(cfg.ledger))
+        (published if answer.ok else failed).append((name, answer))
+    if published:
+        names = ", ".join(f"urn:script:{n}" for n, _ in published)
+        row("ok", "scripts", f"published {len(published)}: {names}")
+    for name, answer in failed:
+        row("failed", "scripts", f"urn:script:{name} was refused: {answer.text()}")
+
+
 # --------------------------------------------------------------------------- ikigai
 
 
@@ -569,6 +822,18 @@ def cmd_init(args, cfg: Config, make_ikigai) -> int:
         row("ok", "layout", "; ".join(ok))
     for line in artifact_problems(repo, cfg.layout):
         row("missing", "artifacts", line)
+    saved, unknown = saved_scripts(repo, cfg.layout)
+    for line in unknown:
+        row("missing", "scripts", line)
+    tasks = [t for c in open_changes(repo, cfg.layout) for t in c.tasks if not t.done]
+    if tasks:
+        changes = len({t.change for t in tasks})
+        row(
+            "note",
+            "openspec",
+            f"{len(tasks)} open task(s) in {changes} change(s) in flight: "
+            "`python3 tools/gonk.py seed` files them as ledger items (again is a no-op)",
+        )
 
     binary, version = make_ikigai.locate()
     if binary:
@@ -633,12 +898,19 @@ def cmd_init(args, cfg: Config, make_ikigai) -> int:
                     found = offered(ikigai.run(f"describe {PREFIX}{name[4:]}"))
                     if found:
                         row("ok", what, f"gonk offers `{name}`: {about}")
+                        if what == "scripts" and saved:
+                            publish_rows(cfg, ikigai, saved, row)
                     elif found is False:
+                        ready = (
+                            f"; {len(saved)} saved here are ready but unpublished"
+                            if what == "scripts" and saved
+                            else ""
+                        )
                         row(
                             "absent",
                             what,
                             f"gonk does not offer `{name}` yet, so {about} stay files in this "
-                            "repository; nothing to do until it does",
+                            f"repository{ready}; nothing to do until it does",
                         )
                     else:
                         row("unknown", what, f"could not ask gonk about `{name}`")
@@ -879,6 +1151,14 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--labels")
     s.add_argument("--key", help="your own name for it: a second file with the key files nothing")
     s.set_defaults(run=cmd_file)
+
+    s = sub.add_parser(
+        "seed", help="file each open task of the changes in flight as a ledger item (idempotent)"
+    )
+    s.add_argument(
+        "--dry-run", action="store_true", help="list what would be filed; ask gonk nothing"
+    )
+    s.set_defaults(run=cmd_seed)
 
     s = sub.add_parser("next", help="the ready set, ranked")
     s.set_defaults(run=cmd_next)

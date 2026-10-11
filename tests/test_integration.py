@@ -17,12 +17,13 @@ import re
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
 
-from support import gonk, load_hook, scratch_repo
+from support import ROOT, gonk, load_hook, scratch_repo
 
 GONK = shutil.which("ikigai-gonk")
 IKIGAI = shutil.which("ikigai")
@@ -100,6 +101,29 @@ class ScratchGonk:
         if getattr(self, "log", None):
             self.log.close()
         shutil.rmtree(self.dir, ignore_errors=True)
+
+
+def graph_select(target: gonk.Target, query: Path, ledger: str, **params: str) -> list[str]:
+    """Run a saved query through gonk's store as ikigai-script would, answering its rows.
+
+    gonk does not mount `urn:script:` yet, so this does by hand what a published query's
+    `:result` will: `LEDGER` replaced by the ledger, the `# @param` block dropped, each
+    parameter bound to a literal (ikigai-script binds terms in the algebra; for a string in a
+    FILTER the two agree), and the graphs it names given to the store's graph-select door."""
+    lines = [ln for ln in query.read_text().splitlines() if not ln.lstrip().startswith("#")]
+    text = "\n".join(lines).replace("LEDGER", ledger)
+    for name, value in params.items():
+        text = text.replace(f"?{name}", "'" + value + "'")
+    quoted = text.replace("\\", "\\\\").replace('"', '\\"')
+    graph = f"urn:iki:ledger:graph:{ledger}"
+    command = (
+        f"source urn:gk:iki:store:graph-select graph={graph} "
+        f'as=text/tab-separated-values query="{quoted}"'
+    )
+    answer = gonk.Ikigai(target).run(command)
+    assert answer.ok, answer.text()
+    rows = [ln for ln in answer.out.splitlines() if ln and not ln.startswith("[")]
+    return rows[1:]  # without the header
 
 
 def tool(repo: Path, *argv: str) -> tuple[int, str]:
@@ -199,6 +223,73 @@ class AgainstARealGonk(unittest.TestCase):
         self.assertEqual(item["claim"]["holder"], "worker")
         self.assertEqual(item["claim"]["kind"], "machine")
         self.assertEqual(item["author"], principal)
+
+    def test_the_library_sample_end_to_end(self):
+        """Generate the sample, point it at a scratch gonk, seed it twice, ask next, claim,
+        ask the saved queries, and run the generated repository's own tests."""
+        g = ScratchGonk(quic=False)
+        self.addCleanup(g.stop)
+        g.start()
+        tmp = Path(tempfile.mkdtemp(prefix="gonk-sample-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        repo = tmp / "library"
+        made = subprocess.run(
+            [sys.executable, str(ROOT / "tools" / "new.py"), str(repo), "--target", "python"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(made.returncode, 0, made.stdout + made.stderr)
+
+        args = ["init", "--ledger", "library", "--socket", str(g.socket), "--holder", "me"]
+        code, out = tool(repo, *args)
+        self.assertEqual(code, 0, out)
+        self.assertIn("8 open task(s) in 2 change(s) in flight", out)
+        self.assertIn("4 saved here are ready but unpublished", out)
+
+        code, out = tool(repo, "seed")
+        self.assertEqual(code, 0, out)
+        self.assertIn("seed: 8 filed, 0 already filed", out)
+        code, out = tool(repo, "seed")
+        self.assertEqual(code, 0, out)
+        self.assertIn("seed: 0 filed, 8 already filed", out)
+
+        cfg = gonk.load(repo)
+        item, err = gonk.item_json(cfg, gonk.Ikigai(cfg.target), 1)
+        self.assertIsNone(err)
+        self.assertEqual(item["key"], "urn:openspec:change:add-holds:task:1.1")
+        self.assertEqual(item["labels"], ["artifact:cli", "artifact:service", "change:add-holds"])
+        self.assertIn(
+            "urn:openspec:spec:holds:requirement:a-member-may-hold-a-title-with-no-copy-on-the-shelf",
+            item["about"],
+        )
+
+        code, out = tool(repo, "next")
+        self.assertEqual(code, 0, out)
+        self.assertIn("ready: 8", out)
+        code, out = tool(repo, "claim", "7")
+        self.assertEqual(code, 0, out)
+        code, out = tool(repo, "status")
+        self.assertEqual(code, 0, out)
+        self.assertIn("held by `me`", out)
+
+        # The saved queries, against the ledger seed filed.
+        queries = repo / ".gonk" / "queries"
+        rows = graph_select(
+            cfg.target, queries / "open-items-for-artifact.rq", "library", artifact="cli"
+        )
+        self.assertEqual(len(rows), 6, rows)  # add-holds touches the cli; cap-late-fees does not
+        rows = graph_select(
+            cfg.target, queries / "open-items-for-artifact.rq", "library", artifact="service"
+        )
+        self.assertEqual(len(rows), 8, rows)
+        self.assertTrue(any(r.endswith('"me"') for r in rows), rows)  # item 7's holder
+        rows = graph_select(cfg.target, queries / "open-work-by-change.rq", "library")
+        self.assertEqual([r.split("\t")[0] for r in rows], ['"add-holds"', '"cap-late-fees"'])
+
+        done = subprocess.run(
+            [sys.executable, "scripts/test.py"], cwd=repo, capture_output=True, text=True
+        )
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
 
 
 if __name__ == "__main__":

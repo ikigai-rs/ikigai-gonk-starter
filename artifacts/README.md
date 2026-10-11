@@ -15,4 +15,4 @@ carry one line, `Artifacts: `service`, `cli``, and `.gonk/layout.toml` declares 
 root (`[artifacts] root`) and that marker (`[artifacts] marker`). `python3 tools/gonk.py
 init` checks that every name on such a line has a directory here.
 
-Empty in a new repository.
+Empty in the starter; the library-lending sample fills it with `service` and `cli`.

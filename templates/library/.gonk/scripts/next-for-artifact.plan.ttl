@@ -1,0 +1,29 @@
+# What to do next on one artifact: the ledger's own `next`, ranked by its policy, narrowed to
+# the items `seed` labeled for that artifact. A plan (ikigai-script's `plan` language): one
+# step, a read, so it runs at urn:script:{name}:result and its authority is derived from the
+# step it names, never declared.
+#
+#   source urn:script:<ledger>-next-for-artifact:result labels=artifact:service
+@prefix ik: <https://ikigai-rs.dev/ns#> .
+
+<urn:plan:next-for-artifact> a ik:Process ;
+    ik:input <urn:plan:next-for-artifact:input:labels> ,
+             <urn:plan:next-for-artifact:input:limit> ;
+    ik:step <urn:plan:next-for-artifact:step:1> ;
+    ik:result <urn:plan:next-for-artifact:step:1> .
+
+<urn:plan:next-for-artifact:input:labels> ik:inputName "labels" ; ik:required true ;
+    ik:summary "The artifact's label, artifact:<name> (comma-separate several to need all)" .
+<urn:plan:next-for-artifact:input:limit> ik:inputName "limit" ; ik:required false ;
+    ik:default "3" ; ik:summary "How many to rank" .
+
+<urn:plan:next-for-artifact:step:1> a ik:Step ;
+    ik:verb "Source" ;
+    ik:resolves <urn:iki:ledger:LEDGER:next> ;
+    ik:argument <urn:plan:next-for-artifact:step:1:arg:labels> ,
+                <urn:plan:next-for-artifact:step:1:arg:limit> .
+
+<urn:plan:next-for-artifact:step:1:arg:labels> a ik:Argument ; ik:inputName "labels" ;
+    ik:ref <urn:plan:next-for-artifact:var:labels> .
+<urn:plan:next-for-artifact:step:1:arg:limit> a ik:Argument ; ik:inputName "limit" ;
+    ik:ref <urn:plan:next-for-artifact:var:limit> .

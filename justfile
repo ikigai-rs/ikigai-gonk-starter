@@ -13,6 +13,10 @@ init *flags:
 file title *flags:
     python3 tools/gonk.py file "{{title}}" {{flags}}
 
+# File each open task of the changes in flight as a ledger item; a rerun files nothing new.
+seed *flags:
+    python3 tools/gonk.py seed {{flags}}
+
 # The ready set, ranked, with the reasons.
 next:
     python3 tools/gonk.py next
@@ -36,3 +40,7 @@ close item evidence *flags:
 # Does this working tree hold a live claim?
 status:
     python3 tools/gonk.py status
+
+# Generate a repository with the library-lending sample in it: just new <dir> --target python
+new dir *flags:
+    python3 tools/new.py "{{dir}}" {{flags}}

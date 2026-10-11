@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The gates CI runs, in CI's order: lint, format check, tests.
+# The gates CI runs, in CI's order: lint, format check, tests, then the generated sample's tests.
 #
 #   scripts/gates.sh
 #
@@ -33,10 +33,26 @@ PY=python3
     exit 2
 }
 
+# Every target the generator offers (templates/<target>/, beside the language-neutral
+# templates/library/), generated into a scratch directory and tested by its own entry point,
+# scripts/test.py, as that repository's CI would run it. A stale template fails here.
+SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/gonk-starter-gates.XXXXXX") || exit 2
+trap 'rm -rf "$SCRATCH"' EXIT
+generated() {
+    for dir in templates/*/; do
+        target=$(basename "$dir")
+        [ "$target" = library ] && continue
+        echo "-- the sample, generated for $target, runs its own tests" &&
+            "$PY" tools/new.py "$SCRATCH/$target" --target "$target" >/dev/null &&
+            "$PY" "$SCRATCH/$target/scripts/test.py" || return 1
+    done
+}
+
 echo "gates: $("$PY" --version 2>&1), $("$RUFF" --version)"
 echo "-- ruff check" &&
     "$RUFF" check . &&
     echo "-- ruff format --check" &&
     "$RUFF" format --check . &&
     echo "-- unittest" &&
-    "$PY" -m unittest discover -s tests -v
+    "$PY" -m unittest discover -s tests -v &&
+    generated

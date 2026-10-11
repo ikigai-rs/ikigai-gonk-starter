@@ -1,0 +1,15 @@
+# Which requirements have open work against them, and how much: the spec graph joined with
+# the ledger. Reads the lifted OpenSpec tree (one named graph per document, from the mapping
+# `urn:markdown:mapping:openspec` in .gonk/layout.toml) and the items `seed` filed about each
+# requirement.
+PREFIX ledger: <https://ikigai-rs.dev/ns/ledger#>
+PREFIX os: <http://example.org/openspec#>
+SELECT ?capability ?requirement (COUNT(DISTINCT ?item) AS ?open) WHERE {
+  GRAPH ?doc { ?req a os:Requirement ; os:name ?requirement ; os:capability ?cap . }
+  GRAPH ?capDoc { ?cap os:name ?capability . }
+  GRAPH <urn:iki:ledger:graph:LEDGER> {
+    ?item ledger:about ?req ; ledger:status ledger:open .
+  }
+}
+GROUP BY ?capability ?requirement
+ORDER BY DESC(?open) ?capability ?requirement

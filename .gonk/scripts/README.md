@@ -10,7 +10,10 @@ run recorded (who, which version, under what authority), and never with more aut
 its publisher held. `urn:nl:script` in [ikigai-nl](https://github.com/ikigai-rs/ikigai-nl)
 is the planned drafter for these; `urn:nl:sparql` drafts queries today.
 
-gonk does not serve ikigai-script yet. `python3 tools/gonk.py init` asks, and says so.
-Until it does, scripts live here as files, and nothing in this repository publishes them.
+`python3 tools/gonk.py init` publishes every script here when gonk offers `urn:script:`, as
+`urn:script:<ledger>-<name>` with each `LEDGER` in the text replaced by the ledger's name. The
+language is the file's: `<name>.plan.ttl` is a plan, `<name>.rq` a query, `<name>.scm` or
+`<name>.lisp` Lisp. Until gonk offers it, `init` says they are ready but unpublished.
 
-Empty in a new repository.
+Empty in the starter; the library-lending sample (`just new <dir> --target python`) ships
+one, `next-for-artifact.plan.ttl`.

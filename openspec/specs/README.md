@@ -11,5 +11,6 @@ A spec is `## Purpose` (with its `Artifacts:` line) and `## Requirements`. Each
 and has at least one `#### Scenario:` written as **WHEN** / **THEN** steps a test could
 check. A spec says what is observable, never how it is built.
 
-Empty until the first change is archived into it. OpenSpec looks for `spec.md` files in
+Empty in the starter until a first change is archived into it; the library-lending sample
+ships five capabilities. OpenSpec looks for `spec.md` files in
 folders below this one, so this README is not read as a spec.

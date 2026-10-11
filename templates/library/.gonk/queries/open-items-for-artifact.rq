@@ -1,0 +1,18 @@
+# The open items that touch one artifact, highest priority first, then oldest.
+# `seed` labels every item `artifact:<name>` for each artifact its change names.
+# @param artifact xsd:string -- an artifact's directory name under artifacts/, such as service
+PREFIX ledger: <https://ikigai-rs.dev/ns/ledger#>
+PREFIX dcterms: <http://purl.org/dc/terms/>
+SELECT ?number ?title ?priority ?holder WHERE {
+  GRAPH <urn:iki:ledger:graph:LEDGER> {
+    ?item a ledger:Item ;
+          ledger:status ledger:open ;
+          ledger:number ?number ;
+          dcterms:title ?title ;
+          ledger:label ?label .
+    FILTER(?label = CONCAT('artifact:', ?artifact))
+    OPTIONAL { ?item ledger:priority ?priority }
+    OPTIONAL { ?item ledger:claimedBy ?holder }
+  }
+}
+ORDER BY ASC(COALESCE(?priority, 99)) ?number

@@ -101,8 +101,12 @@ as `PR #N`, or `owner/repo#N` for another repository. In a commit message, write
   an `Artifacts:` line; keep it true when you add or move code.
 - **Queries and scripts** are files in `.gonk/queries/` and `.gonk/scripts/`. They are meant
   to be published to gonk as script resources (`urn:script:{name}`, from ikigai-script) and
-  drafted from a sentence by `urn:nl:sparql` (ikigai-nl). gonk does not serve those yet, so
-  for now they are files; do not try to publish them.
+  drafted from a sentence by `urn:nl:sparql` (ikigai-nl). `python3 tools/gonk.py init`
+  publishes them when gonk offers `urn:script:`, and until then says they are ready but
+  unpublished; do not publish them any other way.
+- **Seeding.** `python3 tools/gonk.py seed` files each open task of a change in flight as a
+  ledger item, keyed by the task, so running it again files nothing new. Check a task's box
+  in `tasks.md` when its work is done.
 
 ## Optional: a hook for Claude Code
 

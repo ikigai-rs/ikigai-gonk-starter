@@ -38,12 +38,48 @@ artifacts/<name>/        one directory per deployable thing, any language each
   layout.toml            the spec format(s), the artifacts root, queries, scripts
   gonk.toml              the ledger this repository's work lives in
   queries/  scripts/     saved SPARQL and workflow scripts (reserved; see below)
-tools/gonk.py            init, file, next, claim, release, report, close, status
+tools/gonk.py            init, seed, file, next, claim, release, report, close, status
+tools/new.py             generate a repository with the library-lending sample in it
+templates/               what new.py generates from: the sample, and one directory per language
 hooks/claude/            an OPTIONAL Claude Code hook that refuses edits without a claim
 ```
 
-Everything is empty until you fill it. `tools/gonk.py` is standard-library Python (3.11 or
+Everything is empty until you fill it, or until `tools/new.py` fills a copy for you. `tools/gonk.py` is standard-library Python (3.11 or
 later) with no dependencies; `just` recipes wrap it one-for-one for those who have `just`.
+
+## Try the sample
+
+`tools/new.py` generates a new repository from this starter with a sample worth working on: a
+**library-lending** system (a catalog, members, loans with due dates, renewals, overdue rules
+and late fees) as two artifacts, an HTTP JSON service and a command-line client of it, with
+its specs in OpenSpec and two changes in flight to file and claim.
+
+```sh
+just new ../library --target python        # or: python3 tools/new.py ../library --target python
+cd ../library
+python3 scripts/test.py                    # every test, as its CI runs them
+python3 tools/gonk.py init --ledger library --socket ~/.ikigai/gonk.sock --holder me
+python3 tools/gonk.py seed                 # each open task of each change, as a ledger item
+python3 tools/gonk.py next                 # what is ready, ranked, and why
+python3 tools/gonk.py claim 1
+```
+
+**The spec's scenarios are the tests.** `openspec/vectors.json` holds every `#### Scenario:`
+of the specs as language-neutral steps (an operation, its arguments, the date it happens on,
+and the whole answer expected), the service's tests run each one against the rules and again
+over HTTP, and a test fails if a scenario has no vector or a vector names no scenario. Time is
+an input: no rule reads a clock, so the due dates are the same on any day the tests run.
+Python (standard library only) is the first target; Deno, Rust and Go are planned, each
+running the same vector file. This repository's CI generates every target into a scratch
+directory and runs its tests, so a template that has gone stale fails.
+
+`seed` files one item per unchecked task in `openspec/changes/<id>/tasks.md`, keyed by the
+task's IRI (`urn:openspec:change:<id>:task:<number>`, the name the
+[gonk Book](https://ikigai-rs.github.io/ikigai-tutorial/gonk/spec/ledger.html)'s OpenSpec
+mapping gives it), labeled `change:<id>` and `artifact:<name>`, and *about* the requirement the
+task's parentheses cite. A second `seed` files nothing: the ledger answers `existing` for a key
+it already holds. The sample also carries three saved SPARQL queries and a workflow script
+(below).
 
 ## Setting it up
 
@@ -147,18 +183,23 @@ see a file written by a shell command. To turn it on, merge
 ## Queries and scripts
 
 `.gonk/queries/` (saved SPARQL over the ledger and the spec graph) and `.gonk/scripts/`
-(workflow scripts) are reserved, and `layout.toml` names them. They are meant to become
-resources on gonk: a query or a script published as `urn:script:{name}` with
+(workflow scripts) are named by `layout.toml`. They are meant to be resources on gonk: a query
+or a script published as `urn:script:{name}` with
 [ikigai-script](https://github.com/ikigai-rs/ikigai-script) (versioned by content, run under
 the runner's own authority, every run recorded), and drafted from a sentence by
-`urn:nl:sparql` from [ikigai-nl](https://github.com/ikigai-rs/ikigai-nl). gonk does not serve
-either yet. `init` asks it and says which it finds, and until then these are plain files.
+`urn:nl:sparql` from [ikigai-nl](https://github.com/ikigai-rs/ikigai-nl). `init` asks gonk
+which it offers. When it offers `urn:script:`, `init` publishes each file as
+`urn:script:<ledger>-<name>`, with every `LEDGER` in the text (`urn:iki:ledger:graph:LEDGER`)
+replaced by this repository's ledger, so the files stay valid as written and one gonk holds
+many repositories' scripts. Until it does, `init` says they are ready but unpublished, and they
+stay files.
+
+The sample ships `open-items-for-artifact`, `open-work-by-change` and
+`requirements-with-open-work` (the spec graph joined with the ledger), and the plan
+`next-for-artifact` (the ledger's own `next`, narrowed to one artifact's items).
 
 ## Coming next
 
-- **A generator and a sample app**: a library-lending system as two artifacts (a service and
-  a command-line client) with its specs in OpenSpec, whose scenarios are a shared test-vector
-  file every language's tests run. Python first. ([#1134](http://localhost:1060/l/default/item/1134))
 - **More languages** for the generator: Deno, Rust and Go, each passing the same vectors.
   ([#1135](http://localhost:1060/l/default/item/1135))
 - **A second spec format**, beside OpenSpec, lifted to the same graph and ledger items by a
@@ -177,7 +218,8 @@ either yet. `init` asks it and says which it finds, and until then these are pla
 
 ```sh
 python3 -m venv .venv && .venv/bin/pip install ruff==0.16.1
-just gates          # or scripts/gates.sh: ruff check, ruff format --check, the tests
+just gates          # or scripts/gates.sh: ruff check, ruff format --check, the tests, then
+                    # the sample, generated for every target, running its own tests
 ```
 
 The tests are standard-library `unittest`. The integration tests start a scratch gonk of

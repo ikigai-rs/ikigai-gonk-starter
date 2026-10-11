@@ -12,8 +12,12 @@ in its tool manifold. A draft can come from a sentence: `urn:nl:sparql` from
 [ikigai-nl](https://github.com/ikigai-rs/ikigai-nl) grounds a model in what the caller may
 read, drafts and checks a query, and saves it as a DRAFT script for a person to publish.
 
-gonk does not serve either family yet. `python3 tools/gonk.py init` asks, and says which it
-finds. Until then the queries live here as files, and nothing in this repository publishes
-them.
+`python3 tools/gonk.py init` asks gonk whether it offers `urn:script:`, and publishes every
+query here when it does, as `urn:script:<ledger>-<name>` (so one gonk can hold several
+repositories' queries), with each `LEDGER` in the text replaced by the ledger
+`.gonk/gonk.toml` names: write `<urn:iki:ledger:graph:LEDGER>` for this repository's ledger
+graph and the file stays valid SPARQL as written. Until gonk offers it, `init` says the
+queries are ready but unpublished, and they stay files.
 
-Empty in a new repository.
+Empty in the starter; the library-lending sample (`just new <dir> --target python`) ships
+three.

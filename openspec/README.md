@@ -13,10 +13,13 @@ openspec/
     └── archive/    finished changes, moved here intact by `openspec archive`
 ```
 
-Both halves are empty in a new repository. Nothing here needs OpenSpec's own CLI: the
-format is Markdown with fixed heading prefixes (`### Requirement:`, `#### Scenario:`), and
-the [gonk Book's spec part](https://ikigai-rs.github.io/ikigai-tutorial/gonk/spec/openspec.html)
+Both halves are empty in the starter; the library-lending sample fills them. Nothing here
+needs OpenSpec's own CLI: the format is Markdown with fixed heading prefixes
+(`### Requirement:`, `#### Scenario:`), and the
+[gonk Book's spec part](https://ikigai-rs.github.io/ikigai-tutorial/gonk/spec/openspec.html)
 teaches it, lifts it to a graph and turns a change's tasks into ledger items.
+`python3 tools/gonk.py seed` does the last part without a graph: one item per open task,
+keyed by the task's IRI, as the Book's sync does.
 
 ## Two conventions that are ours, not OpenSpec's
 
