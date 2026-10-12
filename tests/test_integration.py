@@ -1,12 +1,13 @@
-"""Against a REAL gonk: a scratch one this test starts, on a scratch port, and stops by PID.
+"""Against a REAL gonk: a scratch one this test starts, on the port the kernel picks, and
+stops by PID.
 
 Skipped unless `ikigai-gonk` and `ikigai` are both on PATH. CI has neither (gonk builds
 RocksDB from source and is not on crates.io), so there it skips and says why; on a machine
 with both installed it runs as part of `just gates`.
 
 The scratch gonk keeps everything in a temporary directory: its own config home, data home
-and socket, an ephemeral port that is never 1060 or 4433, and no backups. It never touches a
-gonk already running on the machine.
+and socket, HTTP bound on port 0 so the kernel picks a free one and the banner names it, and
+no backups. It never touches a gonk already running on the machine.
 """
 
 from __future__ import annotations
@@ -30,21 +31,35 @@ IKIGAI = shutil.which("ikigai")
 LIVE_PORTS = {1060, 4433}
 
 
-def free_port() -> int:
-    """A port free on both TCP (gonk's HTTP door) and UDP (its QUIC door)."""
+def free_quic_port() -> int:
+    """A port free on UDP, for gonk's QUIC door — the one port still picked here.
+
+    gonk's QUIC door binds inside its transport and never reports the address it got (ledger
+    1027), so a child told `--quic-bind 127.0.0.1:0` would listen where nothing can find it.
+    HTTP is NOT picked this way: the child binds port 0 and the banner names the port the
+    kernel gave it (ledger 1223), so no released port races another process for the time gonk
+    takes to open its store."""
     for _ in range(50):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as tcp:
-            tcp.bind(("127.0.0.1", 0))
-            port = tcp.getsockname()[1]
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+            udp.bind(("0.0.0.0", 0))
+            port = udp.getsockname()[1]
         if port in LIVE_PORTS:
-            continue
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
-                udp.bind(("0.0.0.0", port))
-        except OSError:
             continue
         return port
     raise RuntimeError("no free port")
+
+
+def banner_port(log: str) -> int | None:
+    """The port the banner's `http` line names: `  http    http://{host}:{port}/ — …`.
+
+    gonk binds the HTTP door BEFORE it prints this line, so the port it names is the one
+    really bound, even when `--port 0` asked the kernel to choose (ledger 1223)."""
+    for line in log.splitlines():
+        if line.strip().startswith("http "):
+            match = re.search(r"http://[^/]+:(\d+)/", line)
+            if match:
+                return int(match.group(1))
+    return None
 
 
 class ScratchGonk:
@@ -53,8 +68,13 @@ class ScratchGonk:
 
     def __init__(self, quic: bool):
         self.dir = Path(tempfile.mkdtemp(prefix="gks", dir="/tmp"))
-        self.port = free_port()
         self.quic = quic
+        # HTTP is bound on port 0 and the port the kernel gave is read from the banner (ledger
+        # 1223). QUIC's port is still picked and handed over: gonk's transport binds it and
+        # never reports the address it got (ledger 1027), so a child told `:0` would listen
+        # where nothing can find it.
+        self.quic_port = free_quic_port() if quic else None
+        self.http_port = None
         self.config_home = self.dir / "cfg"
         self.socket = self.dir / "g.sock"
         self.proc = None
@@ -62,8 +82,8 @@ class ScratchGonk:
     def add_client(self, name: str, ledger: str) -> str:
         """Enroll a QUIC client; answer the principal gonk printed for it."""
         out = subprocess.run(
-            [GONK, "client", "add", name, "--ledger", f"{ledger}=write", "--port", str(self.port)]
-            + ["--config-home", str(self.config_home)],
+            [GONK, "client", "add", name, "--ledger", f"{ledger}=write"]
+            + ["--port", str(self.quic_port), "--config-home", str(self.config_home)],
             capture_output=True,
             text=True,
             check=True,
@@ -75,8 +95,12 @@ class ScratchGonk:
 
     def start(self) -> None:
         argv = [GONK, "--config-home", str(self.config_home), "--data-home", str(self.dir / "d")]
-        argv += ["--port", str(self.port), "--socket", str(self.socket), "--no-backup"]
-        if not self.quic:
+        # Port 0: the kernel picks a free HTTP port and the banner names it, so no port is
+        # released here for another process to take before gonk binds it (ledger 1223).
+        argv += ["--port", "0", "--socket", str(self.socket), "--no-backup"]
+        if self.quic:
+            argv += ["--quic-bind", f"127.0.0.1:{self.quic_port}"]
+        else:
             argv.append("--no-quic")
         self.log = (self.dir / "gonk.log").open("w")
         self.proc = subprocess.Popen(argv, stdout=self.log, stderr=subprocess.STDOUT)
@@ -85,8 +109,11 @@ class ScratchGonk:
         while time.monotonic() < deadline:
             if self.proc.poll() is not None:
                 raise RuntimeError(f"scratch gonk exited: {(self.dir / 'gonk.log').read_text()}")
-            if self.socket.exists() and probe.run("source urn:gk:iki:ledger:ledgers").ok:
-                return
+            if self.http_port is None:
+                self.http_port = banner_port((self.dir / "gonk.log").read_text())
+            if self.http_port is not None and self.socket.exists():
+                if probe.run("source urn:gk:iki:ledger:ledgers").ok:
+                    return
             time.sleep(0.2)
         raise RuntimeError("scratch gonk did not answer within 60s")
 
@@ -162,12 +189,46 @@ def tool(repo: Path, *argv: str) -> tuple[int, str]:
     return code, out.getvalue()
 
 
+class TheBannerPort(unittest.TestCase):
+    """`banner_port` reads the port gonk really bound from the startup banner (ledger 1223).
+
+    Hermetic: a banner line, no gonk, so it runs in CI where the integration tests skip."""
+
+    def test_it_reads_the_http_lines_url_whatever_host(self):
+        line = "  http    http://localhost:40333/ — loopback (127.0.0.1:0); anonymous\n"
+        self.assertEqual(banner_port(line), 40333)
+        self.assertEqual(banner_port("  http    http://127.0.0.2:1070/ — loopback\n"), 1070)
+        self.assertEqual(banner_port("  http    http://[::1]:1060/ — loopback\n"), 1060)
+
+    def test_it_answers_none_before_the_line_appears(self):
+        self.assertIsNone(banner_port("ikigai-gonk 0.1.0 — holding the store\n"))
+        self.assertIsNone(banner_port(""))
+
+
 @unittest.skipUnless(
     GONK and IKIGAI,
     "needs `ikigai-gonk` and `ikigai` on PATH to start a scratch gonk (CI has neither: gonk "
     "is installed from git and builds RocksDB; run `just gates` where both are installed)",
 )
 class AgainstARealGonk(unittest.TestCase):
+    def test_the_banner_names_the_port_the_kernel_bound(self):
+        """The scratch gonk binds HTTP port 0 and the banner names the port it got.
+
+        Ledger 1223: the starter used to bind a port, release it and hand the number to gonk,
+        so anything that took that port in between made gonk fail with `Address already in
+        use`. Nothing is released now — gonk binds `:0` and prints the port it bound, which is
+        the one this test then dials. (On macOS the port thief is a child spawned between
+        socket() and FD_CLOEXEC that inherits the listener; here the property tested is that
+        the named port really answers.)"""
+        g = ScratchGonk(quic=False)
+        self.addCleanup(g.stop)
+        g.start()
+        self.assertIsNotNone(g.http_port, (g.dir / "gonk.log").read_text())
+        self.assertNotIn(g.http_port, LIVE_PORTS)
+        # The banner's number is the port really bound: a TCP connection to it completes.
+        with socket.create_connection(("127.0.0.1", g.http_port), timeout=10):
+            pass
+
     def test_the_whole_loop_over_the_socket(self):
         g = ScratchGonk(quic=False)
         self.addCleanup(g.stop)
@@ -265,7 +326,7 @@ class AgainstARealGonk(unittest.TestCase):
         g.start()
         repo = scratch_repo(self)
         args = ["init", "--ledger", "acme", "--holder", "worker"]
-        args += ["--quic", f"quic://127.0.0.1:{g.port}", "--cert-dir", str(g.bundle("worker"))]
+        args += ["--quic", f"quic://127.0.0.1:{g.quic_port}", "--cert-dir", str(g.bundle("worker"))]
         code, out = tool(repo, *args)
         self.assertEqual(code, 0, out)
         # The identity init computes is the one gonk enrolled, named as gonk mints it now. A
