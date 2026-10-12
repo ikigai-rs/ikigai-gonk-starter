@@ -81,13 +81,45 @@ class TheWorkerAgainstARealGonk(unittest.TestCase):
         self.assertEqual(len(texts), 1, texts)  # the release added no comment of its own
         # (The stub gh files every pull request under its state's slug, acme/lib.)
         self.assertTrue(texts[0].startswith("Evidence: https://github.com/acme/lib/pull/1\n"))
+        # The hand-back is the item's STATE on the ledger, not just the comment's prefix
+        # (ikigai-ledger 0.8.0, ledger item 1199): the JSON item says it awaits its dispatcher.
+        self.assertEqual(item["awaiting"], "dispatcher")
         self.assertTrue(worker.awaiting_dispatcher(item))
         self.assertEqual(self.rig.gh()["forbidden"], [])
 
         # Handed back and awaiting its dispatcher: not offered again, here or to another worker.
         take, skip, _ = self.rig.worker(self.ikigai).candidates()
         self.assertEqual(take, [])
-        self.assertIn("waits for its dispatcher", dict(skip)[f"acme#{other}"])
+        self.assertNotIn(f"acme#{other}", dict(skip))  # `next` excluded it entirely
+
+    def test_the_dispatchers_rejection_clears_the_hand_back(self):
+        # `rejects=true` is the dispatcher saying the evidence did not hold: the item stops
+        # awaiting, and `next` offers it again (ikigai-ledger 0.8.0, ledger item 1199).
+        n = self.file("Rejected", "worker:w1,repo:lib")
+        self.rig.configure()
+        self.assertEqual(self.rig.worker(self.ikigai).run_once().code, worker.HANDED_BACK)
+        self.assertEqual(self.item(n)["awaiting"], "dispatcher")
+        # `next` excluded it, so the worker is not even offered it.
+        take, skip, _ = self.rig.worker(self.ikigai).candidates()
+        self.assertEqual(take, [])
+        self.assertNotIn(f"acme#{n}", dict(skip))
+
+        cfg = gonk.load(self.rig.checkout)
+        note = "The evidence does not hold: the test still fails."
+        answer = self.ikigai.run(
+            f"sink {cfg.resource('comment')} item={n} rejects=true", stdin=note
+        )
+        self.assertTrue(answer.ok, answer.text())
+        item = self.item(n)
+        self.assertIsNone(item["awaiting"])
+        self.assertFalse(worker.awaiting_dispatcher(item))
+        # `next` offers it again — the ledger, not the worker, decides that now. (This worker
+        # still remembers handing it back, so its own `candidates` skips it: `worker.py forget
+        # <N>` clears that.)
+        doc, err = self.rig.worker(self.ikigai).ledger.next(["worker:w1"], [])
+        self.assertIsNone(err)
+        self.assertEqual([r["item"]["number"] for r in doc["ranking"]], [n])
+        self.assertEqual(self.rig.worker(self.ikigai).candidates()[0], [])
 
     def test_a_claim_lost_mid_run(self):
         n = self.file("Taken over", "worker:w1,repo:lib")

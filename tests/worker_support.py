@@ -33,9 +33,16 @@ def iso(t: datetime) -> str:
 class FakeLedger:
     """One ledger, in memory, answering `ikigai -c` command strings the way gonk does for
     next, items, item:N, claim (sink and delete), comment and close. Thread-safe: the
-    heartbeat calls it from its own thread."""
+    heartbeat calls it from its own thread.
 
-    def __init__(self, name: str = "acme") -> None:
+    It models a ledger 0.8.0 or later: `comment handback=true` sets the item's `awaiting` to
+    `dispatcher`, `rejects=true` clears it, and the JSON item carries the field — the state,
+    not just the `Evidence:` prefix in the newest comment. `older_comment` makes it a ledger
+    from before 0.8.0: it does not know either argument, writes the comment and touches no
+    state, and serves no `awaiting` field (which is exactly what the worker's fallback reads).
+    """
+
+    def __init__(self, name: str = "acme", older_comment: bool = False) -> None:
         self.name = name
         self.items: dict[int, dict] = {}
         self.calls: list[tuple[str, str | None]] = []
@@ -43,6 +50,7 @@ class FakeLedger:
         self.lock = threading.Lock()
         self.refuse_renewals = False
         self.refuse_comments = 0  # refuse this many comments, then answer them again
+        self.older_comment = older_comment  # a comment resource without handback/rejects
         self.tick = 0
 
     # -- the test's own hands on it
@@ -59,6 +67,7 @@ class FakeLedger:
             "labels": sorted(labels),
             "claim": None,
             "comments": [],
+            "awaiting": None,
         }
         return number
 
@@ -72,6 +81,13 @@ class FakeLedger:
         self.tick += 1
         stamp = iso(datetime.now(UTC) + timedelta(microseconds=self.tick * 1000))
         self.items[number]["comments"].append({"author": "fake", "time": stamp, "text": text})
+
+    def item_json(self, number: int) -> dict:
+        """The item as the ledger serves it: without `awaiting` on a pre-0.8.0 ledger."""
+        item = self.items[number]
+        if not self.older_comment:
+            return dict(item)
+        return {k: v for k, v in item.items() if k != "awaiting"}
 
     # -- the factory gonk.Ikigai is replaced by
     def __call__(self, target):
@@ -101,6 +117,12 @@ class FakeLedger:
                 w in item["labels"] for w in avoid
             )
 
+        def served(item: dict) -> dict:
+            """The item as the ledger serves it: a pre-0.8.0 ledger has no `awaiting` field."""
+            if not self.older_comment:
+                return item
+            return {k: v for k, v in item.items() if k != "awaiting"}
+
         if verb == "source" and name == "next":
             ready, excluded = [], []
             for n in sorted(self.items):
@@ -111,17 +133,26 @@ class FakeLedger:
                     continue
                 if item["claim"]:
                     excluded.append(
-                        {"why": "claimed", "holder": item["claim"]["holder"], "item": item}
+                        {"why": "claimed", "holder": item["claim"]["holder"], "item": served(item)}
+                    )
+                elif not self.older_comment and item["awaiting"] == "dispatcher":
+                    # A ledger 0.8.0 excludes a handed-back item: it waits for its dispatcher.
+                    excluded.append(
+                        {
+                            "why": "awaiting-dispatcher",
+                            "reason": "handed back, awaiting the dispatcher",
+                            "item": served(item),
+                        }
                     )
                 else:
                     ready.append(item)
             limit = int(args.get("limit", 3))
-            ranking = [{"rank": i + 1, "item": it} for i, it in enumerate(ready[:limit])]
+            ranking = [{"rank": i + 1, "item": served(it)} for i, it in enumerate(ready[:limit])]
             doc = {"schema": 1, "ledger": self.name, "ready": len(ready), "ranking": ranking}
             return gonk.Answer(0, json.dumps({**doc, "excluded": excluded}), "")
         if verb == "source" and name == "items":
             rows = [
-                it
+                served(it)
                 for _, it in sorted(self.items.items())
                 if it["status"] == "open" and has(it, args.get("labels", ""), "")
             ]
@@ -130,7 +161,7 @@ class FakeLedger:
             item = self.items.get(int(name[5:]))
             if item is None:
                 return gonk.Answer(1, "", f"no item {name[5:]}")
-            return gonk.Answer(0, json.dumps({"schema": 1, "item": item}), "")
+            return gonk.Answer(0, json.dumps({"schema": 1, "item": served(item)}), "")
 
         item = self.items.get(int(args.get("item", 0)))
         if item is None:
@@ -170,10 +201,23 @@ class FakeLedger:
             item["claim"] = None
             return gonk.Answer(0, f"{display} released\n", "")
         if verb == "sink" and name == "comment":
+            if args.get("handback") and args.get("rejects"):
+                return gonk.Answer(
+                    1, "", "invalid argument `rejects`: `handback=true` and `rejects=true` together"
+                )
             if self.refuse_comments:
                 self.refuse_comments -= 1
                 return gonk.Answer(1, "", f"error: the store refused the comment on {display}")
             self.add_comment(item["number"], stdin.strip())
+            # The hand-back is the item's state (ledger 0.8.0, ledger item 1199), set or
+            # cleared in the same write as the comment. A ledger older than 0.8.0 does not
+            # know the argument: it writes the comment and touches no state (the `served`
+            # view then has no `awaiting` field at all, and the prefix is the hand-back).
+            if not self.older_comment:
+                if args.get("handback"):
+                    item["awaiting"] = "dispatcher"
+                elif args.get("rejects"):
+                    item["awaiting"] = None
             return gonk.Answer(0, f"commented on {display}\n", "")
         if verb == "sink" and name == "close":
             self.closes.append(item["number"])

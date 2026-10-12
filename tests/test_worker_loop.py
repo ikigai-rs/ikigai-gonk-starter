@@ -154,6 +154,16 @@ class TheLoop(unittest.TestCase):
         self.assertIn(f"GitHub Actions runs for {sha} (gh pr checks was refused", comment)
         self.assertIn("never closes and never merges", comment)
 
+        # The hand-back is the item's STATE, not just the prefix: the ledger is told
+        # `handback=true` (ledger 0.8.0, ledger item 1199) so `next` stops offering the item,
+        # and the JSON item says it awaits its dispatcher.
+        self.assertEqual(item["awaiting"], "dispatcher")
+        self.assertTrue(worker.awaiting_dispatcher(item))
+        hand_backs = [
+            c for c, _ in self.ledger.calls if c.startswith("sink") and "handback=true" in c
+        ]
+        self.assertEqual(len(hand_backs), 1, hand_backs)
+
         # Released, still open: the dispatcher closes. Nothing was closed or merged.
         self.assertIsNone(item["claim"])
         self.assertEqual(item["status"], "open")
@@ -179,6 +189,39 @@ class TheLoop(unittest.TestCase):
         ]:
             self.assertIn(rule, prompt)
         self.assertTrue(prompt.rstrip().endswith("# Fix the due dates\n\nThey are off."))
+
+    def test_a_ledger_without_handback_still_gets_the_evidence(self):
+        # A ledger older than 0.8.0 does not know `handback` and ignores it, writing the
+        # comment: the evidence is never lost, and the `Evidence:` prefix is the hand-back
+        # there (the worker's own reader falls back to it).
+        self.ledger = FakeLedger(older_comment=True)
+        n = self.ledger.file("Old ledger", ["worker:w1", "repo:lib"])
+        outcome = self.run_once()
+        self.assertEqual(outcome.code, worker.HANDED_BACK, outcome.summary)
+        item = self.ledger.items[n]
+        [comment] = evidence_comments(item)
+        self.assertTrue(comment.startswith("Evidence: https://github.com/acme/lib/pull/1\n"))
+        self.assertEqual(
+            [c for c, _ in self.ledger.calls if ":comment " in c],
+            [f"sink urn:gk:iki:ledger:acme:comment item={n} handback=true"],
+        )
+        # That ledger serves no `awaiting` field; the prefix is what the worker reads back.
+        served = self.ledger.item_json(n)
+        self.assertNotIn("awaiting", served)
+        self.assertTrue(worker.awaiting_dispatcher(served))
+        self.assertIsNone(item["claim"])
+
+    def test_awaiting_dispatcher_reads_the_state_first_and_falls_back_to_the_prefix(self):
+        # The ledger's own field is the answer where it exists: `dispatcher` waits, `null`
+        # does not — even though a stale `Evidence:` prefix is still the newest comment.
+        evidence = {"time": "2026-01-01T00:00:00Z", "text": "Evidence: https://x/1"}
+        self.assertTrue(worker.awaiting_dispatcher({"awaiting": "dispatcher", "comments": []}))
+        self.assertFalse(worker.awaiting_dispatcher({"awaiting": None, "comments": [evidence]}))
+        # A ledger without the field at all: the newest comment decides, as it always did.
+        self.assertTrue(worker.awaiting_dispatcher({"comments": [evidence]}))
+        self.assertFalse(worker.awaiting_dispatcher({"comments": []}))
+        later = {"time": "2026-01-02T00:00:00Z", "text": "It does not hold: see the run."}
+        self.assertFalse(worker.awaiting_dispatcher({"comments": [evidence, later]}))
 
     def test_the_lease_is_renewed_while_the_agent_runs(self):
         self.rig.agent_flags = ["--sleep", "3.5"]
@@ -290,8 +333,9 @@ class TheLoop(unittest.TestCase):
         }
         numbers = {why: self.ledger.file(why, labels) for why, labels in cases.items()}
         waiting = self.ledger.file("done, waiting", ["worker:w1", "repo:lib"])
-        self.ledger.add_comment(waiting, "Evidence: https://github.com/acme/lib/pull/9")
         self.ledger.file("not for this worker", ["repo:lib"])
+        # A handed-back item: `next` excludes it, so the worker is never even offered it.
+        self.ledger.items[waiting]["awaiting"] = "dispatcher"
         self.rig.configure()
         take, skip, _ = self.rig.worker(self.ledger).candidates()
         self.assertEqual(take, [])
@@ -301,10 +345,45 @@ class TheLoop(unittest.TestCase):
         self.assertIn(
             "not one of this worker's", reasons[f"acme#{numbers['a repo it does not know']}"]
         )
-        self.assertIn("waits for its dispatcher", reasons[f"acme#{waiting}"])
-        self.assertEqual(len(reasons), 4)  # the unlabeled item is not offered at all
+        self.assertEqual(len(reasons), 3)  # the unlabeled item is not offered at all
+        self.assertNotIn(f"acme#{waiting}", reasons)  # handed back, so not offered either
 
-        # A later comment (the dispatcher saying why the evidence did not hold) frees it.
+    def test_an_item_awaiting_its_dispatcher_is_not_offered(self):
+        # What a 0.8.0 hand-back leaves: the item's state (and the Evidence: prefix beside it).
+        # `next` excludes it, so it reaches neither the take list nor the skip list.
+        waiting = self.ledger.file("done, waiting", ["worker:w1", "repo:lib"])
+        self.ledger.add_comment(waiting, "Evidence: https://github.com/acme/lib/pull/9")
+        self.ledger.items[waiting]["awaiting"] = "dispatcher"
+        self.rig.configure()
+        take, skip, _ = self.rig.worker(self.ledger).candidates()
+        self.assertEqual(take, [])
+        self.assertEqual(dict(skip), {})  # `next` did not rank it, so nothing to skip
+
+        # A ledger that offers it anyway (an older one, or one whose policy differs) is still
+        # refused by the worker's own check, which reads the item's JSON.
+        w = self.rig.worker(self.ledger)
+        item, err = w.ledger.item(waiting)
+        self.assertIsNone(err)
+        self.assertIn("awaiting its dispatcher", w.why_not(item, gonk.iso_now(), {}))
+
+        # The dispatcher's rejection (`rejects=true`) clears the state: ready again, even
+        # though the Evidence: prefix is still the newest comment.
+        self.ledger.items[waiting]["awaiting"] = None
+        take, _, _ = self.rig.worker(self.ledger).candidates()
+        self.assertEqual([i["number"] for i, _ in take], [waiting])
+
+    def test_a_ledger_without_the_awaiting_field_still_reads_the_prefix(self):
+        # Before 0.8.0 there is no state to read: the newest comment is the whole hand-back,
+        # and a later comment frees the item. `next` offers it (nothing excludes it), and the
+        # worker's own check is what refuses it.
+        self.ledger = FakeLedger(older_comment=True)
+        waiting = self.ledger.file("done, waiting", ["worker:w1", "repo:lib"])
+        self.ledger.add_comment(waiting, "Evidence: https://github.com/acme/lib/pull/9")
+        self.rig.configure()
+        take, skip, _ = self.rig.worker(self.ledger).candidates()
+        self.assertEqual(take, [])
+        self.assertIn("awaiting its dispatcher", dict(skip)[f"acme#{waiting}"])
+
         self.ledger.add_comment(waiting, "That PR does not fix it: the test still fails.")
         take, _, _ = self.rig.worker(self.ledger).candidates()
         self.assertEqual([i["number"] for i, _ in take], [waiting])
@@ -482,9 +561,13 @@ class TheLoop(unittest.TestCase):
     def test_a_second_run_of_one_item_gets_a_fresh_directory(self):
         n = self.ledger.file("Again", ["worker:w1", "repo:lib"])
         self.assertEqual(self.run_once(keep="true").code, worker.HANDED_BACK)
+        # The dispatcher's rejection: the comment, and the state it clears (0.8.0's
+        # `rejects=true`; a later plain comment of a worker's would leave the hand-back
+        # standing).
         self.ledger.items[n]["comments"].append(
             {"author": "d", "time": "9999-01-01T00:00:00.000Z", "text": "Not yet: try again."}
         )
+        self.ledger.items[n]["awaiting"] = None
         worker.Attempts(self.rig.checkout / ".gonk" / "state" / "worker").forget("acme", n)
         self.assertEqual(self.run_once().code, worker.HANDED_BACK)
         cwd = Path((self.rig.record / f"cwd-{n}").read_text())

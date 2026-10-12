@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""This repository's way to reach gonk: init, seed, file, next, claim, release, report, close.
+"""This repository's way to reach gonk: init, seed, file, next, claim, release, report, reject,
+close.
 
 Standard library only (Python 3.11 or later, for tomllib). Every request goes through the
 `ikigai` command line with an ALIAS mount, `--mount urn:gk:=<target>`, so a socket on this
@@ -1250,13 +1251,28 @@ def evidence_note(args) -> str:
     return f"Evidence: {args.evidence}" + (f"\n\n{args.note.strip()}" if args.note else "")
 
 
+def comment_flag(ikigai: Ikigai, cfg: Config, number: int, note: str, flag: str) -> Answer:
+    """Post `note` with `flag=true`.
+
+    The flag is a hand-back's state (`handback`, `rejects`: ikigai-ledger 0.8.0, ledger item
+    1199). A ledger older than that does not know the argument and ignores it — the comment is
+    written either way — so the `Evidence:` prefix stays in the note for the ledgers (and the
+    readers) that have no such state.
+    """
+    return ikigai.run(f"sink {cfg.resource('comment')} item={number} {flag}=true", stdin=note)
+
+
 def cmd_report(args, cfg: Config, make_ikigai) -> int:
     """The worker's end of an item: the evidence as a comment, then the claim handed back.
-    Closing is the dispatcher's, after checking that evidence."""
+
+    The comment is marked `handback=true`, so the ledger knows the item waits for its
+    dispatcher and `next` stops offering it to the next worker (ikigai-ledger 0.8.0, ledger
+    item 1199). Closing is the dispatcher's, after checking that evidence.
+    """
     need(cfg, "ledger", "target")
     note = evidence_note(args)
     ikigai = make_ikigai(cfg.target)
-    answer = ikigai.run(f"sink {cfg.resource('comment')} item={args.item}", stdin=note)
+    answer = comment_flag(ikigai, cfg, args.item, note, "handback")
     code = show(answer)
     if not answer.ok:
         return code
@@ -1266,6 +1282,21 @@ def cmd_report(args, cfg: Config, make_ikigai) -> int:
         if code == 0:
             cfg.claim_file.unlink(missing_ok=True)
     return code
+
+
+def cmd_reject(args, cfg: Config, make_ikigai) -> int:
+    """The dispatcher's rejection of a hand-back: the evidence did not hold, so the item is
+    ready again. `rejects=true` clears the ledger's awaiting state (0.8.0, ledger item 1199),
+    which a worker's ordinary comment cannot; the note says why."""
+    need(cfg, "ledger", "target")
+    note = (args.note or "").strip()
+    if not note:
+        raise ConfigError(
+            "--note is why the evidence did not hold: a rejection with no reason leaves the "
+            "next worker with nothing"
+        )
+    answer = comment_flag(make_ikigai(cfg.target), cfg, args.item, note, "rejects")
+    return show(answer)
 
 
 def cmd_close(args, cfg: Config, make_ikigai) -> int:
@@ -1340,6 +1371,13 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--evidence", required=True, help="the URL that shows the work")
     s.add_argument("--note")
     s.set_defaults(run=cmd_report)
+
+    s = sub.add_parser(
+        "reject", help="the evidence did not hold: the item is ready again (a dispatcher's act)"
+    )
+    s.add_argument("item", type=int)
+    s.add_argument("--note", help="why the evidence did not hold (required)")
+    s.set_defaults(run=cmd_reject)
 
     s = sub.add_parser("close", help="close an item, with evidence (the dispatcher's act)")
     s.add_argument("item", type=int)

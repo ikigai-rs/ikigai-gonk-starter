@@ -33,6 +33,10 @@ release *args:
 report item evidence *flags:
     python3 tools/gonk.py report {{item}} --evidence "{{evidence}}" {{flags}}
 
+# The evidence did not hold, so the item is ready again: just reject 12 --note "why"
+reject item *flags:
+    python3 tools/gonk.py reject {{item}} {{flags}}
+
 # The dispatcher closes, once the evidence holds: just close 12 https://github.com/owner/repo/pull/34 [--reason …]
 close item evidence *flags:
     python3 tools/gonk.py close {{item}} --evidence "{{evidence}}" {{flags}}

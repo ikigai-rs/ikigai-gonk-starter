@@ -454,9 +454,10 @@ the Pop!_OS 24.04 worker, `run --once`) showed, and what is still to try:
 
 1. **Pull.** `next` with the labels, then the first ranked item that is unclaimed, carries
    exactly one `repo:<name>` label naming a configured repository, is not awaiting its
-   dispatcher (its newest comment is not an `Evidence:` hand-back; any later comment, such as
-   the dispatcher saying why the evidence did not hold, makes it ready again), was not
-   handed back by this worker before (`.gonk/state/worker/attempts.json`;
+   dispatcher (`awaiting_dispatcher`: the ledger's `awaiting: dispatcher` state, or — on a
+   ledger older than 0.8.0 — its newest comment being an `Evidence:` hand-back, with any later
+   comment, such as the dispatcher saying why the evidence did not hold, making it ready
+   again), was not handed back by this worker before (`.gonk/state/worker/attempts.json`;
    `worker.py forget <N>` allows it again), and whose repository has no active claim.
 2. **One agent per repository.** It refuses an item whose repository has an open item with a
    live claim, held by anyone (an expired lease is a holder that stopped renewing, and does
@@ -480,10 +481,14 @@ the Pop!_OS 24.04 worker, `run --once`) showed, and what is still to try:
    `gh pr checks`, or, when the token may not read checks (a fine-grained token cannot), the
    Actions runs for the head's **full** sha (`gh run list --commit`; a short sha answers `[]`
    silently, so the worker never asks with one). The comment names which source answered.
-   Then `Evidence: <PR URL>` and the details go on the item as a comment, the claim is
-   released, and the worktree is removed (unless `keep`). With no pull request, the first
-   line of the agent's report file (a URL) is the evidence; with neither, the item goes back
-   with a note and no evidence. An overrun goes back the same way, naming the overrun.
+   Then `Evidence: <PR URL>` and the details go on the item as a comment posted with
+   `handback=true`, the claim is released, and the worktree is removed (unless `keep`).
+   `handback=true` makes the hand-back a STATE of the item (ikigai-ledger 0.8.0, ledger item
+   1199), so `next` stops offering it to the next worker; a ledger older than 0.8.0 ignores
+   the argument it does not know and writes the comment, the `Evidence:` prefix being the
+   hand-back there. With no pull request, the first line of the agent's report file (a URL) is
+   the evidence; with neither, the item goes back with a note and no evidence. An overrun goes
+   back the same way, naming the overrun.
 
 `run --once` exits 0 when it handed an item back with evidence, 3 when there was nothing to
 take, 4 when it took one and could not hand it back with evidence (lost, overrun, stopped,

@@ -16,9 +16,9 @@ What it does with one item, in order:
 
 1. Pull `next`, narrowed to the configured labels, and take the first ranked item that is
    unclaimed, carries exactly one `repo:<name>` label naming a configured repository, is not
-   awaiting its dispatcher (its newest comment is not an `Evidence:` hand-back), was not
-   handed back by this worker before, and whose repository has no ACTIVE claim held by anyone
-   (one agent per repository) and no item running on this machine.
+   awaiting its dispatcher (`awaiting_dispatcher`), was not handed back by this worker
+   before, and whose repository has no ACTIVE claim held by anyone (one agent per repository)
+   and no item running on this machine.
 2. Claim it with a lease, then renew the lease while it works (the heartbeat). A renewal that
    finds the item held by someone else, released, or closed, or that the ledger refuses, means
    the claim is lost: the agent is stopped and the loss is reported, and nothing is released.
@@ -28,7 +28,11 @@ What it does with one item, in order:
    preamble; stopped when the wall-clock budget runs out.
 5. The hand-back: the pull request(s) the run opened, by the worktree's branch, and their CI
    (`gh pr checks`, or the Actions runs for the head's FULL sha when a fine-grained token may
-   not read checks), posted on the item as an `Evidence:` comment; then the claim is released.
+   not read checks), posted on the item as an `Evidence:` comment that also says
+   `handback=true`; then the claim is released. `handback=true` makes the hand-back a STATE
+   the ledger knows (0.8.0, ledger item 1199), so `next` stops offering the item to the next
+   worker; the `Evidence:` prefix stays, because that is what a ledger older than 0.8.0 —
+   which does not know the argument and ignores it — reads, and what the brief filters on.
    The worker NEVER closes and NEVER merges: the dispatcher does both.
 
 The one-agent-per-repository rule here is BEST-EFFORT until the ledger enforces it (ledger
@@ -343,8 +347,18 @@ class Ledger:
         command = f"delete {self.cfg.resource('claim')} item={number} from={holder}"
         return self.ikigai.run(command, stdin="")
 
-    def comment(self, number: int, text: str) -> gonk.Answer:
-        return self.ikigai.run(f"sink {self.cfg.resource('comment')} item={number}", stdin=text)
+    def comment(self, number: int, text: str, **flags: str) -> gonk.Answer:
+        """A comment on an item, with any flags the ledger's `comment` resource takes.
+
+        `handback=true` makes the hand-back a STATE of the item (ledger 0.8.0, ledger item
+        1199): `next` stops offering it to the next worker, and only the dispatcher's close or
+        comment (or the worker's own `rejects=true`) takes it off. A ledger older than 0.8.0
+        does not know the argument and ignores it, writing the comment — the `Evidence:` prefix
+        in the text is the hand-back there, which is why it stays.
+        """
+        words = [f"sink {self.cfg.resource('comment')} item={number}"]
+        words += [f"{name}={value}" for name, value in flags.items()]
+        return self.ikigai.run(" ".join(words), stdin=text)
 
 
 def active_claim(item: dict, now: datetime) -> str | None:
@@ -362,9 +376,18 @@ def active_claim(item: dict, now: datetime) -> str | None:
 
 
 def awaiting_dispatcher(item: dict) -> bool:
-    """Its newest comment is an `Evidence:` hand-back: the work is done and waits for the
-    dispatcher to check it and close the item. A later comment (the dispatcher saying why the
-    evidence did not hold) makes it ready again."""
+    """The item waits for its dispatcher to check the evidence and close it.
+
+    The ledger's own state first: an item the worker handed back with `handback=true` carries
+    `awaiting: dispatcher` in its JSON (ledger 0.8.0, ledger item 1199), which no later
+    comment of the worker's clears and only the dispatcher can. A ledger older than 0.8.0 has
+    no such field — the key is absent, not null — so the prefix in the newest comment is the
+    fallback: an `Evidence:` hand-back, and any later comment (the dispatcher saying why the
+    evidence did not hold) makes the item ready again. `awaiting` is `null` on a 0.8.0 ledger
+    whose state was cleared, which the prefix must NOT override: the dispatcher has spoken.
+    """
+    if "awaiting" in item:
+        return item.get("awaiting") == "dispatcher"
     comments = sorted(item.get("comments") or [], key=lambda c: c.get("time") or "")
     return bool(comments) and (comments[-1].get("text") or "").startswith("Evidence:")
 
@@ -863,7 +886,7 @@ class Worker:
         if repo not in self.wc.repos:
             return f"repo:{repo} is not one of this worker's repositories"
         if awaiting_dispatcher(item):
-            return "its newest comment is an Evidence: hand-back; it waits for its dispatcher"
+            return "it is awaiting its dispatcher (handed back, awaiting review)"
         seen = self.attempts.seen(self.cfg.ledger, item["number"])
         if seen:
             return (
@@ -1055,7 +1078,7 @@ class Worker:
             + (f"worktree removed; log {ws.log}" if removed else where)
             + ".",
         ]
-        posted = self.ledger.comment(number, "\n".join(body))
+        posted = self.hand_back(number, "\n".join(body))
         if not posted.ok:
             note = (
                 f"gonk worker `{holder}` could not post its evidence on {display} "
@@ -1106,6 +1129,17 @@ class Worker:
             return None
         url = first[0].strip() if first else ""
         return url if gonk.EVIDENCE_SHAPE.match(url) else None
+
+    def hand_back(self, number: int, text: str) -> gonk.Answer:
+        """Post the hand-back comment, marked with `handback=true`.
+
+        `handback=true` (ledger 0.8.0, ledger item 1199) is what tells `next` the item waits
+        for its dispatcher rather than being free for the next worker. A ledger older than 0.8.0
+        ignores the argument it does not know and writes the comment anyway: the `Evidence:`
+        prefix in `text` is the hand-back there, and the worker's own `awaiting_dispatcher`
+        reads it back.
+        """
+        return self.ledger.comment(number, text, handback="true")
 
     def release_if_ours(self, number: int, note: str) -> bool:
         """Post the note, then release only a claim that is still this worker's. The note is

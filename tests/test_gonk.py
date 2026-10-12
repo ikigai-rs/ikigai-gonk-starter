@@ -368,11 +368,55 @@ class Claims(unittest.TestCase):
         self.assertEqual(
             fake.calls[1:],
             [
-                ("sink urn:gk:iki:ledger:acme:comment item=12", f"Evidence: {url}\n\nok"),
+                # `handback=true` makes the hand-back the item's state (ledger 0.8.0, ledger
+                # item 1199), so `next` stops offering the item; the Evidence: prefix stays
+                # for the ledgers that have no such state.
+                (
+                    "sink urn:gk:iki:ledger:acme:comment item=12 handback=true",
+                    f"Evidence: {url}\n\nok",
+                ),
                 ("delete urn:gk:iki:ledger:acme:claim item=12", ""),
             ],
         )
         self.assertFalse((self.repo / ".gonk" / "state" / "claim.toml").exists())
+
+    def test_report_still_posts_the_evidence_to_a_ledger_without_handback(self):
+        # A ledger older than 0.8.0 does not know `handback` and ignores it: the comment is
+        # written as it stands, the Evidence: prefix being the hand-back there.
+        fake = FakeIkigai(
+            [(":claim", ok("acme#12 claimed by agent-1\n")), (":comment", ok("commented\n"))]
+        )
+        run(self.repo, ["claim", "12"], fake)
+        url = "https://github.com/o/r/pull/3"
+        code, _, _ = run(self.repo, ["report", "12", "--evidence", url], fake)
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            fake.calls[1:],
+            [
+                (
+                    "sink urn:gk:iki:ledger:acme:comment item=12 handback=true",
+                    f"Evidence: {url}",
+                ),
+                ("delete urn:gk:iki:ledger:acme:claim item=12", ""),
+            ],
+        )
+
+    def test_reject_clears_the_hand_back_with_a_reason(self):
+        fake = FakeIkigai([(":comment", ok("commented\n"))])
+        code, _, err = run(self.repo, ["reject", "12"], fake)
+        self.assertEqual(code, 2)
+        self.assertIn("--note", err)
+        code, _, _ = run(self.repo, ["reject", "12", "--note", "CI is red on main"], fake)
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            fake.calls,
+            [
+                (
+                    "sink urn:gk:iki:ledger:acme:comment item=12 rejects=true",
+                    "CI is red on main",
+                )
+            ],
+        )
 
     def test_release_comments_the_note_then_releases_with_no_content(self):
         # Ledger item 1229: the cli never gives a batch's stdin to a DELETE, so a note piped

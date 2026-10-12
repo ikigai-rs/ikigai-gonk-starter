@@ -19,8 +19,16 @@ python3 tools/gonk.py next                            # what is ready, ranked, a
 python3 tools/gonk.py claim 12                        # take it, on a 30-minute lease
 # reproduce, fix, open a pull request, get CI green
 python3 tools/gonk.py report 12 --evidence <PR URL>   # the evidence on the item; hand it back
+python3 tools/gonk.py reject 12 --note "<why not>"    # the evidence did not hold; ready again
 python3 tools/gonk.py close 12 --evidence <PR URL>    # whoever dispatched it, once it holds
 ```
+
+`report` hands the item back with `handback=true`, so the ledger records that it is awaiting
+its dispatcher and `next` stops offering it to the next worker (ikigai-ledger 0.8.0, ledger
+item 1199). `reject` is the dispatcher's answer when the evidence does not hold: `rejects=true`
+clears that state and the item is ready again. Both keep the `Evidence:` prefix in the comment,
+so a ledger older than 0.8.0 — which ignores the argument it does not know — reads the hand-back
+the same way.
 
 That is the whole protocol, and [`AGENTS.md`](AGENTS.md) states its rules: claim before you
 write, one agent per item and per working tree, reproduce before you fix, every change
