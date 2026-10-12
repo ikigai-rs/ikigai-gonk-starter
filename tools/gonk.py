@@ -1004,7 +1004,7 @@ def cmd_init(args, cfg: Config, make_ikigai) -> int:
             "missing",
             "gonk",
             "say how this machine reaches gonk: `init --socket ~/.ikigai/gonk.sock` (gonk's "
-            "default on this machine) or `init --quic quic://<host>:1060 --cert-dir <bundle>`",
+            "default on this machine) or `init --quic quic://<host>:1062 --cert-dir <bundle>`",
         )
     else:
         identity_rows(cfg, row)

@@ -132,7 +132,7 @@ own identity, so its private key never leaves it:
 ```sh
 ikigai cert generate --dir ~/gonk-cert
 python3 tools/gonk.py init --ledger acme --holder build-box \
-    --quic quic://gonk-host:1060 --cert-dir ~/gonk-cert
+    --quic quic://gonk-host:1062 --cert-dir ~/gonk-cert
 ```
 
 `init` prints the machine's identity, `urn:iki:host:gonk:client:<fingerprint>` (the name gonk
@@ -170,7 +170,7 @@ fetches each resource's contract from gonk before it sends, so arguments are rou
 ledger's own declarations rather than by this script's guesses.
 
 An agent that speaks MCP is configured with `ikigai mcp`, which `init` prints for your
-transport, for example `ikigai mcp --override urn:iki:ledger:=quic://gonk-host:1060
+transport, for example `ikigai mcp --override urn:iki:ledger:=quic://gonk-host:1062
 --cert-dir ~/gonk-cert`. Its tools are the ledger's own actions (`ledger-next__source`,
 `ledger-claim__sink`, …) filtered by the capability the session holds, so an agent is never
 offered what it may not do. The [gonk Book's MCP chapter](https://ikigai-rs.github.io/ikigai-tutorial/gonk/agent/mcp.html)

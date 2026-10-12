@@ -118,14 +118,14 @@ mount -o remount,bind,ro /srv/hubdiag/src
 check
 expect_exit "green after every repair" 0 "$st"
 
-echo "── sshd, for real: hubdiag logs in with the key, forwards 1060 and nothing else"
+echo "── sshd, for real: hubdiag logs in with the key, forwards 1062 and nothing else"
 systemctl start ssh 2>/dev/null || systemctl start sshd 2>/dev/null || true
 sshopt=(-i "$T/hub" -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 -o LogLevel=ERROR)
 who="$(ssh "${sshopt[@]}" hubdiag@127.0.0.1 id -un 2>&1)"
 has "key login as hubdiag" "hubdiag" "$who"
-ssh "${sshopt[@]}" -N -o ExitOnForwardFailure=yes -R 1060:127.0.0.1:22 hubdiag@127.0.0.1 & fwd=$!
+ssh "${sshopt[@]}" -N -o ExitOnForwardFailure=yes -R 1062:127.0.0.1:22 hubdiag@127.0.0.1 & fwd=$!
 sleep 3
-if kill -0 "$fwd" 2>/dev/null; then ok "remote forward on 1060 is allowed"; kill "$fwd"; else bad "remote forward on 1060 was refused"; fi
+if kill -0 "$fwd" 2>/dev/null; then ok "remote forward on 1062 is allowed"; kill "$fwd"; else bad "remote forward on 1062 was refused"; fi
 wait "$fwd" 2>/dev/null
 ssh "${sshopt[@]}" -N -o ExitOnForwardFailure=yes -R 2222:127.0.0.1:22 hubdiag@127.0.0.1 > "$T/r2222" 2>&1 & f2=$!
 sleep 3

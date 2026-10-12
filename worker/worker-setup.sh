@@ -48,7 +48,7 @@
 #                     e.g. --view work=/home/agent/work --view src=/home/<admin>/src
 #                     A view whose source is under the admin's home is also checked, as the
 #                     agent, to be unwritable by the agent.
-#   --listen PORT     the remote forward hubdiag may open (default 1060, gonk's tunnel); repeatable
+#   --listen PORT     the remote forward hubdiag may open (default 1062, gonk's tunnel); repeatable
 #   --dry-run         print what would change; change nothing
 #   --check           the boundary self-test (needs root: it acts AS hubdiag and AS agent)
 #   --fstab FILE      read the mount table from FILE, not /etc/fstab. TEST-ONLY, used by
@@ -93,7 +93,7 @@ while [ $# -gt 0 ]; do
         *) echo "worker-setup: unknown argument: $1 (try --help)" >&2; exit 2 ;;
     esac
 done
-[ "${#listens[@]}" -gt 0 ] || listens=(1060)
+[ "${#listens[@]}" -gt 0 ] || listens=(1062)
 case "$wslautomount" in restrict|off) ;; *) echo "worker-setup: --wsl-automount takes restrict or off, got $wslautomount" >&2; exit 2 ;; esac
 
 die() { echo "worker-setup: $*" >&2; exit 1; }

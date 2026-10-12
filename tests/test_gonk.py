@@ -73,16 +73,16 @@ class Targets(unittest.TestCase):
     def test_a_socket_and_a_quic_door_are_one_alias_mount(self):
         sock = gonk.Target(socket="/s/gonk.sock")
         self.assertEqual(sock.mount_args(), ["--mount", "urn:gk:=/s/gonk.sock"])
-        quic = gonk.Target(quic="quic://box:1060", cert_dir="/c")
+        quic = gonk.Target(quic="quic://box:1062", cert_dir="/c")
         self.assertEqual(
-            quic.mount_args(), ["--mount", "urn:gk:=quic://box:1060", "--cert-dir", "/c"]
+            quic.mount_args(), ["--mount", "urn:gk:=quic://box:1062", "--cert-dir", "/c"]
         )
 
     def test_mcp_uses_the_ledgers_own_names(self):
-        quic = gonk.Target(quic="quic://box:1060", cert_dir="/c")
+        quic = gonk.Target(quic="quic://box:1062", cert_dir="/c")
         self.assertEqual(
             quic.mcp_command(),
-            "ikigai mcp --override urn:iki:ledger:=quic://box:1060 --cert-dir /c",
+            "ikigai mcp --override urn:iki:ledger:=quic://box:1062 --cert-dir /c",
         )
 
     def test_a_transport_without_its_details_is_refused(self):
@@ -235,7 +235,7 @@ class Init(unittest.TestCase):
 
     def test_quic_needs_its_certificate_directory(self):
         repo = scratch_repo(self)
-        code, _, err = run(repo, ["init", "--quic", "quic://box:1060"])
+        code, _, err = run(repo, ["init", "--quic", "quic://box:1062"])
         self.assertEqual(code, 2)
         self.assertIn("--cert-dir", err)
 
@@ -291,7 +291,7 @@ class Init(unittest.TestCase):
         pem = "-----BEGIN CERTIFICATE-----\n" + base64.encodebytes(der).decode()
         (certs / "client.crt").write_text(pem + "-----END CERTIFICATE-----\n")
         args = ["init", "--ledger", "acme", "--holder", "build-box"]
-        args += ["--quic", "quic://gonk-host:1060", "--cert-dir", str(certs)]
+        args += ["--quic", "quic://gonk-host:1062", "--cert-dir", str(certs)]
         fake = FakeIkigai([("ledgers", ok("")), ("describe", ok("x"))])
         code, out, _ = run(repo, args, fake)
         fp = hashlib.sha256(der).hexdigest()
@@ -304,7 +304,7 @@ class Init(unittest.TestCase):
         self.assertIn("ikigai-gonk client add build-box --cert client.crt --ledger acme=write", out)
         self.assertRegex(out, r"missing\s+server\s+no server.crt")
         self.assertEqual(code, 1)
-        self.assertEqual(fake.target.mount_args()[1], "urn:gk:=quic://gonk-host:1060")
+        self.assertEqual(fake.target.mount_args()[1], "urn:gk:=quic://gonk-host:1062")
 
 
 class Claims(unittest.TestCase):

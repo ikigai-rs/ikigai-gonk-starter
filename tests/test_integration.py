@@ -28,7 +28,9 @@ from support import ROOT, gonk, load_hook, scratch_repo
 
 GONK = shutil.which("ikigai-gonk")
 IKIGAI = shutil.which("ikigai")
-LIVE_PORTS = {1060, 4433}
+# Ports a live service may hold: gonk's HTTP and QUIC door (1062), NetKernel (1060, gonk's port
+# before 2026-10-12) and a QUIC peer (4433). A scratch gonk never takes one of these.
+LIVE_PORTS = {1060, 1062, 4433}
 
 
 def free_quic_port() -> int:
@@ -198,7 +200,7 @@ class TheBannerPort(unittest.TestCase):
         line = "  http    http://localhost:40333/ — loopback (127.0.0.1:0); anonymous\n"
         self.assertEqual(banner_port(line), 40333)
         self.assertEqual(banner_port("  http    http://127.0.0.2:1070/ — loopback\n"), 1070)
-        self.assertEqual(banner_port("  http    http://[::1]:1060/ — loopback\n"), 1060)
+        self.assertEqual(banner_port("  http    http://[::1]:1062/ — loopback\n"), 1062)
 
     def test_it_answers_none_before_the_line_appears(self):
         self.assertIsNone(banner_port("ikigai-gonk 0.1.0 — holding the store\n"))

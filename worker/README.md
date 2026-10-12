@@ -24,7 +24,7 @@ its private tooling repository and reads the same probe output and the same fact
 | `hubdiag` | the hub's eyes | nothing | the journal; the **views** (by default `~agent/work`) | nothing |
 
 Neither `agent` nor `hubdiag` has sudo or a password. `hubdiag` logs in by key only, and sshd lets it
-open one remote forward (gonk's tunnel, port 1060) and nothing else; `agent` cannot log in over ssh
+open one remote forward (gonk's tunnel, port 1062) and nothing else; `agent` cannot log in over ssh
 at all (`DenyUsers`): its admin reaches it with `sudo -iu agent`.
 
 **A view is never a grant of traverse on a home.** That is the mistake this directory exists to
@@ -356,10 +356,12 @@ public half you installed:
 then the probe (above) as the first read. gonk's tunnel is a remote forward the sshd drop-in
 allows and nothing else does, kept up by a service on the hub:
 
-    ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=10 -R 1060:localhost:1060 <worker>
+    ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=10 -R 1062:localhost:1062 <worker>
 
-On the worker, `localhost:1060` then reaches the hub's gonk; a dead session frees the port in
+On the worker, `localhost:1062` then reaches the hub's gonk; a dead session frees the port in
 about 30 seconds (`ClientAliveInterval 10`, `CountMax 3`), so the service can re-bind it.
+A worker set up before gonk moved from 1060 to 1062 (2026-10-12) permits only 1060: run
+`sudo ./worker-setup.sh` again with its original arguments, and it rewrites the drop-in to name 1062.
 
 ### 8. The worker loop, as `agent`
 
