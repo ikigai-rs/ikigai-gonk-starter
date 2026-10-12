@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "strict": true
+  },
+  "fmt": {
+    "lineWidth": 100,
+    "exclude": ["**/*.md", ".gonk/**"]
+  },
+  "tasks": {
+    "test": "deno test --allow-net=127.0.0.1 --allow-read"
+  }
+}

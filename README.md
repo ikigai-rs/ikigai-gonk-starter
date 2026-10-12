@@ -81,10 +81,10 @@ of the specs as language-neutral steps (an operation, its arguments, the date it
 and the whole answer expected), the service's tests run each one against the rules and again
 over HTTP, and a test fails if a scenario has no vector or a vector names no scenario. Time is
 an input: no rule reads a clock, so the due dates are the same on any day the tests run.
-Python (standard library only) and Rust (one cargo workspace, standard library only) are the
-targets today; Deno and Go are planned, each running the same vector file. This repository's CI
-generates every target into a scratch directory and runs its tests, so a template that has gone
-stale fails.
+Python (standard library only), Rust (one cargo workspace, standard library only) and Deno
+(TypeScript, standard library only) are the targets today; Go is planned, each running the
+same vector file. This repository's CI generates every target into a scratch directory and runs
+its tests, so a template that has gone stale fails.
 
 `seed` files one item per unchecked task in `openspec/changes/<id>/tasks.md`, keyed by the
 task's IRI (`urn:openspec:change:<id>:task:<number>`, the name the
@@ -274,8 +274,8 @@ README says what else waits on the ledger.
 
 ## Coming next
 
-- **More languages** for the generator: Deno and Go, each passing the same vectors (Rust has
-  landed: `--target rust`).
+- **More languages** for the generator: Go, passing the same vectors (Rust and Deno have
+  landed: `--target rust`, `--target deno`).
 - **A second spec format**, beside OpenSpec, lifted to the same graph and ledger items by a
   mapping file rather than code.
 - **The worker's gaps, in the ledger.** One agent per repository enforced by the ledger rather

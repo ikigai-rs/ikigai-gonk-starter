@@ -159,6 +159,15 @@ class WindowsCheckout(unittest.TestCase):
         self.assertIn("artifacts/service/src/domain.rs", rels)
         self.assertWindowsSafe(self.windows_clone(self.commit(dest, rels)))
 
+    def test_a_windows_clone_of_a_generated_deno_repository_is_lf_too(self):
+        """`*.ts` is named in .gitattributes for the same reason: Deno reads the vectors
+        byte for byte, and a CRLF TypeScript file is a diff of every line."""
+        dest = self.scratch() / "library"
+        new.generate(dest, "deno")
+        rels = [str(rel) for rel in new.files_under(dest)]
+        self.assertIn("artifacts/service/src/domain.ts", rels)
+        self.assertWindowsSafe(self.windows_clone(self.commit(dest, rels)))
+
 
 if __name__ == "__main__":
     unittest.main()

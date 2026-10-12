@@ -43,9 +43,62 @@ PY=python3
 # scripts/test.py, as that repository's CI would run it. A stale template fails here. Each
 # target's test.py needs only that language's toolchain: python/ is standard-library Python,
 # rust/ is one cargo workspace on the standard library alone (no fetch, no lock to resolve),
-# so `cargo` must be on PATH for the rust target's gate to mean anything.
+# deno/ is Deno with no imports from a registry. `cargo` and `deno` must be on PATH for those
+# targets' gates to mean anything; each test.py fails closed, naming a tool that is missing,
+# rather than reading a missing toolchain as a passing suite.
 SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/gonk-starter-gates.XXXXXX") || exit 2
 trap 'rm -rf "$SCRATCH"' EXIT
+
+# The deno target's toolchain. CI's ubuntu runner does not carry Deno, and a worker's token may
+# not push a `.github/workflows/` change at all (worker/README.md: a worker must not edit CI),
+# so the gate provisions the pinned release itself rather than depending on a workflow setup
+# step: the archive comes from Deno's own GitHub release, its published SHA-256 is checked, and
+# the binary is unpacked into the scratch directory and put on PATH. A machine that already has
+# `deno` keeps its own, and a CI given a `denoland/setup-deno` step skips all of this. The
+# digests are the `.zip.sha256sum` files published with that release.
+DENO_VERSION=2.9.7
+deno_asset() {
+    case "$(uname -s)/$(uname -m)" in
+        Linux/x86_64 | Linux/amd64) echo "deno-x86_64-unknown-linux-gnu" ;;
+        Linux/aarch64 | Linux/arm64) echo "deno-aarch64-unknown-linux-gnu" ;;
+        Darwin/x86_64 | Darwin/amd64) echo "deno-x86_64-apple-darwin" ;;
+        Darwin/arm64 | Darwin/aarch64) echo "deno-aarch64-apple-darwin" ;;
+        *) return 1 ;;
+    esac
+}
+deno_sha256() {
+    case "$1" in
+        deno-x86_64-unknown-linux-gnu) echo "c6527f24f4b16031d3ae4fa9f658d5f11534c8d84ce7dc8502420280919c3490" ;;
+        deno-aarch64-unknown-linux-gnu) echo "c832298b1ad4422481334855f6003e0f54145762c5a134f20a489511d2f65bbf" ;;
+        deno-x86_64-apple-darwin) echo "95daaff11c116a52ad54785e7914c8e9c9cdcaba793c5ed929c74ca2d8e6259a" ;;
+        deno-aarch64-apple-darwin) echo "5cd46d6268f6f78f5d88bdc7159d20bd44cdaa4b3303474839f87ec6fe7ae25c" ;;
+    esac
+}
+if ! command -v deno >/dev/null 2>&1; then
+    asset=$(deno_asset) || {
+        echo "gates: no deno on PATH, and no pinned release for $(uname -s)/$(uname -m)" >&2
+        exit 2
+    }
+    echo "gates: no deno on PATH: fetching $asset v$DENO_VERSION (checked against its SHA-256)"
+    url="https://github.com/denoland/deno/releases/download/v$DENO_VERSION/$asset.zip"
+    TOOLCHAIN="$SCRATCH/.toolchain"
+    mkdir -p "$TOOLCHAIN" || exit 2
+    curl -fsSL -o "$TOOLCHAIN/$asset.zip" "$url" || {
+        echo "gates: could not fetch $url" >&2
+        exit 2
+    }
+    got=$("$PY" -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$TOOLCHAIN/$asset.zip")
+    want=$(deno_sha256 "$asset")
+    if [ "$got" != "$want" ]; then
+        echo "gates: $asset.zip is not the release: sha256 $got, expected $want" >&2
+        exit 2
+    fi
+    "$PY" -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' "$TOOLCHAIN/$asset.zip" "$TOOLCHAIN/deno" || exit 2
+    chmod +x "$TOOLCHAIN/deno/deno" || exit 2
+    PATH="$TOOLCHAIN/deno:$PATH"
+    export PATH
+fi
+
 generated() {
     for dir in templates/*/; do
         target=$(basename "$dir")

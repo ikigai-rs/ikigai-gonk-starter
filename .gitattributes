@@ -21,6 +21,7 @@
 *.rq        text eol=lf
 *.ttl       text eol=lf
 *.rs        text eol=lf
+*.ts        text eol=lf
 *.service   text eol=lf
 *.plist     text eol=lf
 *.recipes   text eol=lf
