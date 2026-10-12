@@ -81,6 +81,10 @@ view whose source is in the admin's home is also checked, as `agent`, to be unwr
   no password, no X11 or agent forwarding, TCP forwarding remote only, and `agent` denied.
 - **macOS:** neither account in `staff`; hubdiag in `com.apple.access_ssh` when Remote Login is
   limited to listed users.
+- **WSL2:** WSL1, or systemd not PID 1; and, as hubdiag and as agent, any file of the Windows
+  user's profile that opens through `/mnt/c` (or the profile listed), or a Windows program either
+  could start. As root it reads the Windows user's `.wslconfig` and reports, without failing,
+  whether WSL shuts the distribution down when idle ([Windows (WSL2)](#windows-wsl2)).
 
 It then writes the **facts file** (below): the things hubdiag cannot see for itself, because the
 homes are closed to it.
@@ -103,6 +107,7 @@ The arguments a hub passes (this is what ikigai's hub check sends; `--help` list
 | `--view /srv/hubdiag/<name> --no-write <source>`, per view (macOS: `/Users/Shared/hubdiag/<name>`) | readable, not writable; the source not writable |
 | `--forbid-group G`, each of `sudo admin wheel adm docker lxd libvirt staff` (macOS: `admin wheel staff _developer`) | groups hubdiag must not be in |
 | `--expect-group systemd-journal --linger agent` (Linux only) | the journal, and the agent's user units |
+| add `wsl,wsl-mnt` to `--sections` (any Linux; on one that is not WSL they say so and check nothing) | under WSL2: systemd as PID 1, and hubdiag unable to read the Windows user's files ([Windows (WSL2)](#windows-wsl2)) |
 
 Output is one line per finding, `PASS|FAIL|WARN|INFO <check>: <detail>`, then `summary: …`;
 exit 0 with no FAIL, 1 with at least one, 2 on usage. Two more rules belong to the hub, because
@@ -130,6 +135,7 @@ with an older gh still works: it reads CI from the Actions runs instead, the les
 | `INFO ai-agent <claude\|codex\|hermes>: <path>  (<version>) · login: …` | the coding agents, and whether a login is held, **by the presence of its credential file only** (`~/.claude/.credentials.json`, `~/.codex/auth.json`, `~/.hermes/auth.json` or `.env`; never opened) |
 | `INFO ai-agent hermes-profile <name>[ (active)]: provider …, model … · login: …` | each hermes profile, with only those two keys of its `config.yaml` |
 | `newest-bin: <UTC time> <path>` | the newest program in that account's `~/.cargo/bin` and `~/.local/bin` at the check |
+| `[windows]`, then `INFO\|WARN wsl-idle: …`, `INFO wsl-network: …` | WSL only: what root read in the Windows user's `.wslconfig`, which hubdiag must not be able to read |
 
 ⚠ **The facts are a snapshot.** An install made after the check is invisible to the hub, by the
 same boundary. Report the facts' age and the `newest-bin` line, and after installing anything as an
@@ -523,12 +529,160 @@ claim that is no longer its own.
 - **Never merging is an instruction to the agent**, which holds a token that could merge.
   What enforces it is the repository's branch protection (required checks and reviews).
 
+## Windows (WSL2)
+
+A Windows machine is a worker through **WSL2**: a Linux distribution in a small VM, set up as
+on Linux above, plus what WSL changes. Native Windows is not supported (the `ikigai` client has
+no Windows build). What WSL changes:
+
+- **systemd is off by default.** Without it there is no linger, no user unit and no journal, so
+  the worker loop cannot run as a service. `/etc/wsl.conf` `[boot] systemd=true` turns it on;
+  `worker-setup.sh` sets it, and the probe FAILs while systemd is not PID 1.
+- **WSL stops when idle, and when Windows sleeps.** WSL shuts a distribution down after
+  `instanceIdleTimeout` milliseconds of idleness (default 15000) unless `%UserProfile%\.wslconfig`
+  sets it to `-1` under `[general]` (documented by Microsoft). `[wsl2] vmIdleTimeout` is the VM's
+  own timeout; what `-1` does there is not documented, and the distribution's is the one that
+  stops the worker. Windows sleeping stops everything, and nothing inside the VM can read
+  Windows' power settings: the probe prints the commands and says it did not check them.
+- **NAT hides the distribution from the LAN.** A hub cannot reach WSL's sshd until the
+  networking is mirrored or a port is forwarded (step 4).
+- **The Windows drives are open to every Linux account.** WSL mounts them under `/mnt` (DrvFs)
+  for the whole distribution, and without the `metadata` mount option the Linux permissions
+  there are invented (every file belongs to the default user, mode 0777) while a read is made
+  with the Windows user's own credentials. So `hubdiag` and `agent` can read the Windows user's
+  whole profile, and with interop on start a Windows program that runs as that user. The setup
+  closes the drives with `/etc/wsl.conf` `[automount]`, and `--check` FAILs while either account
+  can read any file of the profile.
+- **Trees on the Windows drives are refused.** A view or the agent's work tree under `/mnt/` is
+  refused by the setup: Linux permissions do not hold there, so neither can the boundary; it is
+  slow; and Windows tools write CRLF into it.
+
+### The steps, in order
+
+On **Windows**, in PowerShell **as Administrator**:
+
+1. Install WSL2 and Ubuntu, and confirm it is version 2 (`wsl --set-version Ubuntu-24.04 2` if not):
+
+       wsl --install -d Ubuntu-24.04
+       wsl --update
+       wsl -l -v
+
+2. Create `%UserProfile%\.wslconfig` (Notepad is fine) so WSL never shuts the distribution down
+   when idle, and, on Windows 11 22H2 or later, mirrors Windows' network into it (step 4):
+
+       [general]
+       instanceIdleTimeout=-1
+
+       [wsl2]
+       networkingMode=mirrored
+
+3. Keep Windows awake on wall power (`powercfg /change` takes minutes; 0 is the value the Power
+   settings show as Never), and read the result back:
+
+       powercfg /change standby-timeout-ac 0
+       powercfg /change hibernate-timeout-ac 0
+       powercfg /query
+
+   On a laptop that will run closed, also set *Control Panel > Power Options > Choose what
+   closing the lid does > When plugged in* to **Do nothing**.
+
+4. **Let the hub reach sshd.** With mirrored networking (step 2), WSL's sshd listens on Windows'
+   own addresses, and the Hyper-V firewall must let it in:
+
+       New-NetFirewallHyperVRule -Name "WSL sshd" -DisplayName "WSL sshd" -Direction Inbound -VMCreatorId '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -Protocol TCP -LocalPorts 22
+
+   If Windows' own OpenSSH Server is running it already holds port 22: stop it, or give WSL's
+   sshd another port and put that `Port` in the hub's stanza. **Without mirrored networking**
+   (older Windows), forward a Windows port to the distribution instead. Its address changes
+   every time WSL starts, so the rule must be re-made after each restart:
+
+       $ip = (wsl hostname -I).Trim().Split(' ')[0]
+       netsh interface portproxy add v4tov4 listenport=2222 listenaddress=0.0.0.0 connectport=22 connectaddress=$ip
+       New-NetFirewallRule -DisplayName "WSL sshd (portproxy)" -Direction Inbound -Protocol TCP -LocalPort 2222 -Action Allow
+       netsh interface portproxy show v4tov4
+       netsh interface portproxy delete v4tov4 listenport=2222 listenaddress=0.0.0.0   # to undo
+
+   and the hub's stanza names the Windows machine with `Port 2222`. Nothing here runs these
+   commands; they are Microsoft's
+   ([WSL networking](https://learn.microsoft.com/en-us/windows/wsl/networking)), with this
+   worker's ports filled in.
+
+Then **inside the distribution** (`wsl -d Ubuntu-24.04`), as your own Linux user, the admin:
+
+5. The packages, as in [step 1](#1-the-os) for Linux, and a clone of this repository **in the
+   Linux filesystem** (`~/src/ikigai-gonk-starter`, never under `/mnt/c`).
+6. The dry run, then the setup. On a fresh distribution the setup writes `/etc/wsl.conf`
+   (`[boot] systemd=true`, and the `[automount]` restriction below) and **stops**, because
+   systemd is not yet PID 1:
+
+       ./worker/worker-setup.sh --dry-run --key hub.pub
+       sudo ./worker/worker-setup.sh --key hub.pub
+
+7. Restart WSL so it reads `/etc/wsl.conf`: from PowerShell `wsl --shutdown`, wait until
+   `wsl --list --running` says nothing is running (Microsoft's "8 second rule"), and open the
+   distribution again. `ps -p 1 -o comm=` should now say `systemd`.
+8. The setup again (it now finishes), then the self-test:
+
+       sudo ./worker/worker-setup.sh --key hub.pub
+       sudo ./worker/worker-setup.sh --check
+
+   On WSL, `--check` adds: `PASS wsl-systemd`, `PASS wsl-read` for hubdiag and for agent
+   (nothing of the Windows profile opens), and, read as root, `INFO wsl-idle` with
+   `instanceIdleTimeout=-1` (a `WARN` there means step 2 has not taken: `wsl --shutdown` once
+   more after editing `.wslconfig`).
+9. **The GPU** is the Windows NVIDIA driver's: install the driver on Windows, never a Linux
+   driver inside WSL. Its `nvidia-smi` is `/usr/lib/wsl/lib/nvidia-smi`. Ollama is installed
+   inside the distribution with the Linux installer ([step 5](#5-ollama-and-a-model-by-memory)).
+10. From here the Linux steps apply unchanged: the GitHub token ([step 3](#3-the-github-token-as-agent)),
+    ikigai and gonk ([step 6](#6-ikigai-and-gonk-as-agent)), the hub's stanza
+    ([step 7](#7-reach-it-from-the-hub)) and the loop ([step 8](#8-the-worker-loop-as-agent)).
+    The probe's `sleep` section still checks the Linux sleep targets; under WSL they are not
+    what sleeps (Windows is), but masking them is harmless.
+
+### The Windows drives: two ways to close them
+
+`worker-setup.sh --wsl-automount restrict|off` writes one of these to `/etc/wsl.conf`; either
+takes effect when WSL restarts, and either is undone by editing that line back.
+
+| | `restrict` (the default) | `off` |
+| --- | --- | --- |
+| writes | `[automount]` `options="metadata,uid=<admin>,gid=<admin>,umask=077"` | `[automount]` `enabled=false` |
+| the admin | keeps `/mnt/c`, as their own | loses `/mnt/c` until it is turned back on |
+| hubdiag, agent | see the drives as the admin's files at 0700/0600: no entry, no read, no Windows program | see no drive at all |
+| why | nothing the admin uses disappears | the smallest surface |
+
+Options already in `options=` are kept (only `metadata`, `uid`, `gid` and `umask` are replaced).
+Two things to know about `restrict`: with `metadata` on, a `chmod` or `chown` made from Linux on
+a Windows file is stored in that file's NTFS extended attributes and outlives turning the option
+off; and the restriction covers the drives WSL mounts automatically, not a drive mounted by hand
+or through `/etc/fstab`. Interop (`[interop] enabled`) is left on: once the drives are closed,
+hubdiag and agent can reach no Windows program to start, and `--check` fails if they can.
+`[interop] enabled=false` closes that too, at the cost of `explorer.exe .` and friends for the
+admin.
+
+### Not yet confirmed on a real WSL machine
+
+The tests run against a stub of a WSL machine (`--wsl-root`), so these rest on Microsoft's
+documentation, not a run, and the first WSL worker should confirm each:
+
+- that DrvFs with `metadata,uid=<admin>,umask=077` refuses hubdiag and agent at `/mnt/c` itself
+  (the documentation says the masks apply with `metadata`; that the mount's root directory takes
+  them too is expected, not seen), and that root can still read `.wslconfig` through it;
+- that `instanceIdleTimeout=-1` keeps a distribution running with only systemd's services in it;
+- that WSL starts at all after Windows boots without someone opening it. Nothing here starts it.
+  A logon task is the likely answer (`schtasks /create /tn "WSL worker" /sc onlogon /tr
+  "wsl.exe -d Ubuntu-24.04 --exec /bin/true"`), untried;
+- mirrored networking with the Hyper-V firewall rule above, and the portproxy fallback;
+- Ubuntu 24.04's socket-activated sshd under WSL's systemd, and `sshd -T` in `--check`.
+
 ## What this was learned on
 
 The Linux half was learned setting up the first worker by hand, a Pop!_OS 24.04 laptop with a
 6 GB RTX 3060, and is proved on GitHub's hosted Ubuntu runners. The macOS half was written from
 Apple's man pages and is proved on GitHub's hosted macOS runners; no worker Mac has run it yet.
-Windows (WSL2) is not covered yet.
+The WSL2 half was written from Microsoft's WSL documentation and is proved only against a stub
+of a WSL machine; no WSL worker has run it yet (what that run must confirm is listed in its
+section).
 
 ## Files
 

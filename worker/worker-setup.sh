@@ -53,6 +53,19 @@
 #   --check           the boundary self-test (needs root: it acts AS hubdiag and AS agent)
 #   --fstab FILE      read the mount table from FILE, not /etc/fstab. TEST-ONLY, used by
 #                     tests/setup-test.sh so a dry run never reads the host's real /etc/fstab.
+#   --wsl-automount restrict|off
+#                     (WSL) how to close the Windows drives to hubdiag and agent, in /etc/wsl.conf
+#                     [automount]. restrict (the default): options=metadata,uid=<admin>,
+#                     gid=<admin>,umask=077, so the drives are the admin's alone and the admin
+#                     keeps /mnt/c; off: enabled=false, no Windows drive at all. Either is undone
+#                     by editing that one line back; both take effect when WSL restarts.
+#   --wsl-root DIR    read /proc, /etc/wsl.conf and the Windows drives under DIR, not /. TEST-ONLY,
+#                     used by tests/setup-test.sh to stand in for a WSL machine.
+#
+# Under WSL2 it also: refuses a view (or the agent's work tree) under the Windows drives (/mnt/),
+# sets [boot] systemd=true and the [automount] restriction in /etc/wsl.conf, and stops until WSL
+# has restarted with systemd as PID 1. The Windows side (.wslconfig, Windows' sleep, the network)
+# it cannot see or change: README.md, "Windows (WSL2)".
 #
 # ⚠ bash 3.2 (macOS /bin/bash): no associative arrays, no mapfile.
 set -u
@@ -61,6 +74,7 @@ here="$(cd "$(dirname "$0")" && pwd)"
 os="$(uname -s)"
 orig=("$@")
 key="" admin="${SUDO_USER:-}" hubdiag=hubdiag agent=agent dry=0 check=0 fstab=/etc/fstab
+wslautomount=restrict wslroot=""
 views=() listens=()
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -73,11 +87,14 @@ while [ $# -gt 0 ]; do
         --dry-run) dry=1; shift ;;
         --check) check=1; shift ;;
         --fstab) fstab="$2"; shift 2 ;;   # tests: the mount table the views step reads
-        -h|--help) sed -n '2,57p' "$0"; exit 0 ;;
+        --wsl-automount) wslautomount="$2"; shift 2 ;;
+        --wsl-root) wslroot="${2%/}"; shift 2 ;;   # tests: a stub /proc, /etc and /mnt
+        -h|--help) sed -n '2,70p' "$0"; exit 0 ;;
         *) echo "worker-setup: unknown argument: $1 (try --help)" >&2; exit 2 ;;
     esac
 done
 [ "${#listens[@]}" -gt 0 ] || listens=(1060)
+case "$wslautomount" in restrict|off) ;; *) echo "worker-setup: --wsl-automount takes restrict or off, got $wslautomount" >&2; exit 2 ;; esac
 
 die() { echo "worker-setup: $*" >&2; exit 1; }
 case "$os" in Linux|Darwin) ;; *) die "unsupported OS $os (Linux with systemd, or macOS)" ;; esac
@@ -143,6 +160,101 @@ for v in "${views[@]}"; do
         *) die "--view wants NAME=/absolute/dir, got $v" ;;
     esac
 done
+
+# ── WSL ─────────────────────────────────────────────────────────────────────────────────────
+# The same detection and INI reading as probe.sh (which must stay one self-contained file, since
+# the hub pipes it over ssh): see the comments there.
+ini_get() {
+    [ -r "$1" ] || return 1
+    LC_ALL=C tr -d '\000\r' < "$1" 2>/dev/null | LC_ALL=C awk -v s="$2" -v k="$3" '
+        BEGIN { s = tolower(s); k = tolower(k); u8 = "\357\273\277"; u16 = "\377\376" }
+        {
+            line = $0
+            if (NR == 1) { if (index(line, u8) == 1) line = substr(line, 4); if (index(line, u16) == 1) line = substr(line, 3) }
+            sub(/^[ \t]+/, "", line); sub(/[ \t]+$/, "", line)
+            if (line == "" || line ~ /^[#;]/) next
+            if (line ~ /^\[.*\]$/) { sec = tolower(substr(line, 2, length(line) - 2)); gsub(/^[ \t]+|[ \t]+$/, "", sec); next }
+            if (sec != s) next
+            i = index(line, "="); if (i == 0) next
+            key = substr(line, 1, i - 1); val = substr(line, i + 1)
+            gsub(/^[ \t]+|[ \t]+$/, "", key)
+            if (tolower(key) != k) next
+            sub(/[ \t]+[#;].*$/, "", val); gsub(/^[ \t]+|[ \t]+$/, "", val)
+            gsub(/^"|"$/, "", val)
+            found = 1; out = val
+        }
+        END { if (found) print out; exit !found }'
+}
+# The file's content with [section] key=value set, on stdout: the key replaced where it is (its
+# later duplicates dropped), else added at the end of its section, else a new section at the
+# end. Everything else is kept as it was, comments included; CRs are dropped.
+ini_set() {
+    { [ -r "$1" ] && LC_ALL=C tr -d '\r' < "$1"; } | LC_ALL=C awk -v s="$2" -v k="$3" -v v="$4" '
+        function hdr(l,  t) {
+            t = l; sub(/^[ \t]+/, "", t); sub(/[ \t]+$/, "", t)
+            if (t !~ /^\[.*\]$/) return ""
+            t = substr(t, 2, length(t) - 2); gsub(/^[ \t]+|[ \t]+$/, "", t); return tolower(t)
+        }
+        function iskey(l,  t, i) {
+            t = l; sub(/^[ \t]+/, "", t); if (t ~ /^[#;]/) return 0
+            i = index(t, "="); if (i == 0) return 0
+            t = substr(t, 1, i - 1); gsub(/[ \t]+$/, "", t); return tolower(t) == tolower(k)
+        }
+        BEGIN { s = tolower(s) }
+        NR == 1 && index($0, "\357\273\277") == 1 { $0 = substr($0, 4) }
+        { h = hdr($0) }
+        h != "" {
+            if (in_s && !done) { print k "=" v; done = 1 }
+            printf "%s", pend; pend = ""
+            in_s = (h == s); if (in_s) seen = 1
+            print; next
+        }
+        in_s && iskey($0) { if (!done) { printf "%s", pend; pend = ""; print k "=" v; done = 1 } next }
+        in_s && $0 ~ /^[ \t]*$/ { pend = pend $0 "\n"; next }
+        { printf "%s", pend; pend = ""; print }
+        END {
+            if (in_s && !done) { print k "=" v; done = 1 }
+            printf "%s", pend
+            if (!seen) { if (NR > 0) print ""; print "[" s "]"; print k "=" v }
+        }'
+}
+lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+R="$wslroot"
+wsl=0 wsl_why=""
+if [ "$os" = Linux ] || [ -n "$R" ]; then
+    pv="$(cat "$R/proc/version" 2>/dev/null)"
+    if [ -e "$R/proc/sys/fs/binfmt_misc/WSLInterop" ] || [ -e "$R/proc/sys/fs/binfmt_misc/WSLInterop-late" ]; then
+        wsl_why="binfmt_misc has WSLInterop"
+    fi
+    if [ -z "$R" ] && [ -n "${WSL_DISTRO_NAME:-}" ]; then wsl_why="${wsl_why:+$wsl_why, }WSL_DISTRO_NAME=$WSL_DISTRO_NAME"; fi
+    case "$pv" in *[Mm]icrosoft*) wsl_why="${wsl_why:+$wsl_why, }/proc/version names Microsoft" ;; esac
+    if [ -n "$wsl_why" ]; then
+        case "$pv" in *WSL2*|*microsoft-standard*) wsl=2 ;; *Microsoft*) wsl=1 ;; *) wsl=2 ;; esac
+    fi
+fi
+wslconf="$R/etc/wsl.conf"
+wslmnt="$(ini_get "$wslconf" automount root)"; wslmnt="${wslmnt:-/mnt/}"
+case "$wslmnt" in */) ;; *) wslmnt="$wslmnt/" ;; esac
+# The Windows profiles, as root sees them: what --check asks hubdiag and agent to fail to read.
+win_profiles() {
+    local d
+    for d in "$R${wslmnt}c/Users"/*; do
+        [ -d "$d" ] || continue
+        case "$(basename "$d")" in Public|Default|"Default User"|"All Users"|defaultuser0|WsiAccount) continue ;; esac
+        printf '%s\n' "$d"
+    done
+}
+# A tree on DrvFs cannot be a worker's: Linux permissions do not hold there without the
+# metadata option (so the boundary cannot either), it is slow, and Windows tools that touch it
+# write CRLF. Refused before anything is changed. The default view is the agent's work tree, so
+# an agent home on the Windows drives is refused by the same test.
+if [ "$wsl" != 0 ]; then
+    for v in "${views[@]}"; do
+        case "${v#*=}/" in
+            "$wslmnt"*) die "view ${v%%=*}: ${v#*=} is under $wslmnt, where WSL mounts the Windows drives (DrvFs): Linux permissions do not hold there, so neither can the boundary this sets up; it is also slow, and Windows tools write CRLF into it. Keep the worker's trees in the Linux filesystem (the default is $agent_home/work)" ;;
+        esac
+    done
+fi
 
 sshd_dropin_content() {
     cat <<EOF
@@ -225,14 +337,24 @@ if [ "$check" = 1 ]; then
         forbid="admin wheel staff _developer"; journal=()
     fi
     fg=(); for g in $forbid; do fg+=(--forbid-group "$g"); done
+    # WSL: hubdiag and agent must not reach the Windows user (wsl-mnt), and the machine needs
+    # systemd as PID 1 (wsl, asked once, as hubdiag). The profiles are found by root, so a
+    # profile they cannot even list is still tried by name.
+    hsec="" asec="" wh=()
+    if [ "$wsl" != 0 ]; then
+        hsec=",wsl,wsl-mnt" asec=",wsl-mnt"
+        while IFS= read -r d; do [ -n "$d" ] && wh+=(--windows-home "$d"); done <<EOF
+$(win_profiles)
+EOF
+    fi
 
     echo "── as $hubdiag: the hub's view of this machine"
     echo "   (enumerating $admin_home and $agent_home as root; the list goes to the probe on stdin)"
     enumerate "$admin_home" "$agent_home" > "$tmp/cands"
     echo "   $(wc -l < "$tmp/cands" | tr -d ' ') files to try"
-    probe_as "$hubdiag" --sections identity,closed,view,nowrite,journal \
+    probe_as "$hubdiag" --sections "identity,closed,view,nowrite,journal$hsec" \
         --closed "$admin_home" --closed "$agent_home" "${vdirs[@]}" "${srcs[@]}" \
-        "${fg[@]}" ${journal[@]+"${journal[@]}"} --candidates < "$tmp/cands" | tee "$tmp/hubdiag.out"
+        "${fg[@]}" ${journal[@]+"${journal[@]}"} ${wh[@]+"${wh[@]}"} --candidates < "$tmp/cands" | tee "$tmp/hubdiag.out"
     grep -q '^FAIL' "$tmp/hubdiag.out" && status=1
 
     if user_exists "$agent"; then
@@ -244,8 +366,8 @@ if [ "$check" = 1 ]; then
         for v in "${views[@]}"; do
             case "${v#*=}" in "$admin_home"/*) aw+=(--no-write "${v#*=}") ;; esac
         done
-        probe_as "$agent" --sections identity,closed,nowrite \
-            --closed "$admin_home" ${aw[@]+"${aw[@]}"} "${fg[@]}" \
+        probe_as "$agent" --sections "identity,closed,nowrite$asec" \
+            --closed "$admin_home" ${aw[@]+"${aw[@]}"} "${fg[@]}" ${wh[@]+"${wh[@]}"} \
             --candidates < "$tmp/cands-admin" | tee "$tmp/agent.out"
         grep -q '^FAIL' "$tmp/agent.out" && status=1
         if [ "$os" = Linux ]; then
@@ -254,6 +376,13 @@ if [ "$check" = 1 ]; then
         fi
     else
         echo; echo "FAIL agent: no $agent account"; status=1
+    fi
+
+    if [ "$wsl" != 0 ]; then
+        # Windows' own file, so read as root: hubdiag and agent must not be able to (wsl-mnt).
+        echo; echo "── WSL: does it shut this distribution down when idle? (.wslconfig, read as root)"
+        bash "$here/probe.sh" --sections wslconfig ${wh[@]+"${wh[@]}"} ${wslroot:+--wsl-root "$wslroot"} < /dev/null \
+            | grep -v '^summary' | tee "$tmp/wslconfig.out"
     fi
 
     echo; echo "── sshd: the effective configuration for $hubdiag"
@@ -304,6 +433,11 @@ if [ "$check" = 1 ]; then
             newest="$(newest_bin "$(home_of "$u")")"
             [ -n "$newest" ] && echo "newest-bin: $newest"
         done
+        # WSL: what root read in the Windows user's .wslconfig, which hubdiag cannot.
+        if [ -s "$tmp/wslconfig.out" ]; then
+            echo "[windows]"
+            grep -E '^(INFO|WARN)' "$tmp/wslconfig.out"
+        fi
     } > "$tmp/facts"
     cat "$tmp/facts" | grep -E '^(checked|result|\[|INFO gh-token)'
     if [ -d "$view_root" ]; then
@@ -529,6 +663,59 @@ install_sshd() {
         echo "     (macOS: launchd starts sshd per connection, so the next login reads it; no reload)"
     fi
 }
+
+# ── WSL2: systemd, and the Windows drives closed to hubdiag and agent ─────────────────────────
+# Both live in /etc/wsl.conf and are read only when WSL starts, so this edits the file once
+# and then, if systemd is not yet PID 1, stops until WSL has restarted.
+wsl_restricts() { # options admin-uid → does the option list keep the drives to that uid alone?
+    local o=",$1," m=0 u=0 k=0
+    case "$o" in *,metadata,*) m=1 ;; esac
+    case "$o" in *,uid=$2,*) u=1 ;; esac
+    case "$o" in *,umask=077,*|*,umask=0077,*|*,umask=77,*) k=1 ;; esac
+    [ "$m$u$k" = 111 ]
+}
+wsl_merged() { # options uid gid → the same list without metadata/uid/gid/umask, then ours
+    printf '%s' "$1" | tr ',' '\n' | awk -F= 'NF && $1 !~ /^[ \t]*(metadata|uid|gid|umask)[ \t]*$/' | paste -sd, - \
+        | awk -v ours="metadata,uid=$2,gid=$3,umask=077" '{ print ($0 == "" ? ours : $0 "," ours) } END { if (NR == 0) print ours }'
+}
+if [ "$wsl" != 0 ]; then
+    echo; echo "── WSL$wsl ($wsl_why)"
+    [ "$wsl" = 2 ] || die "WSL1 cannot run a worker (no systemd, no VM of its own): convert it from PowerShell, wsl --set-version <distro> 2"
+    wnew="$scratch/wsl.conf"
+    if [ -r "$wslconf" ]; then LC_ALL=C tr -d '\r' < "$wslconf" > "$wnew"; else : > "$wnew"; fi
+    wedits=""
+    if [ "$(lower "$(ini_get "$wslconf" boot systemd)")" = true ]; then have "$wslconf: [boot] systemd=true"
+    else ini_set "$wnew" boot systemd true > "$wnew.t" && mv "$wnew.t" "$wnew"; wedits="$wedits [boot] systemd=true;"; fi
+    auid="$(id -u "$admin")" agid="$(id -g "$admin")"
+    am="$(lower "$(ini_get "$wslconf" automount enabled)")"; ao="$(ini_get "$wslconf" automount options)"
+    if [ "$am" = false ]; then
+        have "$wslconf: [automount] enabled=false (no Windows drive is mounted)"
+    elif [ "$wslautomount" = off ]; then
+        ini_set "$wnew" automount enabled false > "$wnew.t" && mv "$wnew.t" "$wnew"
+        wedits="$wedits [automount] enabled=false (no Windows drive at all);"
+    elif wsl_restricts "$ao" "$auid"; then
+        have "$wslconf: [automount] options=$ao (the Windows drives are $admin's alone)"
+    else
+        wo="$(wsl_merged "$ao" "$auid" "$agid")"
+        ini_set "$wnew" automount options "\"$wo\"" > "$wnew.t" && mv "$wnew.t" "$wnew"
+        wedits="$wedits [automount] options=$wo (the Windows drives become $admin's alone);"
+    fi
+    if [ -n "$wedits" ]; then
+        change "$wslconf:${wedits%;} (read when WSL next starts)" install -m 0644 "$wnew" "$wslconf"
+        [ "$dry" = 1 ] && sed 's/^/       | /' "$wnew"
+    fi
+    pid1="$(cat "$R/proc/1/comm" 2>/dev/null)"
+    restart="from PowerShell, wsl --shutdown, then open the distribution again (WSL reads $wslconf only when it starts)"
+    if [ "$pid1" = systemd ]; then
+        have "systemd is PID 1"
+        case "$wedits" in *automount*) echo "  !  the [automount] change takes effect when WSL restarts: $restart. --check reads the live mounts, and fails until then" ;; esac
+    elif [ "$dry" = 1 ]; then
+        echo "  !  systemd is not PID 1 (PID 1 is ${pid1:-unknown}): a real run makes the change above and stops here, until WSL restarts: $restart"
+    else
+        die "systemd is not PID 1 (PID 1 is ${pid1:-unknown}), and accounts, linger and mounts need it. Restart WSL: $restart. Then run this again."
+    fi
+    echo "  !  the Windows side, which this cannot see or change (README.md, \"Windows (WSL2)\"): .wslconfig [general] instanceIdleTimeout=-1, Windows never sleeping (powercfg), and reaching sshd from the LAN (networkingMode=mirrored)"
+fi
 
 if [ "$os" = Linux ]; then
     getent group systemd-journal >/dev/null || die "no systemd-journal group: this needs a systemd distribution"

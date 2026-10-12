@@ -71,6 +71,7 @@ has "hubdiag cannot write the agent's tree" "PASS no-write: hubdiag cannot reach
 has "agent cannot traverse the admin's home" "PASS closed: agent cannot traverse /home/fixadmin" "$out"
 has "the enumeration ran" "can open none of" "$out"
 has "facts written" "wrote /srv/hubdiag/facts" "$out"
+hasnt "no WSL step on a Linux that is not WSL" "── WSL" "$out"
 
 echo "── RED: the first worker's mistake, traverse on the admin's home for hubdiag"
 setfacl -m u:hubdiag:--x /home/fixadmin
@@ -143,7 +144,7 @@ rm -rf /home/agent/.ssh
 echo "── the hub's view: probe.sh over that ssh, as hubdiag (the worker needs no copy of it)"
 hubprobe() {
     out="$(ssh "${sshopt[@]}" hubdiag@127.0.0.1 bash -s -- \
-        --sections identity,closed,view,nowrite,journal,linger,sleep \
+        --sections identity,closed,view,nowrite,journal,linger,sleep,wsl,wsl-mnt \
         --closed /home/fixadmin --closed /home/agent \
         --view /srv/hubdiag/work --no-write /home/agent/work \
         --view /srv/hubdiag/src --no-write /home/fixadmin/src \
@@ -161,6 +162,8 @@ expect_exit "the probe passes" 0 "$st"; [ "$st" = 0 ] || printf '%s\n' "$out" | 
 has "masked is the pass state" "PASS sleep: suspend.target is masked" "$out"
 has "and the suspend-attempts line is there" "INFO suspend-attempts:" "$out"
 has "hubdiag reads the journal" "PASS journal: hubdiag reads the system journal" "$out"
+has "a real Linux runner is not taken for WSL" "INFO wsl: not WSL (Linux)" "$out"
+hasnt "so no WSL check runs on it" "wsl-" "$out"
 facts="$(ssh "${sshopt[@]}" hubdiag@127.0.0.1 cat /srv/hubdiag/facts 2>&1)"
 has "hubdiag reads the facts the root-side check wrote" "result: PASS" "$facts"
 has "which name the gh holders, by class" "INFO gh-token" "$facts"

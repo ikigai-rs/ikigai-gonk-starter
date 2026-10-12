@@ -87,8 +87,11 @@ unless it says otherwise.
 - **Anything that must accept connections from the LAN** (a gonk others use, or a worker the
   hub reaches over ssh) is behind WSL2's NAT by default. `networkingMode=mirrored` in
   `%UserProfile%\.wslconfig` under `[wsl2]` mirrors Windows' interfaces into Linux; it needs
-  Windows 11 22H2 or later. Without it, a `netsh interface portproxy` rule on Windows is the
-  usual fallback (not documented on the page above, and not tested here).
+  Windows 11 22H2 or later, and inbound connections also need a Hyper-V firewall rule. Without
+  it, a `netsh interface portproxy` rule on Windows is the fallback. Both are on Microsoft's
+  [WSL networking](https://learn.microsoft.com/en-us/windows/wsl/networking) page; neither is
+  tested here. The worker's commands, with its ports, are in the starter's
+  [worker/README.md](https://github.com/ikigai-rs/ikigai-gonk-starter/blob/main/worker/README.md#windows-wsl2).
 
 ### Staying up
 
@@ -116,9 +119,13 @@ it is a hole in the boundary that `worker/worker-setup.sh` builds on Linux and m
 agent's account could read the Windows profile. `[automount] enabled=false` and
 `[interop] enabled=false` in `/etc/wsl.conf` turn both off for the whole distribution
 (documented keys; that this closes the hole has not been tested).
-**The worker setup and its `--check` do not handle WSL yet**; until they do, do not run an
-unattended worker in WSL. See the starter's
-[worker/README.md](https://github.com/ikigai-rs/ikigai-gonk-starter/blob/main/worker/README.md).
+**For a worker, `worker/worker-setup.sh` handles WSL2**: it sets `[boot] systemd=true` and
+closes the drives to the worker's accounts in `[automount]` (by default
+`options="metadata,uid=<admin>,gid=<admin>,umask=077"`, so the admin keeps `/mnt/c`), and its
+`--check` fails while either account can read a file of the Windows profile. The steps, in
+order, are the "Windows (WSL2)" section of the starter's
+[worker/README.md](https://github.com/ikigai-rs/ikigai-gonk-starter/blob/main/worker/README.md#windows-wsl2);
+no WSL worker has run them yet.
 
 ## Each agent on Windows
 

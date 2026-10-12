@@ -14,10 +14,20 @@
 #
 #   probe.sh [--sections LIST] [--closed DIR]... [--view DIR]... [--no-write DIR]...
 #            [--forbid-group G]... [--expect-group G]... [--home DIR]... [--candidates]
-#            [--gh-bin PATH] [--journalctl-bin PATH]
+#            [--windows-home DIR]... [--gh-bin PATH] [--journalctl-bin PATH] [--wsl-root DIR]
 #
 #   --sections      comma list from: identity,closed,view,nowrite,journal,linger,sleep,hw,tools,gh,
-#                   agents (default: identity,closed,view,nowrite,journal)
+#                   agents,wsl,wsl-mnt,wslconfig (default: identity,closed,view,nowrite,journal)
+#                   wsl        (WSL only) WSL2 with systemd as PID 1; the [automount] and interop
+#                              state; what this probe cannot see (Windows' power settings)
+#                   wsl-mnt    (WSL only) THIS account must not read the Windows user's profile
+#                              through the drives WSL mounts (DrvFs, /mnt/c), nor start a Windows
+#                              program. Run it as hubdiag and agent, never as the admin, who may.
+#                   wslconfig  (WSL only) the Windows user's .wslconfig idle timeouts, read only if
+#                              THIS account can read it: worker-setup.sh --check runs it as root,
+#                              never as hubdiag or agent
+#   --windows-home DIR  (WSL) a Windows profile as Linux sees it (/mnt/c/Users/<name>); default:
+#                   every profile under <automount root>c/Users that this account can list
 #   --closed DIR    a home this account must NOT reach: no traverse, no listing, and none of the
 #                   guessable names inside it opens (the traverse leak: once a home is traversable,
 #                   every world-readable file in it is readable by name, .bash_history first)
@@ -36,6 +46,8 @@
 #   --gh-bin PATH        tests: the gh to classify a token with (default: the system's)
 #   --journalctl-bin PATH  tests: the journalctl to read the sleep section's journal with
 #                        (default: journalctl on PATH)
+#   --wsl-root DIR  tests: read /proc, /etc/wsl.conf and the mounted Windows drives under DIR
+#                   instead of /, and ignore WSL_DISTRO_NAME (so a stub decides alone)
 #
 # Output: one line per finding, `PASS|FAIL|WARN|INFO <check>: <detail>`, then a summary line.
 # Exit: 0 no FAIL · 1 at least one FAIL · 2 usage.
@@ -44,8 +56,8 @@
 set -u
 
 sections="identity,closed,view,nowrite,journal"
-closed=() views=() nowrite=() forbid=() expect=() homes=() lingers=()
-candidates=0 ghbin="" jcbin=""
+closed=() views=() nowrite=() forbid=() expect=() homes=() lingers=() winhomes=()
+candidates=0 ghbin="" jcbin="" wslroot=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --sections) sections="$2"; shift 2 ;;
@@ -59,7 +71,9 @@ while [ $# -gt 0 ]; do
         --candidates) candidates=1; shift ;;
         --gh-bin) ghbin="$2"; shift 2 ;;   # tests: a stub gh
         --journalctl-bin) jcbin="$2"; shift 2 ;;   # tests: a stub journalctl
-        -h|--help) sed -n '2,42p' "$0" 2>/dev/null; exit 0 ;;
+        --windows-home) winhomes+=("$2"); shift 2 ;;
+        --wsl-root) wslroot="${2%/}"; shift 2 ;;   # tests: a stub /proc, /etc and /mnt
+        -h|--help) sed -n '2,55p' "$0" 2>/dev/null; exit 0 ;;
         *) echo "probe.sh: unknown argument: $1" >&2; exit 2 ;;
     esac
 done
@@ -92,6 +106,85 @@ GUESSES=".bash_history .zsh_history .python_history .lesshst .viminfo .psql_hist
 .config/gh/hosts.yml .config/gh/config.yml .cargo/credentials.toml .cargo/credentials
 .npmrc .pypirc .docker/config.json .aws/credentials .kube/config .config/ikigai/config.toml
 .config/ikigai/gonk/grants.json .ikigai/gonk.sock .profile .bashrc .zshrc .zprofile"
+
+# ── WSL ─────────────────────────────────────────────────────────────────────────────────────
+# Read an INI value (wsl.conf, .wslconfig): file section key → the last value, trimmed, its
+# quotes and a trailing comment dropped; sections and keys compared case-insensitively. A file
+# saved on Windows may carry CRLF, a UTF-8 BOM, or be UTF-16 (NUL bytes), so CR and NUL are
+# dropped and a BOM is skipped, all under the C locale (in a UTF-8 locale macOS's tr refuses a
+# UTF-16 BOM as an illegal byte sequence and prints nothing). Exit 1 when the file or the key
+# is absent.
+ini_get() {
+    [ -r "$1" ] || return 1
+    LC_ALL=C tr -d '\000\r' < "$1" 2>/dev/null | LC_ALL=C awk -v s="$2" -v k="$3" '
+        BEGIN { s = tolower(s); k = tolower(k); u8 = "\357\273\277"; u16 = "\377\376" }
+        {
+            line = $0
+            if (NR == 1) { if (index(line, u8) == 1) line = substr(line, 4); if (index(line, u16) == 1) line = substr(line, 3) }
+            sub(/^[ \t]+/, "", line); sub(/[ \t]+$/, "", line)
+            if (line == "" || line ~ /^[#;]/) next
+            if (line ~ /^\[.*\]$/) { sec = tolower(substr(line, 2, length(line) - 2)); gsub(/^[ \t]+|[ \t]+$/, "", sec); next }
+            if (sec != s) next
+            i = index(line, "="); if (i == 0) next
+            key = substr(line, 1, i - 1); val = substr(line, i + 1)
+            gsub(/^[ \t]+|[ \t]+$/, "", key)
+            if (tolower(key) != k) next
+            sub(/[ \t]+[#;].*$/, "", val); gsub(/^[ \t]+|[ \t]+$/, "", val)
+            gsub(/^"|"$/, "", val)
+            found = 1; out = val
+        }
+        END { if (found) print out; exit !found }'
+}
+lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+
+# Is this WSL, and which? wsl=0 not WSL, 1 WSL1, 2 WSL2; wsl_why says what said so. Three
+# signals, any one is enough: interop's binfmt_misc entry (absent when [interop] is off, hence
+# not alone), WSL_DISTRO_NAME (set for processes wsl.exe starts, not for an ssh login or
+# runuser, hence not alone), and /proc/version, which names Microsoft on both WSL1 and WSL2.
+# WSL2's kernel says "microsoft-standard-WSL2"; WSL1's is "4.4.0-<build>-Microsoft". A custom
+# WSL2 kernel (.wslconfig kernel=) may name neither, so WSL without that word counts as WSL2.
+R="$wslroot"
+wsl=0 wsl_why=""
+if [ "$os" = Linux ] || [ -n "$R" ]; then
+    pv="$(cat "$R/proc/version" 2>/dev/null)"
+    if [ -e "$R/proc/sys/fs/binfmt_misc/WSLInterop" ] || [ -e "$R/proc/sys/fs/binfmt_misc/WSLInterop-late" ]; then
+        wsl_why="binfmt_misc has WSLInterop"
+    fi
+    if [ -z "$R" ] && [ -n "${WSL_DISTRO_NAME:-}" ]; then wsl_why="${wsl_why:+$wsl_why, }WSL_DISTRO_NAME=$WSL_DISTRO_NAME"; fi
+    case "$pv" in *[Mm]icrosoft*) wsl_why="${wsl_why:+$wsl_why, }/proc/version names Microsoft" ;; esac
+    if [ -n "$wsl_why" ]; then
+        case "$pv" in *WSL2*|*microsoft-standard*) wsl=2 ;; *Microsoft*) wsl=1 ;; *) wsl=2 ;; esac
+    fi
+fi
+wslconf="$R/etc/wsl.conf"
+# Where WSL mounts the Windows drives: [automount] root, default /mnt/ (always with a slash).
+mnt="$(ini_get "$wslconf" automount root 2>/dev/null)"; mnt="${mnt:-/mnt/}"
+case "$mnt" in */) ;; *) mnt="$mnt/" ;; esac
+# The Windows profiles to try: those named, then each under <root>c/Users this account can
+# list (the accounts Windows makes for itself are not people's profiles).
+windows_homes() {
+    local d n
+    for d in ${winhomes[@]+"${winhomes[@]}"}; do printf '%s\n' "$d"; done
+    can_list "$R${mnt}c/Users" || return 0
+    for d in "$R${mnt}c/Users"/*; do
+        [ -d "$d" ] || continue
+        n="$(basename "$d")"
+        case "$n" in Public|Default|"Default User"|"All Users"|defaultuser0|WsiAccount) continue ;; esac
+        printf '%s\n' "$d"
+    done | awk '!seen[$0]++'
+}
+# Names worth trying in a Windows profile: keys and tokens first, then shell history and the
+# WSL configuration itself. One per line (some hold spaces).
+WIN_GUESSES=".ssh/id_ed25519
+.ssh/id_rsa
+.ssh/config
+.gitconfig
+.git-credentials
+.aws/credentials
+.wslconfig
+AppData/Roaming/GitHub CLI/hosts.yml
+AppData/Roaming/Microsoft/Windows/PowerShell/PSReadLine/ConsoleHost_history.txt
+NTUSER.DAT"
 
 if want identity; then
     info identity "$(id)"
@@ -379,7 +472,8 @@ if want tools; then
     tool ollama $(cands ollama $sys) /Applications/Ollama.app/Contents/Resources/ollama
     tool deno $(cands deno $hd $hb $sys)
     tool go /usr/local/go/bin/go $(cands go $sys) /usr/lib/go/bin/go $(cands go $hc)
-    tool nvidia-smi /usr/bin/nvidia-smi
+    # Under WSL the GPU is the Windows NVIDIA driver's, and its nvidia-smi is in /usr/lib/wsl/lib.
+    tool nvidia-smi /usr/bin/nvidia-smi /usr/lib/wsl/lib/nvidia-smi
     # Ollama answers any local account over HTTP, so its models are visible to whoever asks.
     if tags="$(curl -s -m 3 http://127.0.0.1:11434/api/tags 2>/dev/null)" && [ -n "$tags" ]; then
         info ollama "models: $(printf '%s' "$tags" | grep -o '"name":"[^"]*"' | sed 's/"name":"//; s/"$//' | tr '\n' ' ')"
@@ -506,6 +600,115 @@ if want gh; then
             *) info gh-token "$me holds a token of unrecognized form" ;;
         esac
         unset t
+    fi
+fi
+
+# wsl: the machine under WSL. Without systemd as PID 1 there is no linger, no user unit and no
+# journal, so the worker loop cannot run as a service and the sleep checks mean nothing: a FAIL.
+# What decides whether the worker stays up is on WINDOWS (WSL's idle shutdown, Windows' own
+# sleep), and Windows' power settings are invisible from inside the VM: said, not guessed.
+if want wsl; then
+    if [ "$wsl" = 0 ]; then
+        info wsl "not WSL ($os)"
+    else
+        info wsl "WSL$wsl ($wsl_why)"
+        if [ "$wsl" = 1 ]; then
+            fail wsl "WSL1 has no systemd and no VM of its own: a worker needs WSL2 (from PowerShell: wsl --set-version <distro> 2)"
+        fi
+        pid1="$(cat "$R/proc/1/comm" 2>/dev/null)"
+        sd="$(lower "$(ini_get "$wslconf" boot systemd)")"
+        if [ "$pid1" = systemd ]; then
+            pass wsl-systemd "systemd is PID 1"
+        elif [ "$sd" = true ]; then
+            fail wsl-systemd "systemd is not PID 1 (PID 1 is ${pid1:-unknown}) although /etc/wsl.conf sets [boot] systemd=true: WSL has not restarted since. From PowerShell: wsl --shutdown, then start the distribution again"
+        else
+            fail wsl-systemd "systemd is not PID 1 (PID 1 is ${pid1:-unknown}): no linger, no user units, no journal. Add to /etc/wsl.conf the two lines  [boot]  systemd=true  (worker-setup.sh adds them), then from PowerShell: wsl --shutdown"
+        fi
+        am="$(ini_get "$wslconf" automount enabled)"; ao="$(ini_get "$wslconf" automount options)"
+        info wsl-automount "enabled=${am:-true (default)} root=$mnt options=${ao:-(none)}"
+        ib="$R/proc/sys/fs/binfmt_misc/WSLInterop"; [ -e "$ib" ] || ib="$R/proc/sys/fs/binfmt_misc/WSLInterop-late"
+        if [ -r "$ib" ]; then info wsl-interop "$(head -1 "$ib" 2>/dev/null) (binfmt_misc $(basename "$ib"); [interop] enabled=$(ini_get "$wslconf" interop enabled || echo 'true (default)'))"
+        else info wsl-interop "off (no WSLInterop entry in binfmt_misc)"; fi
+        info wsl-power "Windows sleeping stops this VM, and its power settings cannot be read from inside it: NOT checked here. On Windows, as Administrator: powercfg /change standby-timeout-ac 0 ; powercfg /change hibernate-timeout-ac 0 ; then powercfg /query to read them back (a laptop also needs its lid action set to Do nothing)"
+    fi
+fi
+
+# wsl-mnt: the boundary WSL adds. WSL mounts the Windows drives (DrvFs) for EVERY account in the
+# distribution, and without the metadata mount option the Linux permissions there are made up
+# (every file 0777 for the default user), while a read is done with the Windows user's own token.
+# So hubdiag and agent can read the Windows user's whole profile, and, with interop on, start a
+# Windows program that runs AS that user. A FAIL on any read, a listing, or a program it may
+# start. Run as hubdiag and agent; the admin may of course read their own profile.
+if want wsl-mnt && [ "$wsl" != 0 ]; then
+    whs="$(windows_homes)"
+    if [ ! -e "$R${mnt}c" ]; then
+        pass wsl-mnt "no Windows drive at ${mnt}c ([automount] enabled=false, or another root)"
+    elif [ -z "$whs" ]; then
+        pass wsl-mnt "$me cannot list ${mnt}c/Users, and no --windows-home was named"
+    fi
+    while IFS= read -r wh; do
+        [ -n "$wh" ] || continue
+        if can_list "$wh"; then fail wsl-mnt "$me can LIST the Windows profile $wh"; fi
+        tried=0 opened=""
+        list="$( { printf '%s\n' "$WIN_GUESSES" | awk -v p="$wh/" '{ print p $0 }'; find "$wh" -maxdepth 2 -type f 2>/dev/null | head -20; } | awk '!seen[$0]++')"
+        while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            tried=$((tried + 1))
+            if can_read "$f"; then opened="$opened
+       $f"; fi
+        done <<EOF
+$list
+EOF
+        if [ -n "$opened" ]; then
+            fail wsl-read "$me can read the Windows user's files through DrvFs ($wh):$opened
+       Fix: sudo worker-setup.sh sets /etc/wsl.conf [automount] options=metadata,uid=<admin>,gid=<admin>,umask=077 (or --wsl-automount off), then from PowerShell: wsl --shutdown"
+        else
+            pass wsl-read "$me can read none of $tried file(s) tried in $wh"
+        fi
+    done <<EOF
+$whs
+EOF
+    for exe in "$R${mnt}c/Windows/System32/cmd.exe" "$R${mnt}c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"; do
+        [ -x "$exe" ] || continue
+        if [ -e "$R/proc/sys/fs/binfmt_misc/WSLInterop" ] || [ -e "$R/proc/sys/fs/binfmt_misc/WSLInterop-late" ]; then
+            fail wsl-exec "$me can start $exe, which runs as the Windows user (interop on): the same [automount] fix closes it, or [interop] enabled=false"
+        else
+            info wsl-exec "$me can reach $exe, but interop is off, so it cannot start it"
+        fi
+    done
+fi
+
+# wslconfig: does WSL itself shut the distribution down when idle? %UserProfile%\.wslconfig is
+# Windows' file, read here only when THIS account can read it: worker-setup.sh --check runs it
+# as root. Never as hubdiag or agent: if they could read it, wsl-mnt has already failed. WARN,
+# not FAIL: an unreadable .wslconfig is what a correctly closed /mnt/c looks like to most
+# accounts, and the half that matters as much (Windows' own sleep) is invisible here anyway.
+if want wslconfig && [ "$wsl" != 0 ]; then
+    seen=0 whs="$(windows_homes)"
+    while IFS= read -r wh; do
+        [ -n "$wh" ] || continue
+        f="$wh/.wslconfig"
+        if ! can_read "$f"; then
+            if [ -e "$f" ] || ! can_list "$wh"; then continue; fi
+            seen=1
+            warn wsl-idle "$wh has no .wslconfig: WSL's defaults apply, and a distribution is shut down when idle (instanceIdleTimeout 15000 ms), the worker with it. Create it on Windows with  [general]  instanceIdleTimeout=-1"
+            continue
+        fi
+        seen=1
+        it="$(ini_get "$f" general instanceIdleTimeout)"; vt="$(ini_get "$f" wsl2 vmIdleTimeout)"; nm="$(ini_get "$f" wsl2 networkingMode)"
+        if [ "$it" = -1 ]; then
+            info wsl-idle "$f: [general] instanceIdleTimeout=-1 (documented: WSL does not shut the distribution down for idleness)"
+        else
+            warn wsl-idle "$f: [general] instanceIdleTimeout=${it:-unset (default 15000 ms)}: WSL shuts an idle distribution down, the worker with it. Set instanceIdleTimeout=-1 under [general]"
+        fi
+        info wsl-idle "$f: [wsl2] vmIdleTimeout=${vt:-unset (default 60000 ms)} (the VM's own idle timeout; what -1 does there is undocumented, and the distribution's timeout is the one that matters)"
+        [ -n "$nm" ] || nm="unset (NAT: the LAN cannot reach sshd in this distribution)"
+        info wsl-network "$f: [wsl2] networkingMode=$nm"
+    done <<EOF
+$whs
+EOF
+    if [ "$seen" = 0 ]; then
+        warn wsl-idle "no .wslconfig readable to $me (under ${mnt}c/Users): cannot tell whether WSL shuts this distribution down when idle. Check %UserProfile%\\.wslconfig on Windows for [general] instanceIdleTimeout=-1"
     fi
 fi
 

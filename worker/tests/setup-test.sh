@@ -84,6 +84,86 @@ expect_exit "a different source at the mount point is refused" 1 "$st"
 has "naming the file it read" "$fstab already mounts something else at /srv/hubdiag/work: fix it by hand: /some/other/src /srv/hubdiag/work none bind,ro 0 0" "$out"
 : > "$fstab"
 
+echo "── WSL2: /etc/wsl.conf (systemd, the Windows drives) and trees on DrvFs refused (a stub root)"
+# A stub stands in for the WSL machine (--wsl-root): /proc/version, the interop binfmt entry,
+# PID 1's name and /etc/wsl.conf. A dry run writes nothing, so the stub's wsl.conf must be
+# unchanged afterward; what a real run would write is printed, line by line, and asserted here.
+W="$sb/wsl"
+wslfix() { # pid1-name [wsl.conf content]
+    rm -rf "$W"; mkdir -p "$W/proc/1" "$W/proc/sys/fs/binfmt_misc" "$W/etc"
+    printf 'Linux version 6.6.87-microsoft-standard-WSL2 (root@builder) (gcc 11.2.0)\n' > "$W/proc/version"
+    printf '%s\n' "$1" > "$W/proc/1/comm"; printf 'enabled\n' > "$W/proc/sys/fs/binfmt_misc/WSLInterop"
+    if [ "$#" -ge 2 ]; then printf "$2" > "$W/etc/wsl.conf"; fi
+}
+U="$(id -u)" G="$(id -g)"
+wdry() { out="$(bash "$setup" --dry-run --admin "$me" --hubdiag "$H" --agent "$A" --key "$sb/k.pub" --fstab "$fstab" --wsl-root "$W" "$@" 2>&1)"; st=$?; }
+
+wslfix init
+wdry
+expect_exit "a fresh WSL2: the dry run plans it (exit 0)" 0 "$st"
+has "detected" "── WSL2 (binfmt_misc has WSLInterop, /proc/version names Microsoft)" "$out"
+has "one wsl.conf change, both edits named" "would: $W/etc/wsl.conf: [boot] systemd=true; [automount] options=metadata,uid=$U,gid=$G,umask=077 (the Windows drives become $me's alone) (read when WSL next starts)" "$out"
+has "the file it would write: systemd" "| systemd=true" "$out"
+has "the file it would write: the drives the admin's alone (the default)" "| options=\"metadata,uid=$U,gid=$G,umask=077\"" "$out"
+has "a real run stops until WSL restarts" "systemd is not PID 1 (PID 1 is init): a real run makes the change above and stops here, until WSL restarts: from PowerShell, wsl --shutdown" "$out"
+has "and the Windows side is named, not touched" "the Windows side, which this cannot see or change" "$out"
+[ ! -e "$W/etc/wsl.conf" ] && { echo "  ok   the dry run wrote no wsl.conf"; pass=$((pass+1)); } || { echo "  FAIL the dry run wrote $W/etc/wsl.conf"; fail=$((fail+1)); }
+
+wdry --wsl-automount off
+has "--wsl-automount off: no Windows drive at all" "| enabled=false" "$out"
+case "$out" in *"| options="*) echo "  FAIL off also wrote options"; fail=$((fail+1)) ;; *) echo "  ok   and no options line"; pass=$((pass+1)) ;; esac
+out="$(bash "$setup" --dry-run --admin "$me" --key "$sb/k.pub" --wsl-automount sideways 2>&1)"; st=$?
+expect_exit "an unknown --wsl-automount is refused" 2 "$st"
+
+wslfix init '# kept\n[network]\nhostname = box\n\n[automount]\noptions = "case=off,uid=1000,fmask=11"\nroot = /mnt/\n'
+before="$(cat "$W/etc/wsl.conf")"
+wdry
+has "the admin's options are merged, not replaced" "| options=\"case=off,fmask=11,metadata,uid=$U,gid=$G,umask=077\"" "$out"
+has "comments kept" "| # kept" "$out"
+has "other sections kept" "| hostname = box" "$out"
+has "other keys of the section kept" "| root = /mnt/" "$out"
+has "a missing section is added" "| [boot]" "$out"
+[ "$before" = "$(cat "$W/etc/wsl.conf")" ] && { echo "  ok   the stub's wsl.conf is unchanged"; pass=$((pass+1)); } || { echo "  FAIL the dry run changed wsl.conf"; fail=$((fail+1)); }
+
+wslfix systemd "[boot]\r\nsystemd=true\r\n[automount]\r\noptions=\"metadata,uid=$U,gid=$G,umask=077\"\r\n"
+wdry
+expect_exit "already set up" 0 "$st"
+has "systemd=true is seen (CRLF)" "  ok $W/etc/wsl.conf: [boot] systemd=true" "$out"
+has "the restriction is seen" "  ok $W/etc/wsl.conf: [automount] options=metadata,uid=$U,gid=$G,umask=077 (the Windows drives are $me's alone)" "$out"
+has "systemd is PID 1" "  ok systemd is PID 1" "$out"
+case "$out" in *"would: $W/etc/wsl.conf"*) echo "  FAIL it would rewrite a wsl.conf that is right"; fail=$((fail+1)) ;; *) echo "  ok   nothing to change in wsl.conf"; pass=$((pass+1)) ;; esac
+
+wslfix systemd '[boot]\nsystemd=true\n[automount]\nenabled=false\n'
+wdry
+has "automount already off is enough" "  ok $W/etc/wsl.conf: [automount] enabled=false (no Windows drive is mounted)" "$out"
+
+wslfix systemd '[boot]\nsystemd=true\n'
+wdry
+has "systemd PID 1, drives open: the restriction, and when it takes effect" "the [automount] change takes effect when WSL restarts" "$out"
+
+wslfix init
+wdry --view work=/mnt/c/work
+expect_exit "a view on the Windows drive is refused" 1 "$st"
+has "with the reason" "view work: /mnt/c/work is under /mnt/, where WSL mounts the Windows drives (DrvFs): Linux permissions do not hold there" "$out"
+case "$out" in *"would:"*) echo "  FAIL it planned changes before refusing"; fail=$((fail+1)) ;; *) echo "  ok   refused before any change is planned"; pass=$((pass+1)) ;; esac
+wslfix init '[automount]\nroot=/windir\n'
+wdry --view src=/windir/c/src
+expect_exit "under a moved [automount] root too" 1 "$st"
+has "naming that root" "is under /windir/, where WSL mounts" "$out"
+wdry --view src=/mnt/data/src
+expect_exit "and /mnt is an ordinary directory when the drives are elsewhere" 0 "$st"
+
+rm -rf "$W"; mkdir -p "$W/proc"; printf 'Linux version 6.8.0-1021-azure (buildd@lcy02-amd64)\n' > "$W/proc/version"
+wdry --view src=/mnt/data/src
+expect_exit "not WSL: a view under /mnt is allowed" 0 "$st"
+case "$out" in *WSL*) echo "  FAIL a Linux that is not WSL got a WSL step"; fail=$((fail+1)) ;; *) echo "  ok   and no WSL step"; pass=$((pass+1)) ;; esac
+
+wslfix init
+printf 'Linux version 4.4.0-19041-Microsoft (Microsoft@Microsoft.com) (gcc version 5.4.0 (GCC) )\n' > "$W/proc/version"
+wdry
+expect_exit "WSL1 is refused" 1 "$st"
+has "with the conversion" "WSL1 cannot run a worker (no systemd, no VM of its own): convert it from PowerShell, wsl --set-version <distro> 2" "$out"
+
 echo "── without root it refuses and says how"
 out="$(bash "$setup" --admin "$me" --key "$sb/k.pub" --hubdiag "$H" --agent "$A" --fstab "$fstab" 2>&1)"; st=$?
 expect_exit "exit 2" 2 "$st"

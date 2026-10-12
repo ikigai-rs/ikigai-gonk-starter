@@ -202,6 +202,135 @@ else
     pass=$((pass+1))
 fi
 
+echo "── WSL: detection, systemd as PID 1, the Windows drives, .wslconfig (a stub root, --wsl-root)"
+# There is no WSL machine in CI. The stub stands in for what the probe reads (/proc/version, the
+# interop binfmt entry, PID 1's name, /etc/wsl.conf) and for the drives WSL mounts under /mnt.
+# DrvFs's default (every file 0777 for the default user, read with the Windows user's token)
+# is a tree this test's user can read; the fix (metadata,umask=077 for the admin, or no mount)
+# is, from another account, a tree it cannot enter: mode 0000 here, as for the homes above.
+W="$sb/wsl"
+WSL2="Linux version 6.6.87-microsoft-standard-WSL2 (root@builder) (gcc (GCC) 11.2.0) #1 SMP"
+wslfix() { # kernel-version pid1-name [wsl.conf content]; interop on, no Windows drive yet
+    chmod -R u+rwx "$W" 2>/dev/null; rm -rf "$W"
+    mkdir -p "$W/proc/1" "$W/proc/sys/fs/binfmt_misc" "$W/etc"
+    printf '%s\n' "$1" > "$W/proc/version"; printf '%s\n' "$2" > "$W/proc/1/comm"
+    printf 'enabled\ninterpreter /init\n' > "$W/proc/sys/fs/binfmt_misc/WSLInterop"
+    if [ "$#" -ge 3 ]; then printf "$3" > "$W/etc/wsl.conf"; fi
+}
+UD=Users   # (a variable, so the public-tree guard does not read a fixture profile as a home path)
+winfix() { # root-dir: a C: drive with a person's profile (the name has a space), as DrvFs shows it
+    P="$W$1c/$UD/Win User"
+    mkdir -p "$P/.ssh" "$P/Documents" "$W$1c/$UD/Public" "$W$1c/Windows/System32"
+    printf 'not a real key\n' > "$P/.ssh/id_ed25519"; printf 'notes\n' > "$P/Documents/notes.txt"
+    printf 'shared\n' > "$W$1c/$UD/Public/readme.txt"
+    printf '#!/bin/sh\n' > "$W$1c/Windows/System32/cmd.exe"; chmod 0755 "$W$1c/Windows/System32/cmd.exe"
+}
+wslprobe() { out="$(WSL_DISTRO_NAME=Ubuntu bash "$probe" --wsl-root "$W" "$@" 2>&1)"; st=$?; }
+
+wslfix "Linux version 6.8.0-1021-azure (buildd@lcy02-amd64) (gcc 13.2.0)" systemd
+rm "$W/proc/sys/fs/binfmt_misc/WSLInterop"
+wslprobe --sections wsl,wsl-mnt,wslconfig
+expect_exit "a Linux that is not WSL: exit 0" 0 "$st"
+has "says it is not WSL" "INFO wsl: not WSL" "$out"
+hasnt "and checks nothing of WSL's" "wsl-" "$out"
+hasnt "WSL_DISTRO_NAME does not override a stub" "WSL2" "$out"
+
+wslfix "Linux version 4.4.0-19041-Microsoft (Microsoft@Microsoft.com) (gcc version 5.4.0 (GCC) ) #1237-Microsoft" init
+wslprobe --sections wsl
+expect_exit "WSL1 is red" 1 "$st"
+has "names WSL1 and the conversion" "FAIL wsl: WSL1 has no systemd and no VM of its own: a worker needs WSL2 (from PowerShell: wsl --set-version <distro> 2)" "$out"
+
+wslfix "$WSL2" init
+wslprobe --sections wsl
+expect_exit "WSL2 without systemd is red" 1 "$st"
+has "detected, with the reasons" "INFO wsl: WSL2 (binfmt_misc has WSLInterop, /proc/version names Microsoft)" "$out"
+has "systemd not PID 1, and the lines to add" "FAIL wsl-systemd: systemd is not PID 1 (PID 1 is init): no linger, no user units, no journal. Add to /etc/wsl.conf the two lines  [boot]  systemd=true" "$out"
+has "and the restart" "then from PowerShell: wsl --shutdown" "$out"
+has "Windows' power settings: the commands, and that they are not checked" "NOT checked here. On Windows, as Administrator: powercfg /change standby-timeout-ac 0 ; powercfg /change hibernate-timeout-ac 0" "$out"
+hasnt "the power line is not a FAIL" "FAIL wsl-power" "$out"
+
+wslfix "$WSL2" init '[boot]\r\nsystemd = true\r\n'
+wslprobe --sections wsl
+expect_exit "configured but not restarted is red" 1 "$st"
+has "says WSL has not restarted (and read a CRLF wsl.conf)" "although /etc/wsl.conf sets [boot] systemd=true: WSL has not restarted since" "$out"
+
+wslfix "Linux version 6.6.36-custom (builder@host) (gcc 12)" systemd '[boot]\nsystemd=true\n[automount]\noptions = "metadata,uid=1000,gid=1000,umask=077" # the fix\n'
+wslprobe --sections wsl
+expect_exit "WSL2 with systemd as PID 1 is green" 0 "$st"
+has "a custom kernel is WSL2 by the interop entry" "INFO wsl: WSL2 (binfmt_misc has WSLInterop)" "$out"
+has "systemd is PID 1" "PASS wsl-systemd: systemd is PID 1" "$out"
+has "reports the automount options (quotes and comment dropped)" "INFO wsl-automount: enabled=true (default) root=/mnt/ options=metadata,uid=1000,gid=1000,umask=077" "$out"
+has "reports interop" "INFO wsl-interop: enabled" "$out"
+
+echo "── WSL: the Windows user's profile, open the way DrvFs shows it by default"
+wslfix "$WSL2" systemd
+winfix /mnt/
+P="$W/mnt/c/$UD/Win User"
+wslprobe --sections wsl-mnt
+expect_exit "an open drive is red" 1 "$st"
+has "the profile is found under c/Users and listed" "FAIL wsl-mnt: $(id -un) can LIST the Windows profile $P" "$out"
+has "its key is read" "$P/.ssh/id_ed25519" "$(printf '%s' "$out" | sed -n '/^FAIL wsl-read/,/Fix:/p')"
+has "and a file found by listing" "$P/Documents/notes.txt" "$(printf '%s' "$out" | sed -n '/^FAIL wsl-read/,/Fix:/p')"
+has "with the fix" "Fix: sudo worker-setup.sh sets /etc/wsl.conf [automount] options=metadata,uid=<admin>,gid=<admin>,umask=077" "$out"
+hasnt "Public is not a person's profile" "Users/Public" "$out"
+has "a Windows program it may start is red (interop on)" "FAIL wsl-exec: $(id -un) can start $W/mnt/c/Windows/System32/cmd.exe, which runs as the Windows user" "$out"
+rm "$W/proc/sys/fs/binfmt_misc/WSLInterop"
+wslprobe --sections wsl-mnt
+hasnt "interop off: reaching cmd.exe is not a FAIL" "FAIL wsl-exec" "$out"
+has "and says why" "INFO wsl-exec: $(id -un) can reach $W/mnt/c/Windows/System32/cmd.exe, but interop is off" "$out"
+has "the files are still red" "FAIL wsl-read" "$out"
+
+echo "── WSL: the drive closed (the [automount] restriction, from another account)"
+chmod 0000 "$W/mnt/c"
+wslprobe --sections wsl-mnt
+expect_exit "a closed drive is green" 0 "$st"
+has "nothing to list" "PASS wsl-mnt: $(id -un) cannot list /mnt/c/Users, and no --windows-home was named" "$out"
+wslprobe --sections wsl-mnt --windows-home "$P"
+expect_exit "a named profile behind the closed drive is green" 0 "$st"
+has "tried by name, nothing opens" "PASS wsl-read: $(id -un) can read none of 10 file(s) tried in $P" "$out"
+hasnt "and no Windows program" "wsl-exec" "$out"
+chmod 0755 "$W/mnt/c"
+
+echo "── WSL: no drive at all ([automount] enabled=false), and a moved [automount] root"
+rm -rf "$W/mnt"
+wslprobe --sections wsl-mnt
+expect_exit "no drive is green" 0 "$st"
+has "says so" "PASS wsl-mnt: no Windows drive at /mnt/c" "$out"
+wslfix "$WSL2" systemd '[automount]\nroot = /windir\n'
+winfix /windir/
+wslprobe --sections wsl,wsl-mnt
+has "the root is read from wsl.conf (a slash added)" "root=/windir/" "$out"
+has "and the profile found there" "FAIL wsl-read: $(id -un) can read the Windows user's files through DrvFs ($W/windir/c/$UD/Win User)" "$out"
+
+echo "── WSL: .wslconfig, read by the account running the probe (root, under --check)"
+wslfix "$WSL2" systemd
+winfix /mnt/
+printf '[general]\r\ninstanceIdleTimeout = -1\r\n[wsl2]\r\nnetworkingMode=mirrored\r\n' > "$P/.wslconfig"
+wslprobe --sections wslconfig
+expect_exit "informational: exit 0" 0 "$st"
+has "instanceIdleTimeout=-1 is INFO (CRLF read)" "INFO wsl-idle: $P/.wslconfig: [general] instanceIdleTimeout=-1 (documented" "$out"
+has "the VM's timeout, unset" "[wsl2] vmIdleTimeout=unset (default 60000 ms)" "$out"
+has "the network mode" "INFO wsl-network: $P/.wslconfig: [wsl2] networkingMode=mirrored" "$out"
+hasnt "no warning" "WARN" "$out"
+printf '[wsl2]\nvmIdleTimeout=-1\n' > "$P/.wslconfig"
+wslprobe --sections wslconfig
+has "vmIdleTimeout=-1 alone is a WARN on the distribution's timeout" "WARN wsl-idle: $P/.wslconfig: [general] instanceIdleTimeout=unset (default 15000 ms)" "$out"
+has "and reports the VM's" "[wsl2] vmIdleTimeout=-1 (the VM's own idle timeout; what -1 does there is undocumented" "$out"
+expect_exit "a WARN is not a failure" 0 "$st"
+if command -v iconv >/dev/null 2>&1; then
+    { printf '\377\376'; printf '[general]\r\ninstanceIdleTimeout=-1\r\n' | iconv -f UTF-8 -t UTF-16LE; } > "$P/.wslconfig"
+    wslprobe --sections wslconfig
+    has "a UTF-16 .wslconfig (Notepad's 'Unicode') is read" "INFO wsl-idle: $P/.wslconfig: [general] instanceIdleTimeout=-1" "$out"
+fi
+rm "$P/.wslconfig"
+wslprobe --sections wslconfig
+has "none in a readable profile: WARN, defaults apply" "WARN wsl-idle: $P has no .wslconfig: WSL's defaults apply" "$out"
+chmod 0000 "$W/mnt/c"
+wslprobe --sections wslconfig
+has "unreadable: WARN, and where to look" "WARN wsl-idle: no .wslconfig readable to $(id -un) (under /mnt/c/Users): cannot tell" "$out"
+expect_exit "still not a failure" 0 "$st"
+chmod 0755 "$W/mnt/c"
+
 echo "── usage"
 bash "$probe" --bogus >/dev/null 2>&1; expect_exit "an unknown argument is exit 2" 2 "$?"
 
