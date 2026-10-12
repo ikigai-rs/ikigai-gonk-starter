@@ -21,10 +21,11 @@ ssh-keygen -q -t ed25519 -N '' -C test -f "$sb/k"
 # Pick names no machine has, so a dry run plans every step.
 H="hubdiagtest$$" A="agenttest$$"
 
-# Every dry run reads a SCRATCH mount table, never this machine's /etc/fstab: on a machine
-# that is already a worker, the real one mounts the view at /srv/hubdiag/work from a different
-# source, and the script rightly refuses a mount point it does not own (ledger 1233). The test
-# asks for it with --fstab, a seam used only here.
+# The script reads a SCRATCH mount table, never this machine's /etc/fstab: on a machine that is
+# already a worker, the real one mounts the view at /srv/hubdiag/work from a different source,
+# and the script rightly refuses a mount point it does not own (ledger 1233). The test asks for
+# it with --fstab, a seam used only here; on macOS the flag is accepted and never read (see the
+# mount-table block below, and the comment on it).
 fstab="$sb/fstab"; : > "$fstab"
 
 echo "── a dry run plans every step and changes nothing"
@@ -77,12 +78,22 @@ out="$(bash "$setup" --dry-run --admin "$me" --hubdiag "$H" --agent "$A" --key "
 expect_exit "a view without NAME=/abs is refused" 1 "$st"
 has "with the reason" "NAME=/absolute/dir" "$out"
 
-echo "── the mount table is injectable; a foreign mount at the point is refused"
-printf '%s\n' '/some/other/src /srv/hubdiag/work none bind,ro 0 0' > "$fstab"
-out="$(bash "$setup" --dry-run --admin "$me" --hubdiag "$H" --agent "$A" --key "$sb/k.pub" --fstab "$fstab" 2>&1)"; st=$?
-expect_exit "a different source at the mount point is refused" 1 "$st"
-has "naming the file it read" "$fstab already mounts something else at /srv/hubdiag/work: fix it by hand: /some/other/src /srv/hubdiag/work none bind,ro 0 0" "$out"
-: > "$fstab"
+# The mount table is Linux's: the views step reads /etc/fstab and bind-mounts (worker-setup.sh's
+# linux_view). macOS has neither — its views are a LaunchDaemon's rsync copy, checked end to end
+# by worker/tests/ci-macos.sh — so a Mac never reads the file and this block cannot hold there.
+# Asked only of Linux, and said so, rather than asserted unguarded and red on every Mac.
+if [ "$(uname -s)" = Linux ]; then
+    echo "── the mount table is injectable; a foreign mount at the point is refused"
+    printf '%s\n' '/some/other/src /srv/hubdiag/work none bind,ro 0 0' > "$fstab"
+    out="$(bash "$setup" --dry-run --admin "$me" --hubdiag "$H" --agent "$A" --key "$sb/k.pub" --fstab "$fstab" 2>&1)"; st=$?
+    expect_exit "a different source at the mount point is refused" 1 "$st"
+    has "naming the file it read" "$fstab already mounts something else at /srv/hubdiag/work: fix it by hand: /some/other/src /srv/hubdiag/work none bind,ro 0 0" "$out"
+    : > "$fstab"
+else
+    echo "  ok   skipped on macOS: /etc/fstab is Linux's (a bind mount);"
+    echo "         macOS's views are a LaunchDaemon's rsync copy, checked by ci-macos.sh"
+    pass=$((pass+1))
+fi
 
 echo "── WSL2: /etc/wsl.conf (systemd, the Windows drives) and trees on DrvFs refused (a stub root)"
 # A stub stands in for the WSL machine (--wsl-root): /proc/version, the interop binfmt entry,
