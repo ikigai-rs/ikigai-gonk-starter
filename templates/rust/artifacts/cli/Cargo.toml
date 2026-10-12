@@ -1,0 +1,19 @@
+[package]
+name = "lending-cli"
+version = "0.1.0"
+edition = "2021"
+description = "The library's command line: a client of the service's HTTP JSON API"
+
+[lib]
+name = "lending_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "library"
+path = "src/main.rs"
+
+# The CLI speaks the service's JSON, and its tests start the real service in-process, on a
+# free port, with a clock the test sets, exactly as the Python sample's do. The service is
+# the sample's other artifact, so the dependency is a path, never a version.
+[dependencies]
+lending-service = { path = "../service" }

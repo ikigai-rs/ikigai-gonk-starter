@@ -1,0 +1,12 @@
+# Per working tree: how this machine reaches gonk, and the claim this tree holds.
+.gonk/local.toml
+.gonk/state/
+__pycache__/
+*.pyc
+.venv/
+.ruff_cache/
+.gonk/worker.toml
+
+# What cargo builds here. This file repeats the starter's lines above because a target's
+# file replaces the starter's in a generated repository, and adds what this language needs.
+/target/

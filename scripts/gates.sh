@@ -40,7 +40,10 @@ PY=python3
 
 # Every target the generator offers (templates/<target>/, beside the language-neutral
 # templates/library/), generated into a scratch directory and tested by its own entry point,
-# scripts/test.py, as that repository's CI would run it. A stale template fails here.
+# scripts/test.py, as that repository's CI would run it. A stale template fails here. Each
+# target's test.py needs only that language's toolchain: python/ is standard-library Python,
+# rust/ is one cargo workspace on the standard library alone (no fetch, no lock to resolve),
+# so `cargo` must be on PATH for the rust target's gate to mean anything.
 SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/gonk-starter-gates.XXXXXX") || exit 2
 trap 'rm -rf "$SCRATCH"' EXIT
 generated() {

@@ -1,0 +1,13 @@
+[package]
+name = "lending-service"
+version = "0.1.0"
+edition = "2021"
+description = "The library's rules, and an HTTP JSON API over them"
+
+[lib]
+name = "lending_service"
+path = "src/lib.rs"
+
+[[bin]]
+name = "serve"
+path = "src/main.rs"

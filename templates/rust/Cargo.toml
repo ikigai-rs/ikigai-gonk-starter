@@ -1,0 +1,6 @@
+# The workspace the sample's two artifacts live in: artifacts/service (the rules, and an
+# HTTP JSON API over them) and artifacts/cli (a client of that API). No dependencies: the
+# standard library is enough, so `cargo test` needs no network and no lock file to resolve.
+[workspace]
+resolver = "2"
+members = ["artifacts/service", "artifacts/cli"]
