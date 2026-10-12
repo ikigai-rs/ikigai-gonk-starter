@@ -28,8 +28,9 @@ from support import ROOT, gonk, load_hook, scratch_repo
 
 GONK = shutil.which("ikigai-gonk")
 IKIGAI = shutil.which("ikigai")
-# Ports a live service may hold: gonk's HTTP and QUIC door (1062), NetKernel (1060, gonk's port
-# before 2026-10-12) and a QUIC peer (4433). A scratch gonk never takes one of these.
+# Ports a live service may hold: gonk's HTTP and QUIC door (1062), 1060 (gonk's port before
+# 2026-10-12, and a registered port other services use) and a QUIC peer (4433). A scratch gonk
+# never takes one of these.
 LIVE_PORTS = {1060, 1062, 4433}
 
 
