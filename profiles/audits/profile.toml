@@ -1,0 +1,6 @@
+summary = "periodic unled audits instead of per-commit review: one repository, a file list, a budget, a reproduction per bug, one item per finding"
+roles = ["auditor: claims an audit item, reads only what it lists, files one item per reproduced bug"]
+sections = ["audits"]
+
+[conflicts]
+review-every-commit = "per-commit review and periodic unled audits are two answers to one question, how bugs are found; the audits profile replaces the other"

@@ -9,6 +9,9 @@ The work lives in a **ledger** on gonk: items you file, claim, comment on and cl
 to do lives in `openspec/`. The code lives in `artifacts/<name>/`, one directory per
 deployable thing. `.gonk/` says how this repository reaches gonk and which ledger is its.
 
+These are the rules of the process this repository works by: `.gonk/process.toml` names it,
+and `python3 tools/gonk.py status` prints it. A rule that process does not use is not here.
+
 ## The loop
 
 ```sh
@@ -21,9 +24,12 @@ python3 tools/gonk.py close 12 --evidence <PR URL>    # the dispatcher, once the
 
 Two roles, and one person may hold both. **Whoever does the work** claims the item, does it,
 and reports: the evidence goes on the item as a comment and the claim is handed back.
-**Whoever dispatched it** checks that evidence and closes the item. Working alone, you are
-your own dispatcher, and `close` is the step after you have checked your own evidence. An
-unattended worker on another machine is only ever the first role: its grant lets it claim,
+**Whoever dispatched it** checks that evidence and closes the item.
+
+Working alone, you are your own dispatcher, and `close` is the step after you have checked
+your own evidence: the pull request merged, with green CI.
+
+An unattended worker on another machine is only ever the first role: its grant lets it claim,
 renew, comment and release, and closing stays with the dispatcher.
 
 `just next`, `just claim 12`, `just report 12 <URL>` and `just close 12 <URL>` are the same
@@ -95,8 +101,7 @@ as `PR #N`, or `owner/repo#N` for another repository. In a commit message, write
 ## Specs, artifacts, queries and scripts
 
 - **Specs** are in `openspec/`: `specs/` is what the system does now, `changes/` what is
-  proposed. Read the spec before changing behavior; a change in behavior starts as a change
-  folder. See `openspec/README.md`.
+  proposed. Read the spec before changing behavior. See `openspec/README.md`.
 - **Artifacts** are `artifacts/<name>/`. A spec or change names the artifacts it touches on
   an `Artifacts:` line; keep it true when you add or move code.
 - **Queries and scripts** are files in `.gonk/queries/` and `.gonk/scripts/`. They are meant
@@ -104,10 +109,35 @@ as `PR #N`, or `owner/repo#N` for another repository. In a commit message, write
   drafted from a sentence by `urn:nl:sparql` (ikigai-nl). `python3 tools/gonk.py init`
   publishes them when gonk offers `urn:script:`, and until then says they are ready but
   unpublished; do not publish them any other way.
+
+## Spec first
+
+- **A change in behavior starts as a change folder**, `openspec/changes/<id>/`: its proposal,
+  its spec deltas and its `tasks.md`, written before the code. A fix that restores what a spec
+  already says needs none; anything that changes what a spec says does.
 - **Seeding.** `python3 tools/gonk.py seed` files each open task of a change in flight as a
   ledger item, keyed by the task, so running it again files nothing new, and links each task
   to the next with `blocks`, so `next` offers a change's tasks in the order `tasks.md` lists
   them. Check a task's box in `tasks.md` when its work is done.
+- **Take what `next` offers.** The first open task of each change is ready and the rest wait
+  behind it, so working from `next` keeps a change's tasks in their written order.
+- **Keep the spec true.** When a change is finished, its deltas become what `specs/` says and
+  the change folder moves to `changes/archive/`, in the same pull request as its last task.
+
+## Worker machines
+
+Some items are done by **unattended workers**: machines that run `tools/worker.py`, take the
+items the dispatcher marks for them, and work each one in a fresh working tree of their own.
+
+- **The dispatcher marks the work.** A worker takes only items carrying every label its
+  `.gonk/worker.toml` names (`worker:<name>` by convention); an item without them is never
+  taken by a worker.
+- **A worker claims, works and reports; it never closes and never merges.** It opens the pull
+  request, reads its CI, and hands the item back with both as the evidence. The dispatcher
+  checks that evidence, then merges and closes, or answers with
+  `python3 tools/gonk.py reject 12 --note "<why>"`, and the item is ready again.
+- **One agent per repository.** A worker takes no item whose repository already has a live
+  claim held by anyone, and runs one item per repository on its machine.
 
 ## Optional: a hook for Claude Code
 

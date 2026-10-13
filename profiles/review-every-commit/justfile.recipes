@@ -1,0 +1,3 @@
+# Install this repository's git hooks (hooks/git/): post-commit asks gonk to review each commit.
+hooks:
+    git config core.hooksPath hooks/git

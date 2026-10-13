@@ -1,0 +1,3 @@
+summary = "one person and their agent: you are your own dispatcher, and close after checking your own evidence"
+roles = ["you: both the dispatcher and whoever does the work"]
+sections = ["roles-solo"]

@@ -45,10 +45,12 @@ artifacts/<name>/        one directory per deployable thing, any language each
 .gonk/                   which ledger, how to reach gonk, and where everything lives
   layout.toml            the spec format(s), the artifacts root, queries, scripts
   gonk.toml              the ledger this repository's work lives in
+  process.toml           the process this repository works by (its profiles)
   queries/  scripts/     saved SPARQL and workflow scripts (reserved; see below)
 tools/gonk.py            init, seed, file, next, claim, release, report, close, status
 tools/worker.py          the worker loop: take an item, run an agent on it, hand it back
 tools/new.py             generate a repository with the library-lending sample in it
+profiles/                the process profiles new.py can generate with (see Choosing a process)
 templates/               what new.py generates from: the sample, and one directory per language
 hooks/claude/            an OPTIONAL Claude Code hook that refuses edits without a claim
 worker/                  set up a machine that does agentic work for a hub, check it, run the loop
@@ -95,6 +97,83 @@ the order of a tasks list is a dependency: `next` offers the first open task of 
 and closing it makes the next one ready. A second `seed` files and links nothing: the ledger
 answers `existing` for a key it already holds, and the links are already there. The sample
 also carries three saved SPARQL queries and a workflow script (below).
+
+## Choosing a process
+
+The loop above is the same everywhere; who runs it, and around what, is not. A **process
+profile** says how a team works, and `tools/new.py --process` generates a repository with one
+or several:
+
+```sh
+python3 tools/new.py ../library --process solo
+python3 tools/new.py ../library --process workers,spec --target rust
+```
+
+| profile | what changes |
+| --- | --- |
+| `solo` | one person and their agent; you are your own dispatcher, and `close` follows your own check of the evidence |
+| `workers` | a dispatcher plus unattended worker machines (`tools/worker.py`); workers claim and report, and cannot close or merge |
+| `review-every-commit` | a read-only reviewer on every commit: a `post-commit` hook asks gonk to review the touched files, and a person triages the findings into items |
+| `hub` | a coordinating session splits work into single-repository arcs whose briefs are item bodies, links them `parent`/`blocks`, and dispatches each to its own working tree and holder; arcs merge on green and report, and the hub asks a person before merging its own work |
+| `spec` | spec first: every change in behavior starts as an `openspec/changes/` folder, `seed` files its tasks, `next` orders them |
+| `audits` | periodic unled audits instead of per-commit review: an audit item template and `just audit`, which files one |
+
+With no `--process`, a repository gets `solo,workers,spec`, which is what this starter
+generated before profiles existed, and what this starter's own `AGENTS.md` is.
+
+**A profile is data.** Each is a directory under [`profiles/`](profiles/README.md): a
+`profile.toml` naming the `AGENTS.md` sections it adds, the hooks it installs, the roles it
+names, the checks `init` runs for it and the recipes it carries, beside any files it adds.
+`AGENTS.md` is assembled from shared sections and the chosen profiles' own, so an agent never
+reads a rule its process does not use. The generated repository records its profiles in
+`.gonk/process.toml`; `python3 tools/gonk.py init` and `status` read them from there, and
+`init` checks what each needs (a worker's configuration, the review hook installed and gonk
+armed to review, and so on).
+
+**Profiles compose**, so `--process` takes a list: they answer different questions (who
+dispatches the work, how it is defined, how bugs are found), and a real team answers each
+one. A list keeps every profile small instead of needing one per combination. Two that answer
+the same question the opposite way refuse to combine, with the reason: `audits` replaces
+`review-every-commit`.
+
+- **`solo`.** You are both roles. Claim, open a pull request, read its CI, report, then close
+  your own item. The smallest process, and the one to start with.
+- **`workers`.** You (or a hub) dispatch, and machines work: label an item `worker:<name>`,
+  and a worker running `tools/worker.py` claims it, works it in a fresh worktree, opens a pull
+  request and hands it back with the evidence. It brings the worker loop, its sample
+  configuration and its service units; [`worker/README.md`](worker/README.md) sets the
+  machine up.
+- **`review-every-commit`.** `hooks/git/post-commit` (installed with `just hooks`) drops one
+  review request per changed file into gonk's review queue with `ikigai-gonk review request`
+  and returns at once, so a commit never waits on gonk or a model. gonk needs this repository
+  as a browse root, a model mounted, and review armed; `init` checks each. A reviewer can only
+  write pending findings, and a person publishes or declines each. Another per-commit
+  reviewer works as well: roborev, for one, files its findings into the ledger through gonk's
+  own bridge (`ikigai-gonk roborev file`). The profile needs no such tool and reads no tool's
+  report format.
+- **`hub`.** `tools/hub.py arc` files an arc from its brief (`.gonk/templates/brief.md`) and
+  links it, and `tools/hub.py dispatch` gives it a worktree and a holder of its own. The arc's
+  agent merges its own pull request on green and reports; the hub closes it, and asks a person
+  before merging work of its own.
+- **`spec`.** The rules for `openspec/`: a change in behavior is a change folder before it is
+  code, `seed` files its tasks in order, and the spec is kept true as changes finish.
+- **`audits`.** `just audit <files>… [--budget N]` files an unled audit from
+  `.gonk/templates/audit.md`: the file list, a budget of tool calls, a reproduction for every
+  bug, one item per finding.
+
+**Local or remote gonk.** Every profile works the same against gonk on this machine (the
+socket) or on another (QUIC with a machine identity), since every request goes through
+`tools/gonk.py`'s one transport, and a hosted gonk would need nothing different from this
+starter. One part assumes gonk's machine: **`review-every-commit`'s hook**. A review request
+is dropped into a queue on gonk's machine, which no network door reaches, and gonk reviews
+the repository as it finds it in its own browse root; so the hook queues requests from a
+working tree on gonk's machine, and from any other it says so and lets the commit go ahead.
+The `hub`'s worktrees, like any working tree, are on whichever machine runs the agent.
+
+**Bringing existing work in.** A ledger kept elsewhere can be imported rather than retyped:
+gonk imports a kata export, for one (`ikigai-gonk kata import`, in gonk's README).
+
+The gonk Book's *Ways of working* part walks through each of these processes end to end.
 
 ## Setting it up
 
@@ -274,6 +353,9 @@ README says what else waits on the ledger.
 
 ## Coming next
 
+- **Sensors in a profile, not only rules.** A profile names its `AGENTS.md` sections, hooks
+  and checks today; it is the place a later version names which harness controls are on, and
+  a repository would carry the sensors and the queries that show their coverage.
 - **More languages** for the generator: Go, passing the same vectors (Rust and Deno have
   landed: `--target rust`, `--target deno`).
 - **A second spec format**, beside OpenSpec, lifted to the same graph and ledger items by a

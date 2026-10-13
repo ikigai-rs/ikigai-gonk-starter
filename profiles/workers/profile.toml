@@ -1,0 +1,13 @@
+summary = "a dispatcher and unattended worker machines: workers claim and report, and never close or merge"
+roles = [
+    "dispatcher: marks items for workers, checks each hand-back, merges and closes, or rejects",
+    "worker: an unattended machine running tools/worker.py; claims, works, reports",
+]
+sections = ["roles-workers", "workers"]
+# This starter's own files the profile carries (the worker loop, its configuration's
+# template, its service units), and its justfile recipes that run them. Setting up the worker
+# MACHINE (accounts, boundary, worker/README.md) stays in the starter.
+starter_files = ["tools/worker.py", "worker/worker.sample.toml"]
+starter_dirs = ["worker/units"]
+recipes = ["worker", "worker-once", "worker-plan", "worker-forget"]
+checks = ["worker-config"]

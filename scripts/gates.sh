@@ -39,7 +39,8 @@ PY=python3
 }
 
 # Every target the generator offers (templates/<target>/, beside the language-neutral
-# templates/library/), generated into a scratch directory and tested by its own entry point,
+# templates/library/), and every process profile (profiles/), generated into a scratch
+# directory and tested by its own entry point,
 # scripts/test.py, as that repository's CI would run it. A stale template fails here. Each
 # target's test.py needs only that language's toolchain: python/ is standard-library Python,
 # rust/ is one cargo workspace on the standard library alone (no fetch, no lock to resolve),
@@ -99,14 +100,30 @@ if ! command -v deno >/dev/null 2>&1; then
     export PATH
 fi
 
+# One generated repository, running its own tests: generate <name> <target> [<process>].
+generate_and_test() {
+    echo "-- the sample, generated for $2 with process ${3:-(the default)}, runs its own tests" &&
+        "$PY" tools/new.py "$SCRATCH/$1" --target "$2" ${3:+--process "$3"} >/dev/null &&
+        "$PY" "$SCRATCH/$1/scripts/test.py"
+}
+
+# Every target with the default process; every process profile (profiles/profiles.toml) on
+# the default target, python, whose tests take seconds; and on each other target one
+# combination that between them carries every profile's files (CI time stays sane: a cargo
+# or deno build per profile would multiply the slowest gate by six for files the target's
+# tests never read).
+PROFILES=$("$PY" -c 'import tomllib; print(" ".join(tomllib.load(open("profiles/profiles.toml", "rb"))["profiles"]))') || exit 2
 generated() {
     for dir in templates/*/; do
         target=$(basename "$dir")
         [ "$target" = library ] && continue
-        echo "-- the sample, generated for $target, runs its own tests" &&
-            "$PY" tools/new.py "$SCRATCH/$target" --target "$target" >/dev/null &&
-            "$PY" "$SCRATCH/$target/scripts/test.py" || return 1
+        generate_and_test "$target" "$target" || return 1
     done
+    for profile in $PROFILES; do
+        generate_and_test "python-$profile" python "$profile" || return 1
+    done
+    generate_and_test rust-combined rust "workers,hub,review-every-commit" &&
+        generate_and_test deno-combined deno "solo,spec,audits"
 }
 
 echo "gates: $("$PY" --version 2>&1), $("$RUFF" --version)"

@@ -1,0 +1,7 @@
+# File an arc from its brief and link it: just arc "Title" brief.md [--parent 4] [--after 7]
+arc title brief *flags:
+    python3 tools/hub.py arc "{{title}}" --brief "{{brief}}" {{flags}}
+
+# A working tree and a holder of its own for an arc: just dispatch 12 ../arc-12
+dispatch item dir *flags:
+    python3 tools/hub.py dispatch {{item}} "{{dir}}" {{flags}}

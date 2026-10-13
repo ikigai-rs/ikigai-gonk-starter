@@ -1,0 +1,20 @@
+# How this repository's team works: the process profiles it was generated with, and what
+# each one asks of it. Committed. Written by ikigai-gonk-starter's tools/new.py from its
+# profiles/; `python3 tools/gonk.py init` and `status` report it and read nothing else to
+# decide it. AGENTS.md holds the rules of exactly these profiles, so change both together.
+version = 1
+process = ["solo", "workers", "spec"]
+hooks = ["claude:require-claim"]
+checks = ["worker-config"]
+
+[profile.solo]
+summary = "one person and their agent: you are your own dispatcher, and close after checking your own evidence"
+roles = ["you: both the dispatcher and whoever does the work"]
+
+[profile.workers]
+summary = "a dispatcher and unattended worker machines: workers claim and report, and never close or merge"
+roles = ["dispatcher: marks items for workers, checks each hand-back, merges and closes, or rejects", "worker: an unattended machine running tools/worker.py; claims, works, reports"]
+
+[profile.spec]
+summary = "spec first: every change in behavior starts as an openspec change, seed files its tasks, next orders them"
+roles = []

@@ -1,0 +1,6 @@
+summary = "a hub splits work into single-repository arcs with written briefs, each dispatched to its own working tree and holder"
+roles = [
+    "hub: writes briefs as items, links them, dispatches each arc, closes on the evidence, asks a person before merging its own work",
+    "arc agent: works one arc from its brief in its own working tree, merges on green, reports",
+]
+sections = ["roles-hub", "hub"]

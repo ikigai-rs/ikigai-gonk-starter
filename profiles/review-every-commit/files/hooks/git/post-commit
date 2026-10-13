@@ -1,0 +1,9 @@
+#!/bin/sh
+# post-commit: ask gonk to review the files this commit touched (the review-every-commit
+# profile, AGENTS.md). Installed by `git config core.hooksPath hooks/git` (`just hooks`).
+# A commit never waits on gonk or a model and never fails because of either:
+# review-on-commit.py hands the requests to a detached process and returns, and this always
+# exits 0.
+top=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+python3 "$top/hooks/git/review-on-commit.py" || true
+exit 0

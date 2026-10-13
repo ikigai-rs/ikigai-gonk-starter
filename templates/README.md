@@ -1,11 +1,13 @@
 # templates/
 
-What `tools/new.py` (`just new <dir> --target python`) generates a repository from, in three
+What `tools/new.py` (`just new <dir> --target python`) generates a repository from, in four
 layers, a later one replacing a file an earlier one wrote:
 
 ```text
-(this starter's own files)   AGENTS.md, tools/gonk.py, .gonk/, hooks/, the openspec/ and
+(this starter's own files)   tools/gonk.py, .gonk/, hooks/claude/, the openspec/ and
                              artifacts/ READMEs, and the justfile's gonk recipes
+(the chosen profiles)        what each process profile adds (../profiles/README.md): its
+                             files and recipes; AGENTS.md is assembled from their sections
 library/                     the sample's language-neutral half: the specs and the changes in
                              flight, openspec/vectors.json, the saved queries and the workflow
                              script, the README, and the check that specs and vectors agree

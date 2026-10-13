@@ -1,0 +1,13 @@
+
+# The review-every-commit profile: what hooks/git/post-commit asks gonk for. Committed, since
+# every clone commits to the same repository on the same gonk.
+[review]
+# The name gonk serves this repository under, its `gonk.browse.root = "<name>=<path>"` line.
+# Unset, it is this working tree's directory name.
+# root = "my-repo"
+# gonk's config.toml, when it is not in gonk's default config home: `ikigai-gonk review
+# request` reads the queue's location from it.
+# config = "~/.config/ikigai/config.toml"
+# Paths never queued: machine-written files a review could only restate. Shell-style
+# patterns matched against the whole path as git spells it, where `*` also matches `/`.
+skip = ["*.lock", "package-lock.json", "*/package-lock.json"]

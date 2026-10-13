@@ -1,0 +1,6 @@
+summary = "a read-only reviewer on every commit: a post-commit hook asks gonk to review the touched files, and a person triages the findings"
+roles = ["reviewer: gonk's review pass, read-only; it cannot publish a finding", "triager: a person who decides each finding and files the ones to act on"]
+sections = ["review-every-commit"]
+hooks = ["git:post-commit"]
+checks = ["review"]
+

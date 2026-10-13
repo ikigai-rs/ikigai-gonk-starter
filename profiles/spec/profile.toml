@@ -1,0 +1,3 @@
+summary = "spec first: every change in behavior starts as an openspec change, seed files its tasks, next orders them"
+roles = []
+sections = ["spec-first"]

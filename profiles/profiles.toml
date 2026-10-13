@@ -1,0 +1,56 @@
+# The process profiles this starter can generate a repository with: `tools/new.py --process`.
+# profiles/README.md says what a profile is and how they compose.
+version = 1
+
+# What `--process` means when it names nothing: what this starter generated before profiles
+# existed, so a repository generated without the flag is the one it always was.
+default = ["solo", "workers", "spec"]
+
+# Every profile, in the order a repository's `.gonk/process.toml` lists them, whatever order
+# `--process` named them in: first who dispatches the work, then how it is defined, then how
+# it is reviewed. Each is a directory beside this file holding a profile.toml.
+profiles = ["solo", "workers", "hub", "spec", "review-every-commit", "audits"]
+
+# AGENTS.md, in order. Each name is a file, sections/<name>.md, and the assembled file is
+# those files joined by one blank line. A section in `base` is in every repository; any other
+# is there when a chosen profile's `sections` names it.
+sections = [
+    "intro",
+    "loop",
+    "roles-solo",
+    "roles-workers",
+    "roles-hub",
+    "loop-tools",
+    "claim",
+    "one-agent",
+    "reproduce",
+    "pull-requests",
+    "report",
+    "bare-numbers",
+    "layout",
+    "spec-first",
+    "workers",
+    "hub",
+    "review-every-commit",
+    "audits",
+    "claude-hook",
+]
+
+[base]
+sections = [
+    "intro",
+    "loop",
+    "loop-tools",
+    "claim",
+    "one-agent",
+    "reproduce",
+    "pull-requests",
+    "report",
+    "bare-numbers",
+    "layout",
+    "claude-hook",
+]
+# The optional Claude Code hook that refuses an edit without a claim (hooks/claude/). Every
+# process claims before it writes, so every repository carries it; it is on only once the
+# settings are merged.
+hooks = ["claude:require-claim"]
