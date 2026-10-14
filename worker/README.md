@@ -70,8 +70,9 @@ view whose source is in the admin's home is also checked, as `agent`, to be unwr
 `sudo ./worker-setup.sh --check` runs [`probe.sh`](probe.sh) AS each account and fails on:
 
 - **as hubdiag:** traverse or listing of the admin's or the agent's home; ANY file in either home
-  that opens (root enumerates every file, minus build output and caches, and hubdiag tries to
-  open each: the full form of the traverse-leak test); a view it cannot read, or can write (a
+  that opens (root enumerates every file, minus build output and caches, and on macOS minus
+  `~/Library`, which the deny on the home already closes and which is 0700 besides, and hubdiag tries to open each: the full form of the traverse-leak test; the walk
+  prints its progress every five seconds); a view it cannot read, or can write (a
   real append-open of existing files, which writes nothing), or a view not on a read-only mount
   (Linux); the agent's tree writable; a forbidden group (`sudo`, `admin`, `wheel`, `adm`,
   `docker`, `lxd`, `libvirt`, `staff`); sudo allowed without a password; no journal (Linux).

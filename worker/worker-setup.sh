@@ -61,6 +61,10 @@
 #                     by editing that one line back; both take effect when WSL restarts.
 #   --wsl-root DIR    read /proc, /etc/wsl.conf and the Windows drives under DIR, not /. TEST-ONLY,
 #                     used by tests/setup-test.sh to stand in for a WSL machine.
+#   --list-candidates DIR
+#                     print the files --check would ask hubdiag and agent to open under DIR, as the
+#                     invoking user (progress on stderr), and exit; repeatable. Reads only. TEST-ONLY,
+#                     used by tests/setup-test.sh to time and check the walk without root.
 #
 # Under WSL2 it also: refuses a view (or the agent's work tree) under the Windows drives (/mnt/),
 # sets [boot] systemd=true and the [automount] restriction in /etc/wsl.conf, and stops until WSL
@@ -75,7 +79,7 @@ os="$(uname -s)"
 orig=("$@")
 key="" admin="${SUDO_USER:-}" hubdiag=hubdiag agent=agent dry=0 check=0 fstab=/etc/fstab
 wslautomount=restrict wslroot=""
-views=() listens=()
+views=() listens=() lists=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --key) key="$2"; shift 2 ;;
@@ -89,7 +93,8 @@ while [ $# -gt 0 ]; do
         --fstab) fstab="$2"; shift 2 ;;   # tests: the mount table the views step reads
         --wsl-automount) wslautomount="$2"; shift 2 ;;
         --wsl-root) wslroot="${2%/}"; shift 2 ;;   # tests: a stub /proc, /etc and /mnt
-        -h|--help) sed -n '2,70p' "$0"; exit 0 ;;
+        --list-candidates) lists+=("$2"); shift 2 ;;   # tests: --check's walk of one home, alone
+        -h|--help) awk 'NR > 1 && /^set -u/ { exit } NR > 1' "$0"; exit 0 ;;
         *) echo "worker-setup: unknown argument: $1 (try --help)" >&2; exit 2 ;;
     esac
 done
@@ -98,6 +103,54 @@ case "$wslautomount" in restrict|off) ;; *) echo "worker-setup: --wsl-automount 
 
 die() { echo "worker-setup: $*" >&2; exit 1; }
 case "$os" in Linux|Darwin) ;; *) die "unsupported OS $os (Linux with systemd, or macOS)" ;; esac
+
+# ── the files --check asks hubdiag and agent to open: root enumerates them ──────────────────
+# Every regular file under the given homes, minus build output and caches. On macOS, minus all
+# of ~/Library too (ledger item 1451): in a lived-in home it is most of the files (Mail, Photos,
+# Containers, and iCloud Drive in Library/Mobile Documents, its evicted files placeholders), so
+# walking it as root took minutes (tweezer: ~1.48 million files) for no added assurance. The
+# boundary there is the home itself: --check's `closed` section tests that neither account can
+# traverse or list it (the ACL deny), and nothing under a home that cannot be traversed opens,
+# ~/Library included; ~/Library is also 0700 by default, a second wall. What is still sampled is
+# every other file in the home: the dotfiles (shell history, .ssh, .config/gh, .netrc, .aws ...),
+# Documents, Desktop, Downloads and the person's own trees; and the probe's fixed list of
+# guessable names, none of which is under ~/Library, is tried by name either way. Linux homes have
+# no ~/Library; there the walk is unchanged.
+enumerate() {
+    local h lib
+    for h in "$@"; do
+        [ -d "$h" ] || continue
+        if [ "$os" = Darwin ]; then lib="$h/Library"; else lib="$h/Library/Caches"; fi
+        find "$h" \( -name target -o -name node_modules -o -path "$h/.rustup/toolchains" \
+                     -o -path "$h/.cargo/registry" -o -path "$h/.cache" -o -path "$lib" \) -prune \
+             -o -type f -print 2>/dev/null
+    done
+}
+# enumerate into a file, saying on stderr every five seconds how far it has got, so a long walk
+# never reads as a hang; then the total, on stdout. Background jobs of a script ignore SIGINT, so
+# an interrupt stops the walk explicitly rather than leaving it running.
+enumerate_into() { # file, then homes
+    local out="$1" pid start=$SECONDS last=$SECONDS; shift
+    enumerate "$@" > "$out" &
+    pid=$!
+    trap 'kill "$pid" 2>/dev/null; exit 130' INT TERM
+    while kill -0 "$pid" 2>/dev/null; do
+        sleep 0.2
+        if [ $((SECONDS - last)) -ge 5 ]; then
+            last=$SECONDS
+            echo "   ... $(wc -l < "$out" | tr -d ' ') files so far, $((SECONDS - start)) s" >&2
+        fi
+    done
+    wait "$pid"
+    trap - INT TERM
+    echo "   $(wc -l < "$out" | tr -d ' ') files to try ($((SECONDS - start)) s)"
+}
+if [ "${#lists[@]}" -gt 0 ]; then # TEST-ONLY (--list-candidates): the walk alone, as the caller
+    t="$(mktemp)"
+    enumerate_into "$t" "${lists[@]}" >&2
+    cat "$t"; rm -f "$t"
+    exit 0
+fi
 # Not under sudo and not root (the documented first step, `--dry-run`, needs neither): the
 # person running it is the admin. Root with no SUDO_USER (a root login) still has to say who.
 if [ -z "$admin" ] && [ "$(id -u)" != 0 ]; then
@@ -302,16 +355,6 @@ probe_as() { # user, then probe arguments; the probe's stdin is this function's 
     local u="$1"; shift
     as_user "$u" /bin/bash -c "$(cat "$here/probe.sh")" probe.sh "$@"
 }
-enumerate() { # every regular file under the given homes, minus build output and caches
-    local h
-    for h in "$@"; do
-        [ -d "$h" ] || continue
-        find "$h" \( -name target -o -name node_modules -o -path "$h/.rustup/toolchains" \
-                     -o -path "$h/.cargo/registry" -o -path "$h/.cache" -o -path "$h/Library/Caches" \) -prune \
-             -o -type f -print 2>/dev/null
-    done
-}
-
 newest_bin() { # home → "<UTC mtime> <path>" of the newest file in its ~/.cargo/bin and ~/.local/bin
     local h="$1" f m best="" bm=0
     for f in "$h"/.cargo/bin/* "$h"/.local/bin/*; do
@@ -349,9 +392,8 @@ EOF
     fi
 
     echo "── as $hubdiag: the hub's view of this machine"
-    echo "   (enumerating $admin_home and $agent_home as root; the list goes to the probe on stdin)"
-    enumerate "$admin_home" "$agent_home" > "$tmp/cands"
-    echo "   $(wc -l < "$tmp/cands" | tr -d ' ') files to try"
+    echo "   (enumerating $admin_home and $agent_home as root$( [ "$os" = Darwin ] && echo ', not their ~/Library'); the list goes to the probe on stdin)"
+    enumerate_into "$tmp/cands" "$admin_home" "$agent_home" 2>&1
     probe_as "$hubdiag" --sections "identity,closed,view,nowrite,journal$hsec" \
         --closed "$admin_home" --closed "$agent_home" "${vdirs[@]}" "${srcs[@]}" \
         "${fg[@]}" ${journal[@]+"${journal[@]}"} ${wh[@]+"${wh[@]}"} --candidates < "$tmp/cands" | tee "$tmp/hubdiag.out"
@@ -359,7 +401,8 @@ EOF
 
     if user_exists "$agent"; then
         echo; echo "── as $agent: the worker cannot read its person's home or write their trees"
-        enumerate "$admin_home" > "$tmp/cands-admin"
+        # The admin's files, from the walk above rather than a second one.
+        awk -v p="$admin_home/" 'index($0, p) == 1' "$tmp/cands" > "$tmp/cands-admin"
         # The admin's trees the hub may read (views whose source is in the admin's home) are
         # the ones the agent must also not write.
         aw=()
@@ -521,29 +564,49 @@ linux_view() { # name, source
 }
 
 # ── macOS ────────────────────────────────────────────────────────────────────────────────────
+uid_taken() { dscl . -search /Users UniqueID "$1" 2>/dev/null | grep -q .; }
+gid_taken() { dscl . -search /Groups PrimaryGroupID "$1" 2>/dev/null | grep -q .; }
 free_id() { # first id >= $1 free as BOTH a uid and a gid, so an account's group can share it
     local i="$1"
-    while dscl . -search /Users UniqueID "$i" 2>/dev/null | grep -q . \
-       || dscl . -search /Groups PrimaryGroupID "$i" 2>/dev/null | grep -q .; do i=$((i + 1)); done
+    while uid_taken "$i" || gid_taken "$i"; do i=$((i + 1)); done
     echo "$i"
 }
 mac_account() { # name, real name
-    local u="$1" rn="$2" id gid
-    if dscl . -read "/Groups/$u" PrimaryGroupID >/dev/null 2>&1; then have "group $u"
+    local u="$1" rn="$2" id="" gid="" uid="" why=""
+    # ONE id per account, free as both a uid and a gid, chosen once before either record is made
+    # and used for both. (Choosing twice, with the group created in between, gave tweezer's
+    # hubdiag uid 551 beside gid 550, and its agent 553/552: ledger item 1450.) A dry run creates
+    # nothing, so it would print the same free id for every account; it names the id <NAME-id> and
+    # says it is chosen when applied. A group or an account that exists keeps its id: a re-run
+    # never renumbers one (files on disk and running processes carry the number).
+    gid="$(dscl . -read "/Groups/$u" PrimaryGroupID 2>/dev/null | awk '{print $2}')"
+    user_exists "$u" && uid="$(id -u "$u")"
+    if [ -n "$gid" ] && [ -z "$uid" ]; then
+        # The group alone (a run stopped between the two): the account takes its gid if no
+        # account has that id already.
+        if uid_taken "$gid"; then id="$(free_id 550)"; why="its group's gid $gid is another account's uid"
+        else id="$gid"; why="its group's gid"; fi
+    elif [ -z "$gid" ] && [ -n "$uid" ]; then
+        if gid_taken "$uid"; then id="$(free_id 550)"; why="its account's uid $uid is another group's gid"
+        else id="$uid"; why="its account's uid"; fi
+    elif [ -z "$gid" ] && [ "$dry" = 1 ]; then
+        id="<$u-id>"; why="the first id from 550 free as both a uid and a gid, chosen when applied"
+    elif [ -z "$gid" ]; then
+        id="$(free_id 550)"; why="free as both a uid and a gid"
+    fi
+    if [ -n "$gid" ]; then have "group $u (gid $gid)"
     else
-        id="$(free_id 550)"
-        change "create group $u (gid $id$( [ "$dry" = 1 ] && echo ', or the next free one'): its own primary group, so it is NOT in staff" \
+        change "create group $u (gid $id: $why): its own primary group, so it is NOT in staff" \
             dseditgroup -o create -i "$id" -r "$rn" "$u"
     fi
-    if user_exists "$u"; then have "account $u"
+    if [ -n "$uid" ]; then
+        if [ -z "$gid" ] || [ "$uid" = "$gid" ]; then have "account $u (uid $uid)"
+        else have "account $u (uid $uid, its group's gid $gid: they differ, and an existing account is never renumbered)"; fi
     else
-        gid="$(dscl . -read "/Groups/$u" PrimaryGroupID 2>/dev/null | awk '{print $2}')"
-        [ -n "$gid" ] || gid="(the new group's gid)"
-        id="$(free_id 550)"
         # dscl, not sysadminctl: sysadminctl has no man page to verify against and always sets
         # a password; these records give an account with NO password (`*`), hidden from the
         # login window, whose primary group is its own.
-        change "create account $u (uid $id)" sh -c "
+        change "create account $u (uid $id: $why)" sh -c "
             dscl . -create /Users/$u &&
             dscl . -create /Users/$u RealName '$rn' &&
             dscl . -create /Users/$u UniqueID $id &&

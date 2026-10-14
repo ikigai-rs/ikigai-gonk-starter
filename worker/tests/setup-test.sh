@@ -50,7 +50,15 @@ case "$(uname -s)" in
     Darwin)
         has "macOS: an own primary group, so not staff" "its own primary group, so it is NOT in staff" "$out"
         has "macOS: an ACL deny on the admin's home" "deny list,search" "$out"
-        has "macOS: the view is a LaunchDaemon copy" "LaunchDaemon /Library/LaunchDaemons/dev.ikigai-rs.hubdiag-view-work.plist" "$out" ;;
+        has "macOS: the view is a LaunchDaemon copy" "LaunchDaemon /Library/LaunchDaemons/dev.ikigai-rs.hubdiag-view-work.plist" "$out"
+        # Ledger item 1450: one id per account for its group and itself, chosen when applied. A
+        # dry run creates nothing, so a number here would be the same for every account.
+        has "macOS: the group's id is chosen when applied" "would: create group $H (gid <$H-id>: the first id from 550 free as both a uid and a gid, chosen when applied)" "$out"
+        has "macOS: the account's uid is that same id" "would: create account $H (uid <$H-id>: the first id from 550" "$out"
+        has "macOS: the group command takes it" "dseditgroup -o create -i <$H-id> " "$out"
+        has "macOS: and so does the account's" "dscl . -create /Users/$A UniqueID <$A-id> " "$out"
+        case "$out" in *"gid 550"*|*"uid 550"*) echo "  FAIL the dry run printed a number for an id it does not choose"; fail=$((fail+1)) ;;
+            *) echo "  ok   macOS: no id number printed for an account not yet made"; pass=$((pass+1)) ;; esac ;;
     Linux)
         has "Linux: a read-only bind mount" "none bind,ro 0 0" "$out" ;;
 esac
@@ -174,6 +182,42 @@ printf 'Linux version 4.4.0-19041-Microsoft (Microsoft@Microsoft.com) (gcc versi
 wdry
 expect_exit "WSL1 is refused" 1 "$st"
 has "with the conversion" "WSL1 cannot run a worker (no systemd, no VM of its own): convert it from PowerShell, wsl --set-version <distro> 2" "$out"
+
+echo "── --check's walk: build output and caches pruned, macOS ~/Library too, and progress shown"
+# Ledger item 1451: on tweezer the walk sat for minutes in ~/Library with nothing printed.
+# --list-candidates runs the walk alone, as this user, so it is tested without root.
+Hm="$sb/home"
+mkdir -p "$Hm/.ssh" "$Hm/Documents" "$Hm/src/x/target/debug" "$Hm/Library/Mail/V10" \
+         "$Hm/Library/Mobile Documents/com~apple~CloudDocs" "$Hm/Library/Caches/c" "$Hm/.cache/x"
+for f in .bash_history .ssh/id_ed25519 Documents/notes.txt src/x/main.rs src/x/target/debug/out \
+         Library/Mail/V10/msg.emlx "Library/Mobile Documents/com~apple~CloudDocs/doc.txt" \
+         Library/Caches/c/blob .cache/x/blob; do printf 'x\n' > "$Hm/$f"; done
+out="$(bash "$setup" --list-candidates "$Hm" 2>"$sb/err")"; st=$?
+err="$(cat "$sb/err")"
+expect_exit "--list-candidates exits 0, without root" 0 "$st"
+has "the shell history is sampled" "$Hm/.bash_history" "$out"
+has "a key is sampled" "$Hm/.ssh/id_ed25519" "$out"
+has "the person's documents are sampled" "$Hm/Documents/notes.txt" "$out"
+has "the person's trees are sampled" "$Hm/src/x/main.rs" "$out"
+has "the total is reported" "files to try" "$err"
+case "$out" in *target/debug*|*/Library/Caches/*|*/.cache/*) echo "  FAIL build output or a cache was walked"; fail=$((fail+1)) ;;
+    *) echo "  ok   build output and caches are pruned"; pass=$((pass+1)) ;; esac
+if [ "$(uname -s)" = Darwin ]; then
+    case "$out" in *"/Library/"*) echo "  FAIL macOS: ~/Library was walked"; fail=$((fail+1)) ;;
+        *) echo "  ok   macOS: ~/Library (Mail, Mobile Documents) is pruned"; pass=$((pass+1)) ;; esac
+else
+    has "Linux: the walk is unchanged (a Library directory is an ordinary one)" "$Hm/Library/Mail/V10/msg.emlx" "$out"
+fi
+# A walk that takes longer than five seconds says how far it has got: a find that prints one name,
+# sleeps six seconds and prints another stands in for a slow home.
+mkdir -p "$sb/slow"
+printf '#!/bin/sh\necho /slow/one\nsleep 6\necho /slow/two\n' > "$sb/slow/find"; chmod +x "$sb/slow/find"
+out="$(PATH="$sb/slow:$PATH" bash "$setup" --list-candidates "$Hm" 2>"$sb/err")"; st=$?
+err="$(cat "$sb/err")"
+expect_exit "a slow walk still exits 0" 0 "$st"
+has "a slow walk prints its progress" "... 1 files so far, " "$err"
+has "and its total" "2 files to try (" "$err"
+has "and the list is whole" "/slow/two" "$out"
 
 echo "── without root it refuses and says how"
 out="$(bash "$setup" --admin "$me" --key "$sb/k.pub" --hubdiag "$H" --agent "$A" --fstab "$fstab" 2>&1)"; st=$?
