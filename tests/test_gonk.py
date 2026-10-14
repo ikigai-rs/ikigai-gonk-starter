@@ -307,6 +307,35 @@ class Init(unittest.TestCase):
         self.assertEqual(fake.target.mount_args()[1], "urn:gk:=quic://gonk-host:1062")
 
 
+    def test_a_worker_grant_reports_publishing_once_and_an_enrolled_machine_skips_enrollment(self):
+        repo = scratch_repo(self)
+        certs = repo / "certs"
+        certs.mkdir()
+        pem = "-----BEGIN CERTIFICATE-----\n" + base64.encodebytes(b"cert").decode()
+        (certs / "client.crt").write_text(pem + "-----END CERTIFICATE-----\n")
+        (certs / "server.crt").write_text("x")
+        (repo / ".gonk" / "queries").mkdir(parents=True, exist_ok=True)
+        for n in ("a", "b"):
+            (repo / ".gonk" / "queries" / f"{n}.rq").write_text("SELECT * WHERE {}\n")
+        args = ["init", "--ledger", "acme", "--holder", "w"]
+        args += ["--quic", "quic://h:1062", "--cert-dir", str(certs)]
+        refused = gonk.Answer(1, "", "denied: needs urn:cap:script:write:acme-a")
+        fake = FakeIkigai(
+            [
+                ("ledgers", ok("acme  1 open  1 total  urn:…\n")),
+                ("describe", ok("x")),
+                ("sink urn:gk:script:", refused),
+            ]
+        )
+        code, out, _ = run(repo, args, fake)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("failed", out)
+        self.assertEqual(out.count("the dispatcher publishes these"), 1, out)
+        self.assertEqual(sum(c.startswith("sink urn:gk:script:") for c, _ in fake.calls), 1)
+        self.assertNotIn("ikigai-gonk client add", out)
+        self.assertIn("nothing to enroll", out)
+
+
 class Claims(unittest.TestCase):
     def setUp(self):
         self.repo = scratch_repo(self)
