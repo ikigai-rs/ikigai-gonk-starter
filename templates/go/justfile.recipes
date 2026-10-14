@@ -1,0 +1,12 @@
+# Every test, as CI runs them: the spec's scenario vectors (through the rules and over HTTP),
+# the client against the real service, and the check that the specs and the vectors agree.
+gates:
+    python3 scripts/test.py
+
+# Run the service: just serve [--port 8080] [--today 2026-10-01]
+serve *flags:
+    go run ./artifacts/service {{flags}}
+
+# The command-line client: just library lend ada pp-1
+library *args:
+    go run ./artifacts/cli {{args}}

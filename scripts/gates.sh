@@ -44,7 +44,8 @@ PY=python3
 # scripts/test.py, as that repository's CI would run it. A stale template fails here. Each
 # target's test.py needs only that language's toolchain: python/ is standard-library Python,
 # rust/ is one cargo workspace on the standard library alone (no fetch, no lock to resolve),
-# deno/ is Deno with no imports from a registry. `cargo` and `deno` must be on PATH for those
+# deno/ is Deno with no imports from a registry, go/ is one Go module on the standard library.
+# `cargo`, `deno` and `go` must be on PATH for those
 # targets' gates to mean anything; each test.py fails closed, naming a tool that is missing,
 # rather than reading a missing toolchain as a passing suite.
 SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/gonk-starter-gates.XXXXXX") || exit 2
@@ -100,6 +101,51 @@ if ! command -v deno >/dev/null 2>&1; then
     export PATH
 fi
 
+# The go target's toolchain, provisioned the same way and for the same reason (no setup step
+# in the workflow, which a worker may not edit): the pinned release from go.dev, its published
+# SHA-256 checked, unpacked into the scratch directory and put on PATH. A machine that already
+# has `go` keeps its own. The digests are the ones go.dev/dl lists for that release.
+GO_VERSION=1.26.9
+go_asset() {
+    case "$(uname -s)/$(uname -m)" in
+        Linux/x86_64 | Linux/amd64) echo "go$GO_VERSION.linux-amd64.tar.gz" ;;
+        Linux/aarch64 | Linux/arm64) echo "go$GO_VERSION.linux-arm64.tar.gz" ;;
+        Darwin/x86_64 | Darwin/amd64) echo "go$GO_VERSION.darwin-amd64.tar.gz" ;;
+        Darwin/arm64 | Darwin/aarch64) echo "go$GO_VERSION.darwin-arm64.tar.gz" ;;
+        *) return 1 ;;
+    esac
+}
+go_sha256() {
+    case "$1" in
+        "go$GO_VERSION.linux-amd64.tar.gz") echo "42d158b4d8f7b61ac0a830567c940a86098fb7aac52e467a5ebec03ef5cc2f8d" ;;
+        "go$GO_VERSION.linux-arm64.tar.gz") echo "4a97373d49fcacdcf3694fea368a500b00ee3e963974f3e7514132717632f052" ;;
+        "go$GO_VERSION.darwin-amd64.tar.gz") echo "00c29e3d4c8562f547410daa18d2959b641bd691ab00c4a525ea817a0253d4bd" ;;
+        "go$GO_VERSION.darwin-arm64.tar.gz") echo "f9bb7c0a02506c5d9bf0d1eb1f7ee6c7684f844ae49558308a0427b830e022cc" ;;
+    esac
+}
+if ! command -v go >/dev/null 2>&1; then
+    asset=$(go_asset) || {
+        echo "gates: no go on PATH, and no pinned release for $(uname -s)/$(uname -m)" >&2
+        exit 2
+    }
+    echo "gates: no go on PATH: fetching $asset (checked against its SHA-256)"
+    TOOLCHAIN="$SCRATCH/.toolchain"
+    mkdir -p "$TOOLCHAIN" || exit 2
+    curl -fsSL -o "$TOOLCHAIN/$asset" "https://go.dev/dl/$asset" || {
+        echo "gates: could not fetch https://go.dev/dl/$asset" >&2
+        exit 2
+    }
+    got=$("$PY" -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$TOOLCHAIN/$asset")
+    want=$(go_sha256 "$asset")
+    if [ "$got" != "$want" ]; then
+        echo "gates: $asset is not the release: sha256 $got, expected $want" >&2
+        exit 2
+    fi
+    "$PY" -c 'import sys, tarfile; tarfile.open(sys.argv[1]).extractall(sys.argv[2], filter="data")' "$TOOLCHAIN/$asset" "$TOOLCHAIN/go-root" || exit 2
+    PATH="$TOOLCHAIN/go-root/go/bin:$PATH"
+    export PATH
+fi
+
 # One generated repository, running its own tests: generate <name> <target> [<process>].
 generate_and_test() {
     echo "-- the sample, generated for $2 with process ${3:-(the default)}, runs its own tests" &&
@@ -123,7 +169,8 @@ generated() {
         generate_and_test "python-$profile" python "$profile" || return 1
     done
     generate_and_test rust-combined rust "workers,hub,review-every-commit" &&
-        generate_and_test deno-combined deno "solo,spec,audits"
+        generate_and_test deno-combined deno "solo,spec,audits" &&
+        generate_and_test go-combined go "workers,spec,review-every-commit"
 }
 
 echo "gates: $("$PY" --version 2>&1), $("$RUFF" --version)"
