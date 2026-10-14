@@ -11,7 +11,7 @@ layers, a later one replacing a file an earlier one wrote:
 library/                     the sample's language-neutral half: the specs and the changes in
                              flight, openspec/vectors.json, the saved queries and the workflow
                              script, the README, and the check that specs and vectors agree
-<target>/                    one language's artifacts and tests (python/, rust/ and deno/ today), its
+<target>/                    one language's artifacts and tests (python/, rust/, deno/ and go/ today), its
                              CI, its .gitignore, and its recipes (justfile.recipes, appended
                              to the starter's)
 ```
@@ -30,5 +30,6 @@ its tests, so a template that has gone stale fails.
 `rust/` is the second: one cargo workspace, edition 2021, on the standard library alone, so
 `cargo test` needs no network and no lock file to resolve. `deno/` is the third: TypeScript
 on Deno's standard library alone, `Deno.serve` and `fetch` for the service and the client,
-every import a relative path, so `deno test` needs no network and no lock file either. Go is
-the one still planned; it is another directory here, with its own tests over the same vectors.
+every import a relative path, so `deno test` needs no network and no lock file either. `go/` is
+the fourth: one Go module on the standard library alone (`net/http`, `encoding/json`), no
+requirements and so no `go.sum`, its tests the same vectors against the rules and over HTTP.
