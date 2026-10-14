@@ -777,6 +777,16 @@ def publish_rows(cfg: Config, ikigai: Ikigai, saved: list[Saved], row) -> None:
         name = s.published_name(cfg.ledger)
         command = f"sink {PREFIX}script:{name} language={s.language}"
         answer = ikigai.run(command, stdin=s.text_for(cfg.ledger))
+        if not answer.ok and "urn:cap:script:write" in answer.text():
+            # A worker grant has no script write: publishing is the dispatcher's, and the
+            # same refusal would come back for every file, so say it once and stop.
+            row(
+                "note",
+                "scripts",
+                f"this identity's grant has no script write, so the {len(saved)} saved here are "
+                "not published by it: the dispatcher publishes these",
+            )
+            return
         (published if answer.ok else failed).append((name, answer))
     if published:
         names = ", ".join(f"urn:script:{n}" for n, _ in published)
@@ -1102,6 +1112,9 @@ def cmd_init(args, cfg: Config, make_ikigai) -> int:
                 row("ok", "gonk", f"{cfg.target.describe()} answers")
                 if cfg.ledger in ledgers:
                     open_, total = ledgers[cfg.ledger]
+                    if cfg.enrollment:
+                        cfg.enrollment = []
+                        row("ok", "enrolled", "gonk reads this identity: nothing to enroll")
                     row("ok", "items", f"`{cfg.ledger}` holds {total} item(s), {open_} open")
                 elif cfg.ledger:
                     row(
