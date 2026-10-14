@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
 
 import gonk  # noqa: E402  (the path above is what makes it importable)
+import harness  # noqa: E402, F401  (re-exported for the tests)
 
 
 def load_hook():

@@ -1,0 +1,22 @@
+guide:artifacts-line-true a harness:Guide ;
+    rdfs:label "keep the Artifacts line true" ;
+    rdfs:comment "A spec or a change names the artifacts it touches on its `Artifacts:` line; keep it true when code is added or moved." ;
+    harness:statedIn "AGENTS.md" ; harness:section "Specs, artifacts, queries and scripts" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:toolCall ; harness:category harness:architectureFitness .
+
+guide:publish-through-init a harness:Guide ;
+    rdfs:label "publish queries and scripts only through init" ;
+    rdfs:comment "Saved queries and scripts are published to gonk by `tools/gonk.py init` when gonk offers `urn:script:`, and not any other way." ;
+    harness:statedIn "AGENTS.md" ; harness:section "Specs, artifacts, queries and scripts" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:toolCall ; harness:category harness:architectureFitness .
+
+ctl:init-report a harness:Control ;
+    rdfs:label "init: what is missing" ;
+    rdfs:comment "`tools/gonk.py init` checks the layout, every artifact a spec names, the saved scripts, the process's hooks and checks and how gonk answers, publishes the saved queries and scripts, and names what is missing. A report, not a firing." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:toolCall ; harness:category harness:architectureFitness ;
+    harness:outcome harness:report ;
+    harness:enforcedAt "tools/gonk.py#cmd_init" ;
+    harness:statedBy guide:artifacts-line-true , guide:publish-through-init .

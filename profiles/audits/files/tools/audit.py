@@ -9,7 +9,9 @@ given. It is labeled `audit`. Every file named must exist in this repository, so
 never sends someone looking for a path that is not there. A second audit of the same files is
 a second item, on purpose: an audit is periodic.
 
-Standard library only, beside tools/gonk.py, whose transport and configuration it shares.
+Standard library only, beside tools/gonk.py, whose transport and configuration it shares. Its
+refusals of a file that is not there and of a budget below one are harness sensors, recorded in
+this working tree's firing log (tools/harness.py).
 """
 
 from __future__ import annotations
@@ -49,16 +51,24 @@ def main(argv: list[str] | None = None, make_ikigai=gonk.Ikigai) -> int:
     try:
         repo = Path(args.repo).resolve() if args.repo else gonk.find_repo(Path.cwd())
         if args.budget < 1:
-            raise gonk.ConfigError("--budget is a number of tool calls, at least 1")
+            raise gonk.refuse(
+                "audit-needs-budget", repo, "--budget is a number of tool calls, at least 1"
+            )
         files = []
         for raw in args.files:
             path = (Path.cwd() / raw).resolve()
             try:
                 rel = path.relative_to(repo).as_posix()
             except ValueError:
-                raise gonk.ConfigError(f"{raw} is not in this repository ({repo})") from None
+                raise gonk.refuse(
+                    "audit-files-exist", repo, f"{raw} is not in this repository ({repo})"
+                ) from None
             if not path.is_file():
-                raise gonk.ConfigError(f"{rel}: no such file; an audit names files that exist")
+                raise gonk.refuse(
+                    "audit-files-exist",
+                    repo,
+                    f"{rel}: no such file; an audit names files that exist",
+                )
             files.append(rel)
         name = args.repo_name or repo.name
         title = f"Audit {name}: {len(files)} file(s), {args.budget} tool calls"

@@ -19,5 +19,11 @@ repositories' queries), with each `LEDGER` in the text replaced by the ledger
 graph and the file stays valid SPARQL as written. Until gonk offers it, `init` says the
 queries are ready but unpublished, and they stay files.
 
-Empty in the starter; the library-lending sample (`just new <dir> --target python`) ships
-three.
+**The harness questions**, `harness-*.rq`, are in every repository: which sensors have never
+fired, which rules no computational control checks, which sensors state no rule, and how often
+each control fired. They read `urn:iki:harness:graph:LEDGER`, which `python3 tools/gonk.py
+harness` loads (the README's *Your harness*), and that command asks them through gonk's store.
+`init` does not publish them: gonk runs a script under a ceiling of ledger reads, so a
+published one could only be refused.
+
+The library-lending sample (`just new <dir> --target python`) adds three queries of its own.

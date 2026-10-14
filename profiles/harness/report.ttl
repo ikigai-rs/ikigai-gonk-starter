@@ -1,0 +1,40 @@
+guide:report-with-evidence a harness:Guide ;
+    rdfs:label "report with evidence" ;
+    rdfs:comment "Finished work is reported with the evidence that it is done, a pull request's URL or the reproduction that shows it is not a defect, recorded as a comment a later reader can check." ;
+    harness:statedIn "AGENTS.md" ; harness:section "5. Report with evidence; the dispatcher closes" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:toolCall ; harness:category harness:behavior .
+
+guide:dispatcher-closes-on-evidence a harness:Guide ;
+    rdfs:label "the dispatcher closes, after checking the evidence" ;
+    rdfs:comment "Only the dispatcher closes an item, and only after checking its evidence: the pull request merged, with green CI." ;
+    harness:statedIn "AGENTS.md" ; harness:section "5. Report with evidence; the dispatcher closes" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:merge ; harness:category harness:authoritySafety , harness:behavior .
+
+ctl:evidence-required a harness:Control ;
+    rdfs:label "report and close need evidence" ;
+    rdfs:comment "`tools/gonk.py report` and `close` refuse without `--evidence`, or with one that is not a URL, before anything reaches the ledger." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:toolCall ; harness:category harness:behavior ;
+    harness:outcome harness:refuse ;
+    harness:enforcedAt "tools/gonk.py#evidence_note" ;
+    harness:statedBy guide:report-with-evidence ;
+    harness:firedBy test:test_harness:SensorsFire.test_evidence_required .
+
+ctl:reject-needs-reason a harness:Control ;
+    rdfs:label "a rejection says why" ;
+    rdfs:comment "`tools/gonk.py reject` refuses without a `--note`: a rejected hand-back with no reason leaves the next holder with nothing." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:merge ; harness:category harness:behavior ;
+    harness:outcome harness:refuse ;
+    harness:enforcedAt "tools/gonk.py#cmd_reject" ;
+    harness:firedBy test:test_harness:SensorsFire.test_reject_needs_reason .
+
+ctl:dispatcher-checks-evidence a harness:Control ;
+    rdfs:label "the dispatcher checks the evidence" ;
+    rdfs:comment "Before closing, the dispatcher (a person, or a hub agent) reads the evidence on the item: the pull request merged with green CI, or the reproduction holds. It closes, or rejects with the reason." ;
+    harness:direction harness:feedback ; harness:execution harness:inferential ;
+    harness:stage harness:merge ; harness:category harness:behavior , harness:authoritySafety ;
+    harness:outcome harness:refuse ;
+    harness:statedBy guide:dispatcher-closes-on-evidence .

@@ -1,0 +1,136 @@
+guide:dispatcher-marks-the-work a harness:Guide ;
+    rdfs:label "the dispatcher marks the work" ;
+    rdfs:comment "A worker takes only items carrying every label its configuration names; an item without them is never taken by a worker." ;
+    harness:statedIn "AGENTS.md" ; harness:section "Worker machines" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:runtime ; harness:category harness:authoritySafety .
+
+guide:worker-never-closes-or-merges a harness:Guide ;
+    rdfs:label "a worker never closes and never merges" ;
+    rdfs:comment "A worker claims, works and reports, with the pull request and its CI as the evidence; the dispatcher checks it, then merges and closes, or rejects with the reason." ;
+    harness:statedIn "AGENTS.md" ; harness:section "Worker machines" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:runtime ; harness:category harness:authoritySafety .
+
+guide:one-agent-per-repository a harness:Guide ;
+    rdfs:label "one agent per repository" ;
+    rdfs:comment "A worker takes no item whose repository has a live claim held by anyone, and runs one item per repository on its machine." ;
+    harness:statedIn "AGENTS.md" ; harness:section "Worker machines" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:runtime ; harness:category harness:authoritySafety .
+
+ctl:worker-refuses-root a harness:Control ;
+    rdfs:label "worker: never as root" ;
+    rdfs:comment "`tools/worker.py run` refuses to start as root: a worker runs as an account of its own, which is its boundary (worker/README.md)." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:runtime ; harness:category harness:authoritySafety ;
+    harness:outcome harness:refuse ;
+    harness:enforcedAt "tools/worker.py#cmd_run" ;
+    harness:firedBy test:test_harness:SensorsFire.test_worker_refuses_root .
+
+ctl:worker-needs-labels a harness:Control ;
+    rdfs:label "worker: labels name its work" ;
+    rdfs:comment "The worker refuses a configuration that names no labels: one that takes every ready item in a ledger takes work nobody meant for it." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:runtime ; harness:category harness:authoritySafety ;
+    harness:outcome harness:refuse ;
+    harness:enforcedAt "tools/worker.py#load_worker" ;
+    harness:statedBy guide:dispatcher-marks-the-work ;
+    harness:firedBy test:test_harness:SensorsFire.test_worker_needs_labels .
+
+ctl:worker-work-root-in-home a harness:Control ;
+    rdfs:label "worker: works only in its own home" ;
+    rdfs:comment "The worker refuses a work root that is not strictly under its own account's home: never a person's checkouts or a shared directory." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:runtime ; harness:category harness:authoritySafety ;
+    harness:outcome harness:refuse ;
+    harness:enforcedAt "tools/worker.py#work_root" ;
+    harness:firedBy test:test_harness:SensorsFire.test_worker_work_root_in_home .
+
+ctl:worker-skips-claimed a harness:Control ;
+    rdfs:label "worker: skips a claimed item" ;
+    rdfs:comment "The worker does not take an item someone holds a claim on. Recorded once per item per run of the loop, not at every poll." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:runtime ; harness:category harness:authoritySafety ;
+    harness:outcome harness:refuse ;
+    harness:enforcedAt "tools/worker.py#skip_reason" ;
+    harness:statedBy guide:a-claim-is-a-fence ;
+    harness:firedBy test:test_harness:SensorsFire.test_worker_skips_claimed .
+
+ctl:worker-one-repository-label a harness:Control ;
+    rdfs:label "worker: exactly one of its repositories" ;
+    rdfs:comment "The worker does not take an item unless it carries exactly one `repo:<name>` label naming a repository its configuration lists." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:runtime ; harness:category harness:authoritySafety ;
+    harness:outcome harness:refuse ;
+    harness:enforcedAt "tools/worker.py#skip_reason" ;
+    harness:statedBy guide:dispatcher-marks-the-work ;
+    harness:firedBy test:test_harness:SensorsFire.test_worker_one_repository_label .
+
+ctl:worker-skips-awaiting-dispatcher a harness:Control ;
+    rdfs:label "worker: skips a hand-back awaiting its dispatcher" ;
+    rdfs:comment "The worker does not take an item handed back and waiting for its dispatcher to check the evidence." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:runtime ; harness:category harness:authoritySafety ;
+    harness:outcome harness:refuse ;
+    harness:enforcedAt "tools/worker.py#skip_reason" ;
+    harness:statedBy guide:dispatcher-closes-on-evidence ;
+    harness:firedBy test:test_harness:SensorsFire.test_worker_skips_awaiting_dispatcher .
+
+ctl:worker-skips-handed-back a harness:Control ;
+    rdfs:label "worker: never the same item twice" ;
+    rdfs:comment "The worker does not take an item it handed back before, until `worker.py forget` clears it." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:runtime ; harness:category harness:behavior ;
+    harness:outcome harness:refuse ;
+    harness:enforcedAt "tools/worker.py#skip_reason" ;
+    harness:firedBy test:test_harness:SensorsFire.test_worker_skips_handed_back .
+
+ctl:worker-one-agent-per-repository a harness:Control ;
+    rdfs:label "worker: one agent per repository" ;
+    rdfs:comment "The worker does not take an item whose repository has a live claim held by anyone, nor one whose repository has an item running on this machine, and backs off a claim it took when it then finds another. Best effort until the ledger enforces it: two workers can read free at one moment." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:runtime ; harness:category harness:authoritySafety ;
+    harness:outcome harness:refuse ;
+    harness:enforcedAt "tools/worker.py#skip_reason" , "tools/worker.py#run_once" , "tools/worker.py#work" ;
+    harness:statedBy guide:one-agent-per-repository ;
+    harness:firedBy test:test_harness:SensorsFire.test_worker_one_agent_per_repository .
+
+ctl:worker-claim-lost a harness:Control ;
+    rdfs:label "worker: stops when its claim is gone" ;
+    rdfs:comment "The worker's heartbeat reads the item before each renewal; when the claim is someone else's, released or closed, or the renewal is refused, it stops the agent, says so on the item and releases nothing." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:runtime ; harness:category harness:authoritySafety ;
+    harness:outcome harness:refuse ;
+    harness:enforcedAt "tools/worker.py#work_claimed" ;
+    harness:statedBy guide:stop-when-claim-gone ;
+    harness:firedBy test:test_harness:SensorsFire.test_worker_claim_lost .
+
+ctl:worker-budget-overrun a harness:Control ;
+    rdfs:label "worker: the agent's budget" ;
+    rdfs:comment "The worker stops an agent that runs past its wall-clock budget and hands the item back without evidence, keeping the worktree." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:runtime ; harness:category harness:behavior ;
+    harness:outcome harness:refuse ;
+    harness:enforcedAt "tools/worker.py#work_claimed" ;
+    harness:firedBy test:test_harness:SensorsFire.test_worker_budget_overrun .
+
+ctl:worker-no-evidence a harness:Control ;
+    rdfs:label "worker: no hand-back without evidence" ;
+    rdfs:comment "When the agent opened no pull request and reported no evidence, the worker releases the item with a note rather than handing it back as done." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:runtime ; harness:category harness:behavior ;
+    harness:outcome harness:refuse ;
+    harness:enforcedAt "tools/worker.py#work_claimed" ;
+    harness:statedBy guide:report-with-evidence ;
+    harness:firedBy test:test_harness:SensorsFire.test_worker_no_evidence .
+
+ctl:worker-merged-before-exit a harness:Control ;
+    rdfs:label "worker: a merge while the agent ran" ;
+    rdfs:comment "The hand-back calls out a pull request the run opened that was merged before the agent exited: by the agent, against its rules, unless someone else merged it meanwhile. A warning: only branch protection can stop an agent merging." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:runtime ; harness:category harness:authoritySafety ;
+    harness:outcome harness:warn ;
+    harness:enforcedAt "tools/worker.py#work_claimed" ;
+    harness:statedBy guide:worker-never-closes-or-merges ;
+    harness:firedBy test:test_harness:SensorsFire.test_worker_merged_before_exit .

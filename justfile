@@ -45,6 +45,10 @@ close item evidence *flags:
 status:
     python3 tools/gonk.py status
 
+# Load this repository's harness and this tree's firings into gonk, and ask its coverage questions.
+harness *flags:
+    python3 tools/gonk.py harness {{flags}}
+
 # Generate a repository with the library-lending sample in it: just new <dir> --target python
 new dir *flags:
     python3 tools/new.py "{{dir}}" {{flags}}

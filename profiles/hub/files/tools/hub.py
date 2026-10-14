@@ -13,7 +13,9 @@ branch `arc-<item>`, and that tree's `.gonk/local.toml` saying how it reaches go
 tree's way) under the holder `arc-<item>`. Two agents never share a tree or a claim (rule 2
 of AGENTS.md); the agent started there claims the item and works from its brief.
 
-Standard library only, beside tools/gonk.py, whose transport and configuration it shares.
+Standard library only, beside tools/gonk.py, whose transport and configuration it shares. Its
+two refusals (a missing or empty brief, a working tree that exists) are harness sensors,
+recorded in this working tree's firing log (tools/harness.py).
 """
 
 from __future__ import annotations
@@ -35,10 +37,12 @@ def cmd_arc(args, cfg: gonk.Config, make_ikigai) -> int:
     gonk.need(cfg, "ledger", "target")
     brief = Path(args.brief)
     if not brief.is_file():
-        raise gonk.ConfigError(f"--brief {args.brief}: no such file")
+        raise gonk.refuse("arc-needs-brief", cfg.repo, f"--brief {args.brief}: no such file")
     body = brief.read_text(encoding="utf-8").strip()
     if not body:
-        raise gonk.ConfigError(f"--brief {args.brief} is empty: an arc is its brief")
+        raise gonk.refuse(
+            "arc-needs-brief", cfg.repo, f"--brief {args.brief} is empty: an arc is its brief"
+        )
     labels = ",".join([ARC_LABEL, *([args.labels] if args.labels else [])])
     if not re.fullmatch(r"[A-Za-z0-9._,:-]+", labels):
         raise gonk.ConfigError("--labels is a comma-separated list of label words, no spaces")
@@ -77,7 +81,11 @@ def cmd_dispatch(args, cfg: gonk.Config, make_ikigai) -> int:
         raise gonk.ConfigError(problem)
     dest = Path(args.dir).expanduser().resolve()
     if dest.exists():
-        raise gonk.ConfigError(f"{dest} exists: an arc's working tree is a new directory")
+        raise gonk.refuse(
+            "dispatch-needs-new-tree",
+            cfg.repo,
+            f"{dest} exists: an arc's working tree is a new directory",
+        )
     branch = f"arc-{args.item}"
     done = subprocess.run(
         ["git", "worktree", "add", "-b", branch, str(dest), args.base],

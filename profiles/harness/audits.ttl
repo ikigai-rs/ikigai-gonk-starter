@@ -1,0 +1,55 @@
+guide:an-audit-is-an-item a harness:Guide ;
+    rdfs:label "an audit is an item" ;
+    rdfs:comment "An audit is filed as an item from the audit template: the repository, the file list, a budget of tool calls; whoever claims it is the auditor." ;
+    harness:statedIn "AGENTS.md" ; harness:section "Periodic audits" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:periodic ; harness:category harness:behavior .
+
+guide:an-audit-is-unled a harness:Guide ;
+    rdfs:label "an audit is unled" ;
+    rdfs:comment "The auditor gets the file list and the budget, and no earlier findings or hints." ;
+    harness:statedIn "AGENTS.md" ; harness:section "Periodic audits" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:periodic ; harness:category harness:behavior .
+
+guide:a-reproduction-per-bug a harness:Guide ;
+    rdfs:label "a reproduction for every bug" ;
+    rdfs:comment "A failing test, or a command and its output; a suspicion without one is not reported as a bug." ;
+    harness:statedIn "AGENTS.md" ; harness:section "Periodic audits" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:periodic ; harness:category harness:behavior .
+
+guide:one-item-per-finding a harness:Guide ;
+    rdfs:label "one item per finding" ;
+    rdfs:comment "Each finding is its own item, labeled `audit-finding`; the audit item is reported listing them, or closed `audit-no-change`." ;
+    harness:statedIn "AGENTS.md" ; harness:section "Periodic audits" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:periodic ; harness:category harness:maintainability .
+
+ctl:audit-files-exist a harness:Control ;
+    rdfs:label "audit: the files exist here" ;
+    rdfs:comment "`tools/audit.py` refuses a file that is not in this repository or does not exist, so an audit never sends its auditor after a path that is not there." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:periodic ; harness:category harness:behavior ;
+    harness:outcome harness:refuse ;
+    harness:enforcedAt "tools/audit.py#main" ;
+    harness:statedBy guide:an-audit-is-an-item ;
+    harness:firedBy test:test_harness:SensorsFire.test_audit_files_exist .
+
+ctl:audit-needs-budget a harness:Control ;
+    rdfs:label "audit: a budget of at least one call" ;
+    rdfs:comment "`tools/audit.py` refuses a budget below one tool call." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:periodic ; harness:category harness:behavior ;
+    harness:outcome harness:refuse ;
+    harness:enforcedAt "tools/audit.py#main" ;
+    harness:statedBy guide:an-audit-is-an-item ;
+    harness:firedBy test:test_harness:SensorsFire.test_audit_needs_budget .
+
+ctl:unled-audit a harness:Control ;
+    rdfs:label "the audit itself" ;
+    rdfs:comment "An auditor reads the listed files within the budget and files one item per reproduced bug. Its findings are items in the ledger, not firings." ;
+    harness:direction harness:feedback ; harness:execution harness:inferential ;
+    harness:stage harness:periodic ; harness:category harness:behavior ;
+    harness:outcome harness:report ;
+    harness:statedBy guide:an-audit-is-unled , guide:a-reproduction-per-bug , guide:one-item-per-finding .

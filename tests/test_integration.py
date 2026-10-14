@@ -24,7 +24,7 @@ import time
 import unittest
 from pathlib import Path
 
-from support import ROOT, gonk, load_hook, scratch_repo
+from support import ROOT, gonk, harness, load_hook, scratch_repo
 
 GONK = shutil.which("ikigai-gonk")
 IKIGAI = shutil.which("ikigai")
@@ -373,7 +373,8 @@ class AgainstARealGonk(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn("8 open task(s) in 2 change(s) in flight", out)
         # The sample's four saved files (three queries, one plan): published by init when the
-        # gonk under test mounts ikigai-script, ready but unpublished when it does not.
+        # gonk under test mounts ikigai-script, ready but unpublished when it does not. The four
+        # harness questions are never published (gonk's script ceiling reads ledgers only).
         target = gonk.Target(socket=str(g.socket))
         scripts = offers_scripts(target)
         saved = [
@@ -382,6 +383,8 @@ class AgainstARealGonk(unittest.TestCase):
             "library-requirements-with-open-work",
             "library-next-for-artifact",
         ]
+        self.assertRegex(out, r"note\s+harness\s+4 harness question\(s\) in \.gonk/queries/")
+        self.assertNotIn("library-harness-", out)
         if scripts:
             self.assertRegex(out, r"ok\s+scripts\s+published 4: ")
             self.assertNotIn("was refused", out)
@@ -466,6 +469,95 @@ class AgainstARealGonk(unittest.TestCase):
             [sys.executable, "scripts/test.py"], cwd=repo, capture_output=True, text=True
         )
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+
+    def test_the_harness_loaded_and_asked(self):
+        """Two working trees of one generated repository fire sensors against a real ledger
+        (holding the ledger's refusal wording to the words `fire_claim_refusal` matches), each
+        loads its harness and firings into gonk, and the four questions answer from both."""
+        g = ScratchGonk(quic=False)
+        self.addCleanup(g.stop)
+        g.start()
+        tmp = Path(tempfile.mkdtemp(prefix="gonk-harness-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        one = tmp / "library"
+        made = subprocess.run(
+            [sys.executable, str(ROOT / "tools" / "new.py"), str(one), "--target", "python"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(made.returncode, 0, made.stdout + made.stderr)
+        two = tmp / "library-2"
+        shutil.copytree(one, two)
+        sock = str(g.socket)
+        for repo, holder in [(one, "one"), (two, "two")]:
+            code, out = tool(
+                repo, "init", "--ledger", "library", "--socket", sock, "--holder", holder
+            )
+            self.assertEqual(code, 0, out)
+
+        # Real refusals, recorded: the ledger's own wording is what fire_claim_refusal reads.
+        self.assertEqual(tool(one, "file", "Lend a book")[0], 0)
+        self.assertEqual(tool(one, "claim", "1", "--lease", "1s")[0], 0)
+        self.assertEqual(tool(two, "claim", "1")[0], 1)
+        self.assertEqual(tool(two, "claim", "1", "--takeover-from", "one")[0], 1)
+        time.sleep(1.5)
+        self.assertEqual(tool(two, "claim", "1")[0], 1)
+        self.assertEqual(tool(one, "report", "1")[0], 2)  # no evidence
+        fired_two = [f.control for f in harness.read_firings(two).firings]
+        self.assertEqual(
+            fired_two, ["claim-held-by-another", "takeover-refused", "claim-lease-expired"]
+        )
+        self.assertEqual(
+            [f.control for f in harness.read_firings(one).firings], ["evidence-required"]
+        )
+
+        code, out = tool(one, "harness")
+        self.assertEqual(code, 0, out)
+        self.assertIn("1 firing(s) in this tree", out)
+        self.assertRegex(out, r"loaded:  updated <urn:iki:harness:graph:library>: \+\d+ -0 quads")
+        code, out = tool(two, "harness")
+        self.assertEqual(code, 0, out)
+        # A second load of the same tree changes nothing: a firing's IRI is its log and seq.
+        code, again = tool(two, "harness")
+        self.assertEqual(code, 0, again)
+
+        def section(text: str, name: str) -> str:
+            return text.split(f"\n{name}: ", 1)[1].split("\n\nharness-", 1)[0]
+
+        by_control = section(again, "harness-firings-by-control")
+        for control in [
+            "evidence-required",
+            "claim-held-by-another",
+            "takeover-refused",
+            "claim-lease-expired",
+        ]:
+            self.assertRegex(by_control, rf"ctl:{control}\s.*\sRefusal\s+1\s", control)
+        never = section(again, "harness-sensors-never-fired")
+        self.assertRegex(never, r"ctl:worker-claim-lost\s.*fired by a test")
+        self.assertNotIn("ctl:evidence-required", never)
+        self.assertNotIn("NO TEST", never)
+        unchecked = section(again, "harness-guides-without-sensor")
+        self.assertIn("guide:reproduce-before-fix", unchecked)
+        self.assertNotIn("guide:a-claim-is-a-fence", unchecked)
+        unstated = section(again, "harness-sensors-without-guide")
+        self.assertIn("ctl:reject-needs-reason", unstated)
+        self.assertNotIn("ctl:evidence-required", unstated)
+
+        # Why the questions are not published: gonk holds every script run to a ceiling of
+        # ledger reads, the owner's too. Published by hand, one is refused naming the graph.
+        # When gonk's ceiling admits the harness graph this fails, and `init` should publish them.
+        target = gonk.Target(socket=sock)
+        if offers_scripts(target):
+            text = (one / ".gonk" / "queries" / "harness-firings-by-control.rq").read_text()
+            name = "probe-harness-firings-by-control"
+            published = gonk.Ikigai(target).run(
+                f"sink urn:gk:script:{name} language=sparql",
+                stdin=text.replace("LEDGER", "library"),
+            )
+            self.assertTrue(published.ok, published.text())
+            ran = gonk.Ikigai(target).run(f"source urn:gk:script:{name}:result")
+            self.assertFalse(ran.ok, ran.text())
+            self.assertIn("urn:cap:store:read:graph:urn:iki:harness:graph:library", ran.text())
 
 
 if __name__ == "__main__":

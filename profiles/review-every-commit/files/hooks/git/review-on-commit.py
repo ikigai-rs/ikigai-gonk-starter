@@ -16,6 +16,9 @@ it says on standard error, once, and the commit goes ahead:
     reaches it, so a request can only be dropped there;
   - `ikigai-gonk` is not on PATH.
 
+Each time it queues nothing for one of those reasons is a warning of the harness sensor
+`review-not-queued`, recorded in the working tree's firing log (tools/harness.py), best effort.
+
 Settings are `.gonk/process.toml`'s `[review]` table: `root` (the `gonk.browse.root` name,
 by default this directory's name), `config` (gonk's config.toml, when it is not in gonk's
 default config home) and `skip` (paths never queued). Standard library only.
@@ -52,6 +55,19 @@ def changed_files(repo: Path) -> list[str]:
     return [p for p in paths if (repo / p).is_file()]
 
 
+def fire(control: str, repo: Path | None) -> None:
+    """Record a warning in `repo`'s harness firing log. Never raises: a commit never fails."""
+    if repo is None:
+        return
+    try:
+        sys.path.insert(0, str(repo / "tools"))
+        import gonk  # the repository's own copy
+
+        gonk.fire(control, "warning", repo)
+    except Exception:  # noqa: BLE001  (recording a firing never changes what the hook does)
+        pass
+
+
 def requests(repo: Path, which=shutil.which) -> tuple[list[list[str]], str | None]:
     """(the commands to run, one line to say instead) for this working tree's last commit."""
     sys.path.insert(0, str(repo / "tools"))
@@ -63,19 +79,23 @@ def requests(repo: Path, which=shutil.which) -> tuple[list[list[str]], str | Non
             return [], None  # not this repository's process: nothing to do or say
         cfg = gonk.load(repo)
     except gonk.ConfigError as e:
+        fire("review-not-queued", repo)
         return [], f"nothing queued: {e}"
     if cfg.target is None:
+        fire("review-not-queued", repo)
         return [], (
             "nothing queued: this working tree does not say how to reach gonk "
             "(`python3 tools/gonk.py init --socket <path>`)"
         )
     if cfg.target.quic:
+        fire("review-not-queued", repo)
         return [], (
             "nothing queued: this working tree reaches gonk over QUIC, and a review request is "
             "dropped into a queue on gonk's own machine, which no network door reaches"
         )
     binary = which("ikigai-gonk")
     if binary is None:
+        fire("review-not-queued", repo)
         return [], "nothing queued: `ikigai-gonk` is not on PATH (it drops the request)"
     review = process.get("review", {})
     root = gonk.review_root(repo, process)
@@ -105,6 +125,7 @@ def main(argv: list[str]) -> int:
     if argv[:1] == ["--drop"]:
         drop(json.loads(argv[1]))
         return 0
+    top = ""
     try:
         top = git(Path.cwd(), "rev-parse", "--show-toplevel").strip()
         if not top:
@@ -125,6 +146,7 @@ def main(argv: list[str]) -> int:
             start_new_session=True,
         )
     except Exception as e:  # a commit must never fail because of this hook
+        fire("review-not-queued", Path(top) if top else None)
         say(f"nothing queued: {e}")
     return 0
 

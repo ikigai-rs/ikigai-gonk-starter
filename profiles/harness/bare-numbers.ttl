@@ -1,0 +1,6 @@
+guide:no-bare-numbers a harness:Guide ;
+    rdfs:label "never a bare #N" ;
+    rdfs:comment "Ledger items and pull requests share numbers: write `<ledger>#N` or a link for an item, `PR #N` or `owner/repo#N` for a pull request, and `ledger item N` in a commit message." ;
+    harness:statedIn "AGENTS.md" ; harness:section "6. Never a bare `#N`" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:toolCall ; harness:category harness:maintainability .

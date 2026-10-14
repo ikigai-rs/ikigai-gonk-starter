@@ -1,0 +1,28 @@
+guide:change-starts-as-a-folder a harness:Guide ;
+    rdfs:label "a change in behavior starts as a change folder" ;
+    rdfs:comment "A change in behavior is `openspec/changes/<id>/`, its proposal, deltas and tasks, written before the code; a fix that restores what a spec already says needs none." ;
+    harness:statedIn "AGENTS.md" ; harness:section "Spec first" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:toolCall ; harness:category harness:behavior .
+
+guide:take-what-next-offers a harness:Guide ;
+    rdfs:label "take what next offers" ;
+    rdfs:comment "Seed files a change's open tasks in order and the first is ready; working from `next` keeps a change's tasks in their written order." ;
+    harness:statedIn "AGENTS.md" ; harness:section "Spec first" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:toolCall ; harness:category harness:behavior .
+
+guide:keep-the-spec-true a harness:Guide ;
+    rdfs:label "keep the spec true" ;
+    rdfs:comment "When a change is finished its deltas become what `specs/` says and the change folder moves to `changes/archive/`, in the pull request of its last task." ;
+    harness:statedIn "AGENTS.md" ; harness:section "Spec first" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:merge ; harness:category harness:maintainability .
+
+ctl:seed-orders-tasks a harness:Control ;
+    rdfs:label "seed: tasks in their written order" ;
+    rdfs:comment "`tools/gonk.py seed` files each open task once, keyed by its IRI, and links each to the next with `blocks`, so the ledger's `next` offers a change's tasks in the order tasks.md lists them. A guide a program applies: it shapes what is offered rather than refusing anything." ;
+    harness:direction harness:feedforward ; harness:execution harness:computational ;
+    harness:stage harness:toolCall ; harness:category harness:behavior ;
+    harness:enforcedAt "tools/gonk.py#cmd_seed" ;
+    harness:statedBy guide:take-what-next-offers .

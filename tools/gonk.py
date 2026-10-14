@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """This repository's way to reach gonk: init, seed, file, next, claim, release, report, reject,
-close.
+close, harness.
 
 Standard library only (Python 3.11 or later, for tomllib). Every request goes through the
 `ikigai` command line with an ALIAS mount, `--mount urn:gk:=<target>`, so a socket on this
@@ -14,9 +14,16 @@ Configuration is files and flags, never environment variables:
                       generated it with; `init` and `status` report them
   .gonk/local.toml    per working tree, git-ignored: how this machine reaches gonk, and
                       the holder name this working tree claims under
-  .gonk/state/        per working tree, git-ignored: the claim this tree holds
+  .gonk/state/        per working tree, git-ignored: the claim this tree holds, and the
+                      harness firing log (tools/harness.py)
+  .gonk/harness/      committed: this process's harness graph and its vocabulary
 
 `init` writes the first and third from its flags and reports what is still missing.
+
+Every refusal here that enforces a rule of AGENTS.md is a SENSOR of the harness: it names its
+control (`refuse("evidence-required", …)`) and records one line in this working tree's firing
+log, best effort (tools/harness.py). A refusal of a malformed value (a lease, a label, a ledger
+name) is input checking, not a rule, and records nothing.
 """
 
 from __future__ import annotations
@@ -33,6 +40,11 @@ import tomllib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+
+try:
+    import harness  # beside this file: the harness graph and the firing log
+except ImportError:  # a tree from before tools/harness.py: nothing recorded, nothing else changes
+    harness = None
 
 # The alias every request is sent under: `urn:gk:iki:ledger:…` here is `urn:iki:ledger:…`
 # on gonk. An alias rather than `--override urn:iki:ledger:=…` so that no name this tool
@@ -66,6 +78,26 @@ TIMEOUT_S = 30
 
 class ConfigError(Exception):
     """A configuration file is malformed, or a flag or value is refused."""
+
+
+def fire(control: str, kind: str, repo: Path | None, **context) -> None:
+    """Record one firing of a harness sensor in `repo`'s firing log. Never raises, never
+    prints to standard output: the decision is the caller's, whether or not the line lands."""
+    if harness is not None:
+        harness.fire(control, kind, repo, **context)
+
+
+def refuse(control: str, repo: Path | None, message: str, args=None) -> ConfigError:
+    """A refusal that enforces a rule: recorded as a firing of `control`, then answered as the
+    ConfigError to raise (`raise refuse(…)`), so the refusal reads the same either way."""
+    fire(control, "refusal", repo, command=command_line(args))
+    return ConfigError(message)
+
+
+def command_line(args) -> str | None:
+    """The command as typed, for the firing's digest (never logged as text)."""
+    argv = getattr(args, "argv", None)
+    return " ".join(["gonk.py", *argv]) if argv is not None else None
 
 
 # --------------------------------------------------------------------------- config
@@ -988,6 +1020,20 @@ def cmd_init(args, cfg: Config, make_ikigai) -> int:
     saved, unknown = saved_scripts(repo, cfg.layout)
     for line in unknown:
         row("missing", "scripts", line)
+    # The harness questions are asked by `gonk.py harness` through the store, never published:
+    # gonk runs every script under a ceiling of ledger reads (its README, "The ceiling"), and
+    # they read `urn:iki:harness:graph:<ledger>`, so a published one could only be refused, and
+    # offering a tool that can only refuse is what the manifold must not do.
+    questions = [s for s in saved if s.stem.startswith(HARNESS_PREFIX)]
+    saved = [s for s in saved if not s.stem.startswith(HARNESS_PREFIX)]
+    if questions:
+        row(
+            "note",
+            "harness",
+            f"{len(questions)} harness question(s) in .gonk/queries/ are asked by "
+            "`python3 tools/gonk.py harness` through gonk's store, not published: gonk runs a "
+            "script under a ceiling of ledger reads, and they read the harness graph",
+        )
     tasks = [t for c in open_changes(repo, cfg.layout) for t in c.tasks if not t.done]
     if tasks:
         changes = len({t.change for t in tasks})
@@ -1346,9 +1392,12 @@ def cmd_claim(args, cfg: Config, make_ikigai) -> int:
         )
     held = read_claim(cfg)
     if held and held.get("item") != args.item:
-        raise ConfigError(
+        raise refuse(
+            "one-claim-per-tree",
+            cfg.repo,
             f"this working tree already holds item {held.get('item')} on `{held.get('ledger')}`: "
-            "one item per working tree. Release or close it first"
+            "one item per working tree. Release or close it first",
+            args,
         )
     words = ["sink", cfg.resource("claim"), f"item={args.item}", f"lease={args.lease}"]
     if args.takeover_from:
@@ -1358,6 +1407,8 @@ def cmd_claim(args, cfg: Config, make_ikigai) -> int:
         words += ["takeover=true", f"from={args.takeover_from}"]
     answer = make_ikigai(cfg.target).run(" ".join(words), stdin=cfg.holder)
     code = show(answer)
+    if not answer.ok:
+        fire_claim_refusal(cfg, answer.text(), bool(args.takeover_from), args)
     if answer.ok:
         m = CLAIMED.search(answer.out)
         state = {"ledger": cfg.ledger, "item": args.item, "holder": cfg.holder}
@@ -1381,6 +1432,34 @@ def cmd_claim(args, cfg: Config, make_ikigai) -> int:
     return code
 
 
+def fire_claim_refusal(cfg: Config, text: str, takeover: bool, args) -> None:
+    """Record the ledger's refusal of a claim, which gonk.py relays, as the sensor it is. The
+    ledger enforces these rules and says which by its wording (ikigai-ledger, `claim`), so the
+    wording is matched here; tests/test_integration.py holds it to a real gonk's."""
+    if takeover:
+        refused = (
+            "only an expired lease can be taken over",
+            "which never expires",
+            "a takeover is a compare-and-set",
+            "nothing to take over",
+        )
+        control = sensor("takeover-refused") if any(w in text for w in refused) else None
+    elif "already claimed by" in text:
+        control = sensor("claim-held-by-another")
+    elif "an expired lease is never silently free" in text or "takeover=true from=" in text:
+        control = sensor("claim-lease-expired")
+    else:
+        control = None  # gonk did not answer, or refused for another reason: no rule here
+    if control:
+        fire(control, "refusal", cfg.repo, command=command_line(args))
+
+
+def sensor(control: str) -> str:
+    """Names the sensor whose firing is recorded a few lines later; answers the id unchanged
+    (`harness.sensor`), so `tools/harness.py check` can read the literal."""
+    return control
+
+
 def cmd_release(args, cfg: Config, make_ikigai) -> int:
     need(cfg, "ledger", "target")
     held = read_claim(cfg)
@@ -1401,11 +1480,14 @@ def cmd_release(args, cfg: Config, make_ikigai) -> int:
     return show(answer)
 
 
-def evidence_note(args) -> str:
-    if not EVIDENCE_SHAPE.match(args.evidence):
-        raise ConfigError(
+def evidence_note(args, cfg: Config) -> str:
+    if not args.evidence or not EVIDENCE_SHAPE.match(args.evidence):
+        raise refuse(
+            "evidence-required",
+            cfg.repo,
             "--evidence is a URL (the pull request, or the reproduction that shows it is not a "
-            "defect): a report without evidence is a claim nobody can check"
+            "defect): a report without evidence is a claim nobody can check",
+            args,
         )
     return f"Evidence: {args.evidence}" + (f"\n\n{args.note.strip()}" if args.note else "")
 
@@ -1429,7 +1511,7 @@ def cmd_report(args, cfg: Config, make_ikigai) -> int:
     item 1199). Closing is the dispatcher's, after checking that evidence.
     """
     need(cfg, "ledger", "target")
-    note = evidence_note(args)
+    note = evidence_note(args, cfg)
     ikigai = make_ikigai(cfg.target)
     answer = comment_flag(ikigai, cfg, args.item, note, "handback")
     code = show(answer)
@@ -1450,9 +1532,12 @@ def cmd_reject(args, cfg: Config, make_ikigai) -> int:
     need(cfg, "ledger", "target")
     note = (args.note or "").strip()
     if not note:
-        raise ConfigError(
+        raise refuse(
+            "reject-needs-reason",
+            cfg.repo,
             "--note is why the evidence did not hold: a rejection with no reason leaves the "
-            "next worker with nothing"
+            "next worker with nothing",
+            args,
         )
     answer = comment_flag(make_ikigai(cfg.target), cfg, args.item, note, "rejects")
     return show(answer)
@@ -1460,7 +1545,7 @@ def cmd_reject(args, cfg: Config, make_ikigai) -> int:
 
 def cmd_close(args, cfg: Config, make_ikigai) -> int:
     need(cfg, "ledger", "target")
-    note = evidence_note(args)
+    note = evidence_note(args, cfg)
     command = f"sink {cfg.resource('close')} item={args.item} reason={args.reason}"
     ikigai = make_ikigai(cfg.target)
     answer = ikigai.run(command, stdin=note)
@@ -1483,6 +1568,140 @@ def cmd_status(args, cfg: Config, make_ikigai) -> int:
     allowed, why = check_claim(cfg, make_ikigai(cfg.target))
     print(("holds a live claim: " if allowed else "no live claim: ") + why)
     return 0 if allowed else 1
+
+
+# --------------------------------------------------------------------------- the harness
+
+HARNESS_PREFIX = "harness-"
+TSV_TERM = re.compile(r'^"(.*)"(?:\^\^<[^>]*>|@[A-Za-z-]+)?$|^<(.*)>$')
+
+
+def query_header(text: str) -> dict[str, str]:
+    """The `# QUESTION:` and `# EMPTY:` lines of a saved query's leading comment block."""
+    found = {}
+    for line in text.splitlines():
+        if not line.startswith("#"):
+            break
+        m = re.match(r"^#\s*([A-Z]+):\s*(.+)$", line)
+        if m:
+            found[m.group(1)] = m.group(2).strip()
+    return found
+
+
+def graph_select(ikigai: Ikigai, query: str, ledger: str, graph: str) -> Answer:
+    """Run a saved query over one named graph through gonk's store, as a published script's
+    `:result` would: `LEDGER` replaced by the ledger, the comment lines dropped."""
+    lines = [ln for ln in query.splitlines() if not ln.lstrip().startswith("#")]
+    text = "\n".join(lines).replace(LEDGER_TOKEN, ledger)
+    quoted = text.replace("\\", "\\\\").replace('"', '\\"')
+    command = (
+        f"source {PREFIX}iki:store:graph-select graph={graph} "
+        f'as=text/tab-separated-values query="{quoted}"'
+    )
+    return ikigai.run(command)
+
+
+def tsv_rows(text: str) -> tuple[list[str], list[list[str]]]:
+    """(columns, rows) of a tab-separated answer, each term shortened for a person to read."""
+    lines = [ln for ln in text.splitlines() if ln and not ln.startswith("[")]
+    if not lines:
+        return [], []
+
+    def short(term: str) -> str:
+        m = TSV_TERM.match(term)
+        value = (m.group(1) if m.group(1) is not None else m.group(2)) if m else term
+        value = value.replace('\\"', '"')
+        for ns, alias in [
+            (harness.CONTROL_NS, "ctl:"),
+            (harness.GUIDE_NS, "guide:"),
+            (harness.TEST_NS, "test:"),
+        ]:
+            if value.startswith(ns):
+                return alias + value[len(ns) :]
+        return value
+
+    columns = [c.lstrip("?") for c in lines[0].split("\t")]
+    return columns, [[short(t) for t in ln.split("\t")] for ln in lines[1:]]
+
+
+def cmd_harness(args, cfg: Config, make_ikigai) -> int:
+    """Load this repository's harness graph, and this working tree's firings, into gonk's named
+    graph `urn:iki:harness:graph:{ledger}`, then ask the coverage questions
+    (`.gonk/queries/harness-*.rq`) of it and print the answers.
+
+    The load is ONE SPARQL UPDATE through `urn:iki:store:graph-update`: it replaces the graph's
+    description of the controls and adds this tree's firings beside every firing another tree
+    loaded (a firing's IRI is its log and sequence, so a second load adds nothing). Writing that
+    graph needs `urn:cap:store:write:graph:<graph>` (and its read grant, for the update's
+    WHERE), which gonk's owner-only socket holds and no ledger grant does: over QUIC a worker or
+    a writer is refused and told so, and the questions are asked of what is already there."""
+    if harness is None:
+        raise ConfigError("tools/harness.py is not beside tools/gonk.py")
+    need(cfg, "ledger", "target")
+    path = cfg.repo / harness.GRAPH_FILE
+    if not path.is_file():
+        raise ConfigError(
+            f"no {harness.GRAPH_FILE}: a repository generated by ikigai-gonk-starter's "
+            "tools/new.py carries its process's harness graph"
+        )
+    try:
+        graph = harness.read_graph(path)
+    except harness.TurtleError as e:
+        raise ConfigError(str(e)) from e
+    try:
+        segment = harness.read_firings(cfg.repo)
+    except harness.CorruptSegment as e:
+        print(f"harness: the firing log is not loaded: {e}", file=sys.stderr)
+        segment = None
+    guides = len(graph.of_type(harness.H + "Guide"))
+    controls = graph.of_type(harness.H + "Control")
+    sensors = sum(
+        1 for c in controls if harness.H + "feedback" in graph.values(c, harness.H + "direction")
+    )
+    firings = segment.firings if segment else []
+    target = harness.graph_iri(cfg.ledger)
+    other = len(controls) - sensors
+    print(
+        f"harness: {guides} rule(s), {sensors} sensor(s) and {other} other control(s) in "
+        f"{harness.GRAPH_FILE}; {len(firings)} firing(s) in this tree"
+    )
+    ikigai = make_ikigai(cfg.target)
+    failed = 0
+    if not args.no_load:
+        update = harness.load_update(
+            target, graph.triples, harness.firing_triples(segment) if segment else []
+        )
+        answer = ikigai.run(f"sink {PREFIX}iki:store:graph-update graph={target}", stdin=update)
+        if answer.ok:
+            print(f"loaded:  {answer.text()}")
+        else:
+            failed += 1
+            print(f"not loaded into {target}: {answer.text()}", file=sys.stderr)
+            print(
+                f"  loading needs urn:cap:store:write:graph:{target} and its read grant, which "
+                "gonk's owner-only socket holds and a ledger grant does not: load from gonk's "
+                "machine, or ask gonk's operator to grant both",
+                file=sys.stderr,
+            )
+    root = cfg.repo / cfg.layout.get("queries", {}).get("root", ".gonk/queries")
+    for query in sorted(root.glob(f"{HARNESS_PREFIX}*.rq")):
+        text = query.read_text(encoding="utf-8")
+        about = query_header(text)
+        print(f"\n{query.stem}: {about.get('QUESTION', '')}")
+        answer = graph_select(ikigai, text, cfg.ledger, target)
+        if not answer.ok:
+            failed += 1
+            print(f"  could not ask it: {answer.text()}")
+            continue
+        columns, rows = tsv_rows(answer.out)
+        if not rows:
+            print(f"  none. {about.get('EMPTY', '')}".rstrip())
+            continue
+        widths = [max(len(c), *(len(r[i]) for r in rows)) for i, c in enumerate(columns)]
+        print("  " + "  ".join(c.ljust(w) for c, w in zip(columns, widths, strict=True)).rstrip())
+        for row in rows:
+            print("  " + "  ".join(v.ljust(w) for v, w in zip(row, widths, strict=True)).rstrip())
+    return 1 if failed else 0
 
 
 def parser() -> argparse.ArgumentParser:
@@ -1530,7 +1749,7 @@ def parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("report", help="post the evidence and hand the item back (a worker's end)")
     s.add_argument("item", type=int)
-    s.add_argument("--evidence", required=True, help="the URL that shows the work")
+    s.add_argument("--evidence", help="the URL that shows the work (required)")
     s.add_argument("--note")
     s.set_defaults(run=cmd_report)
 
@@ -1543,18 +1762,28 @@ def parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("close", help="close an item, with evidence (the dispatcher's act)")
     s.add_argument("item", type=int)
-    s.add_argument("--evidence", required=True, help="the URL that shows it is done")
+    s.add_argument("--evidence", help="the URL that shows it is done (required)")
     s.add_argument("--reason", default="done", choices=CLOSE_REASONS)
     s.add_argument("--note")
     s.set_defaults(run=cmd_close)
 
     s = sub.add_parser("status", help="does this working tree hold a live claim?")
     s.set_defaults(run=cmd_status)
+
+    s = sub.add_parser(
+        "harness",
+        help="load this repository's harness and this tree's firings into gonk; ask its coverage",
+    )
+    s.add_argument(
+        "--no-load", action="store_true", help="ask the questions of what gonk already holds"
+    )
+    s.set_defaults(run=cmd_harness)
     return p
 
 
 def main(argv: list[str] | None = None, make_ikigai=Ikigai) -> int:
     args = parser().parse_args(argv)
+    args.argv = list(sys.argv[1:] if argv is None else argv)
     try:
         repo = Path(args.repo).resolve() if args.repo else find_repo(Path.cwd())
         if not (repo / ".gonk" / "layout.toml").is_file():

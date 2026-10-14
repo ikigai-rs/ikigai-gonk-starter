@@ -8,6 +8,8 @@ says what a profile is made of.
 profiles.toml            the default process, every profile in order, every AGENTS.md section
                          in order, and the base (what every repository gets)
 sections/<name>.md       one AGENTS.md section each
+harness/<name>.ttl       the harness controls of that section: its rules, and the sensors that
+                         enforce them (optional, one per section)
 <profile>/profile.toml   what the profile adds (below)
 <profile>/files/         files it adds to the repository, at the same paths (optional)
 <profile>/justfile.recipes   recipes it adds to the justfile (optional)
@@ -44,9 +46,24 @@ and checks they ask for, each one's summary and roles, then each one's `process.
 settings; `tools/gonk.py init` and `status` read it, and nothing else says what the process
 is. A conflict, declared on either side, refuses the pair with its reason.
 
+**How a profile names its controls.** A profile names no controls directly: it names
+sections, and each section's harness fragment, `harness/<section>.ttl`, describes that
+section's rules as guides (`guide:<id>`, with `harness:section` naming its `## ` heading) and
+the sensors that enforce them (`ctl:<id>`, with `harness:enforcedAt` naming the file and
+function and `harness:statedBy` the rule). `.gonk/harness/harness.ttl` is the chosen sections'
+fragments in `AGENTS.md`'s order, so a repository's graph describes exactly the rules it states
+and the sensors it carries. A sensor in a profile's own tool goes in that profile's section
+(`workers.ttl` holds `tools/worker.py`'s). Its code names it at the refusal
+(`gonk.refuse("<id>", …)`, `gonk.fire("<id>", …)` or `gonk.sensor("<id>")`), which records the
+firing; `python3 tools/harness.py check` fails until the two agree, and a sensor that records
+firings needs a test in `tests/test_harness.py`'s `SensorsFire` named for it, which its
+`harness:firedBy` names. An id never changes once firings carry it. Terms:
+`.gonk/harness/vocabulary.ttl`.
+
 **The starter's own `AGENTS.md` and `.gonk/process.toml` are the default process**, so a
 repository made by copying this starter as a template has the same rules and record as one
-`new.py` generates without `--process`. After changing a section or a profile, run
+`new.py` generates without `--process`. So is its
+`.gonk/harness/harness.ttl`. After changing a section, a fragment or a profile, run
 `python3 tools/new.py --sync-starter`; a test fails until they agree.
 
 **A new profile** is a directory here with a `profile.toml`, its name in `profiles.toml`'s

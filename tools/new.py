@@ -14,6 +14,7 @@ The result is a repository that works the way this starter teaches: AGENTS.md an
   artifacts/cli/          a command-line client of that API
   .gonk/queries/          saved SPARQL over the ledger and the spec graph
   .gonk/scripts/          a workflow script (a plan): next, for one artifact
+  .gonk/harness/          the process's rules and sensors as a graph (tools/harness.py)
   tools/worker.py         the worker loop, for a machine that takes items unattended
 
 Four layers are copied in order, a later one replacing a file an earlier one wrote: this
@@ -59,13 +60,19 @@ STARTER_FILES = [
     ".gitattributes",
     "docs/windows.md",
     "tools/gonk.py",
+    "tools/harness.py",
     "hooks/claude/README.md",
     "hooks/claude/require-claim.py",
     "hooks/claude/settings.sample.json",
     ".gonk/README.md",
     ".gonk/layout.toml",
     ".gonk/gonk.toml",
+    ".gonk/harness/vocabulary.ttl",
     ".gonk/queries/README.md",
+    ".gonk/queries/harness-sensors-never-fired.rq",
+    ".gonk/queries/harness-guides-without-sensor.rq",
+    ".gonk/queries/harness-sensors-without-guide.rq",
+    ".gonk/queries/harness-firings-by-control.rq",
     ".gonk/scripts/README.md",
     "openspec/README.md",
     "openspec/config.yaml",
@@ -180,15 +187,58 @@ def resolve(names: list[str] | None) -> list[str]:
 
 def agents_md(names: list[str]) -> str:
     """AGENTS.md for these profiles: the base sections and theirs, in the catalog's order."""
+    parts = [
+        (PROFILES / "sections" / f"{s}.md").read_text(encoding="utf-8").strip("\n")
+        for s in used_sections(names)
+    ]
+    return "\n\n".join(parts) + "\n"
+
+
+HARNESS = PROFILES / "harness"
+HARNESS_TTL = Path(".gonk") / "harness" / "harness.ttl"
+HARNESS_HEADER = """\
+# The harness of this repository's process: every rule of AGENTS.md as a guide, and every
+# place this repository's tools enforce one as a sensor. Committed. Assembled by
+# ikigai-gonk-starter's tools/new.py from profiles/harness/<section>.ttl, one fragment per
+# AGENTS.md section, exactly as AGENTS.md is assembled, so it describes these profiles and
+# nothing else: {names}.
+#
+# Terms: .gonk/harness/vocabulary.ttl. Firings: .gonk/state/harness/firings.log (git-ignored).
+# `python3 tools/harness.py check` holds this file to the code and to AGENTS.md;
+# `python3 tools/gonk.py harness` loads it into gonk and asks .gonk/queries/harness-*.rq.
+# FORMAT: the Turtle subset tools/harness.py reads. No blank nodes.
+"""
+HARNESS_PREFIXES = [
+    ("harness", "https://ikigai-rs.dev/ns/harness#"),
+    ("rdfs", "http://www.w3.org/2000/01/rdf-schema#"),
+    ("ctl", "urn:iki:harness:starter:control:"),
+    ("guide", "urn:iki:harness:starter:guide:"),
+    ("test", "urn:iki:harness:starter:test:"),
+]
+
+
+def used_sections(names: list[str]) -> list[str]:
+    """The AGENTS.md sections these profiles use, in the catalog's order."""
     cat = catalog()
     used = set(cat["base"]["sections"])
     for name in names:
         used |= set(profile(name).get("sections", []))
+    return [s for s in cat["sections"] if s in used]
+
+
+def harness_ttl(names: list[str]) -> str:
+    """.gonk/harness/harness.ttl for these profiles: the fragments of the sections AGENTS.md
+    holds (profiles/harness/<section>.ttl, where there is one), in the same order."""
+    width = max(len(p) for p, _ in HARNESS_PREFIXES) + 1
     parts = [
-        (PROFILES / "sections" / f"{s}.md").read_text(encoding="utf-8").strip("\n")
-        for s in cat["sections"]
-        if s in used
+        HARNESS_HEADER.format(names=", ".join(names)).rstrip("\n"),
+        "\n".join(f"@prefix {p + ':':<{width}} <{ns}> ." for p, ns in HARNESS_PREFIXES),
     ]
+    for section in used_sections(names):
+        fragment = HARNESS / f"{section}.ttl"
+        if fragment.is_file():
+            body = fragment.read_text(encoding="utf-8").strip("\n")
+            parts.append(f"# ── {section} (profiles/harness/{section}.ttl)\n\n{body}")
     return "\n\n".join(parts) + "\n"
 
 
@@ -238,6 +288,11 @@ def profile_problems() -> list[str]:
     bad += [f"sections/{s}.md is in no profile and not in `sections`" for s in files - set(order)]
     bad += [f"`sections` names {s}, which has no sections/{s}.md" for s in set(order) - files]
     bad += [f"base names {s}, which is not in `sections`" for s in base - set(order)]
+    bad += [
+        f"harness/{p.name} is the fragment of no section in `sections`"
+        for p in sorted((PROFILES / "harness").glob("*.ttl"))
+        if p.stem not in order
+    ]
     bad += [
         f"base hook {h!r} is not one of {sorted(HOOKS)}"
         for h in cat["base"].get("hooks", [])
@@ -358,6 +413,7 @@ def generate(dest: Path, target: str, process: list[str] | None = None) -> list[
         Path("justfile"): justfile(target_dir, names),
         Path("AGENTS.md"): agents_md(names),
         PROCESS_TOML: process_toml(names),
+        HARNESS_TTL: harness_ttl(names),
     }
     for rel, text in assembled.items():
         (dest / rel).parent.mkdir(parents=True, exist_ok=True)
@@ -371,9 +427,15 @@ def sync_starter() -> list[Path]:
     then carries the same rules and the same record as one new.py generates. A test fails
     while they differ, naming this."""
     names = resolve(None)
-    for rel, text in [(Path("AGENTS.md"), agents_md(names)), (PROCESS_TOML, process_toml(names))]:
+    written = [
+        (Path("AGENTS.md"), agents_md(names)),
+        (PROCESS_TOML, process_toml(names)),
+        (HARNESS_TTL, harness_ttl(names)),
+    ]
+    for rel, text in written:
+        (ROOT / rel).parent.mkdir(parents=True, exist_ok=True)
         (ROOT / rel).write_text(text, encoding="utf-8", newline="\n")
-    return [Path("AGENTS.md"), PROCESS_TOML]
+    return [rel for rel, _ in written]
 
 
 def main(argv: list[str] | None = None) -> int:

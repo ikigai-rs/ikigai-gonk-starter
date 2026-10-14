@@ -35,6 +35,11 @@ What it does with one item, in order:
    which does not know the argument and ignores it — reads, and what the brief filters on.
    The worker NEVER closes and NEVER merges: the dispatcher does both.
 
+Each decision above that enforces a rule (a skip, a lost claim, a budget, a hand-back without
+evidence, a merge while the agent ran, a refused configuration) is a sensor of the harness and
+is recorded in this checkout's firing log (tools/harness.py), best effort: recording never
+changes what the worker does. A skip is recorded once per item per process, not at every poll.
+
 The one-agent-per-repository rule here is BEST-EFFORT until the ledger enforces it (ledger
 item 1140 on ikigai's own ledger): two workers can read "free" at the same moment. Each
 re-reads after claiming and backs off if it sees another claim, which narrows the window and
@@ -178,9 +183,11 @@ def load_worker(cfg: gonk.Config, path: Path | None = None) -> WorkerConfig:
 
     labels, without = words("labels"), words("without")
     if not labels:
-        raise gonk.ConfigError(
+        raise gonk.refuse(
+            "worker-needs-labels",
+            cfg.repo,
             f"{where}: labels is empty. Name at least one (`worker:<name>`, `repo:<name>`): a "
-            "worker that takes every ready item in a ledger takes work nobody meant for it"
+            "worker that takes every ready item in a ledger takes work nobody meant for it",
         )
     lease = str(t.get("lease", gonk.DEFAULT_LEASE))
     if not gonk.LEASE_SHAPE.match(lease):
@@ -273,23 +280,34 @@ def load_worker(cfg: gonk.Config, path: Path | None = None) -> WorkerConfig:
     )
 
 
-def work_root(text: str, home: Path) -> Path:
+def work_root(text: str, home: Path, repo: Path | None = None) -> Path:
     """The work root, refused unless it is strictly under this account's own home: the worker
-    runs as an account of its own, and never works in a person's checkouts."""
+    runs as an account of its own, and never works in a person's checkouts. A refusal is
+    recorded in `repo`'s firing log when one is given."""
     home = home.resolve()
     if text == "~" or text.startswith("~/"):
         root = home / text[2:]
     elif text.startswith("~"):
-        raise gonk.ConfigError(f"work_root = {text!r}: another account's home is never a work root")
+        raise gonk.refuse(
+            "worker-work-root-in-home",
+            repo,
+            f"work_root = {text!r}: another account's home is never a work root",
+        )
     else:
         root = Path(text)
     if not root.is_absolute():
-        raise gonk.ConfigError(f"work_root = {text!r} is relative; write it as ~/<dir>")
+        raise gonk.refuse(
+            "worker-work-root-in-home",
+            repo,
+            f"work_root = {text!r} is relative; write it as ~/<dir>",
+        )
     root = root.resolve()
     if root == home or home not in root.parents:
-        raise gonk.ConfigError(
+        raise gonk.refuse(
+            "worker-work-root-in-home",
+            repo,
             f"work_root {root} is not under this account's home ({home}): a worker works only "
-            "in its own home, never in a person's checkouts or a shared directory"
+            "in its own home, never in a person's checkouts or a shared directory",
         )
     return root
 
@@ -850,9 +868,13 @@ class Worker:
         gonk.need(cfg, "ledger", "target", "holder")
         self.cfg, self.wc = cfg, wc
         self.ledger = Ledger(cfg, ikigai)
-        self.root = work_root(wc.work_root, home or Path.home())
+        self.root = work_root(wc.work_root, home or Path.home(), cfg.repo)
         self.attempts = Attempts(wc.state_dir)
         self.shutdown = threading.Event()
+        # The skips recorded as firings so far, (control, item): once each per process, since
+        # the loop asks again at every poll and a skip that has not changed is not news.
+        self.skips_fired: set[tuple[str, int]] = set()
+        self.skipped: list[tuple[str, int]] = []
 
     # ----------------------------------------------------------------- choosing
 
@@ -865,39 +887,63 @@ class Worker:
         now = gonk.iso_now()
         take, skip = [], []
         busy: dict[str, str | None] = {}
+        self.skipped = []
         for ranked in doc.get("ranking", []):
             item = ranked["item"]
             display = item.get("display", f"#{item.get('number')}")
-            why = self.why_not(item, now, busy)
-            if why:
-                skip.append((display, why))
+            reason = self.skip_reason(item, now, busy)
+            if reason:
+                skip.append((display, reason[1]))
+                self.skipped.append((reason[0], item.get("number")))
             else:
                 take.append((item, self.wc.repos[repo_labels(item)[0]]))
         return take, skip, None
 
     def why_not(self, item: dict, now: datetime, busy: dict) -> str | None:
+        reason = self.skip_reason(item, now, busy)
+        return reason[1] if reason else None
+
+    def skip_reason(self, item: dict, now: datetime, busy: dict) -> tuple[str, str] | None:
+        """(the harness sensor that skips it, why), or None when the item is takeable."""
         if item.get("claim"):
-            return f"claimed by `{item['claim'].get('holder')}`"
+            return gonk.sensor("worker-skips-claimed"), (
+                f"claimed by `{item['claim'].get('holder')}`"
+            )
         repos = repo_labels(item)
         if len(repos) != 1:
             named = ", ".join(f"repo:{r}" for r in repos) or "none"
-            return f"a worker works in exactly one repository, and its repo: labels are {named}"
+            return gonk.sensor("worker-one-repository-label"), (
+                f"a worker works in exactly one repository, and its repo: labels are {named}"
+            )
         repo = repos[0]
         if repo not in self.wc.repos:
-            return f"repo:{repo} is not one of this worker's repositories"
+            return gonk.sensor("worker-one-repository-label"), (
+                f"repo:{repo} is not one of this worker's repositories"
+            )
         if awaiting_dispatcher(item):
-            return "it is awaiting its dispatcher (handed back, awaiting review)"
+            return gonk.sensor("worker-skips-awaiting-dispatcher"), (
+                "it is awaiting its dispatcher (handed back, awaiting review)"
+            )
         seen = self.attempts.seen(self.cfg.ledger, item["number"])
         if seen:
-            return (
+            return gonk.sensor("worker-skips-handed-back"), (
                 f"this worker handed it back already ({seen['outcome']}, {seen['at']}); "
                 f"`worker.py forget {item['number']}` to allow it again"
             )
         if repo not in busy:
             busy[repo] = self.repo_holder(repo, now, exclude=None)
         if busy[repo]:
-            return f"repo:{repo} is busy: {busy[repo]} (one agent per repository)"
+            return gonk.sensor("worker-one-agent-per-repository"), (
+                f"repo:{repo} is busy: {busy[repo]} (one agent per repository)"
+            )
         return None
+
+    def fire_skip(self, control: str, number: int | None) -> None:
+        """Record a skip as a firing of its sensor, once per item per process."""
+        if (control, number) in self.skips_fired:
+            return
+        self.skips_fired.add((control, number))
+        gonk.fire(control, "refusal", self.cfg.repo)
 
     def repo_holder(self, repo: str, now: datetime, exclude: int | None) -> str | None:
         """Who holds an ACTIVE claim on an open item of this repository, if anyone."""
@@ -920,10 +966,13 @@ class Worker:
             return Outcome(ERROR, f"gonk did not answer next: {err}")
         for display, why in skip:
             log(f"skip {display}: {why}")
+        for control, number in self.skipped:
+            self.fire_skip(control, number)
         for item, repo in take:
             lock = RepoLock(self.wc.state_dir, repo.name)
             if not lock.acquire():
                 log(f"skip {item.get('display')}: repo:{repo.name} has an item running here")
+                self.fire_skip(gonk.sensor("worker-one-agent-per-repository"), item["number"])
                 continue
             try:
                 return self.work(item, repo)
@@ -939,6 +988,7 @@ class Worker:
         log(f"claimed {display} for `{holder}` on a {self.wc.lease} lease (repo:{repo.name})")
         other = self.repo_holder(repo.name, gonk.iso_now(), exclude=number)
         if other:
+            self.fire_skip(gonk.sensor("worker-one-agent-per-repository"), number)
             self.ledger.release(number, holder)
             return Outcome(NOTHING, f"backed off {display}: repo:{repo.name} is busy: {other}")
         beat = Heartbeat(self.ledger, number, holder, self.wc.lease, self.wc.renew_every)
@@ -999,6 +1049,7 @@ class Worker:
         if ended == "lost":
             # Not ours any more: say so on the item, release NOTHING (it is someone else's,
             # or nobody's by the dispatcher's choice), keep the work.
+            gonk.fire("worker-claim-lost", "refusal", self.cfg.repo)
             note = (
                 f"gonk worker `{holder}` lost its claim on {display} after {took}: {beat.why}. "
                 f"It stopped the agent; {where}."
@@ -1013,6 +1064,7 @@ class Worker:
             for pr in prs:
                 gh.read_ci(pr)
         if beat.lost.is_set():
+            gonk.fire("worker-claim-lost", "refusal", self.cfg.repo)
             note = (
                 f"gonk worker `{holder}` lost its claim on {display} while reading CI: "
                 f"{beat.why}. {where}."
@@ -1029,8 +1081,12 @@ class Worker:
         for pr in prs:
             if pr.state.upper() == "MERGED":
                 lines.append(merge_line(pr, exited))
+                if lines[-1].startswith("- WARNING"):
+                    gonk.fire("worker-merged-before-exit", "warning", self.cfg.repo)
         agent = f"`{argv[0]}` exited {code} after {took}" if code is not None else ""
 
+        if ended == "overrun":
+            gonk.fire("worker-budget-overrun", "refusal", self.cfg.repo)
         if ended in ("overrun", "stopped"):
             why = (
                 f"its budget of {spoken(self.wc.budget)} ran out"
@@ -1049,6 +1105,7 @@ class Worker:
 
         evidence = prs[0].url if prs else self.reported_evidence(ws)
         if not evidence:
+            gonk.fire("worker-no-evidence", "refusal", self.cfg.repo)
             note = (
                 f"gonk worker `{holder}` handed {display} back without evidence: {agent}, "
                 f"opened no pull request on {ws.branch} and wrote no evidence to its report "
@@ -1223,7 +1280,15 @@ def build(args, make_ikigai, home: Path | None) -> Worker:
 
 def cmd_run(args, make_ikigai, home) -> int:
     if hasattr(os, "geteuid") and os.geteuid() == 0:
-        raise gonk.ConfigError("refusing to run as root: a worker runs as an account of its own")
+        try:
+            repo = Path(args.repo).resolve() if args.repo else gonk.find_repo(Path.cwd())
+        except gonk.ConfigError:
+            repo = None
+        raise gonk.refuse(
+            "worker-refuses-root",
+            repo,
+            "refusing to run as root: a worker runs as an account of its own",
+        )
     worker = build(args, make_ikigai, home)
     if args.once:
         outcome = worker.run_once()

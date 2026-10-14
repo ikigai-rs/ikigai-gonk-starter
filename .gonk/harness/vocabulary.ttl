@@ -1,0 +1,259 @@
+# The harness vocabulary: the terms `.gonk/harness/harness.ttl` describes this repository's
+# harness in, and the ikigai-log extension its firing log is written in.
+#
+# The model is Birgitta Böckeler's ("Harness engineering for coding agent users",
+# martinfowler.com): a harness is CONTROLS. A control is a GUIDE (feedforward: it shapes what
+# an agent does before it acts) or a SENSOR (feedback: it observes what was done), it is
+# COMPUTATIONAL (a program decides) or INFERENTIAL (a model or a person decides), it acts at
+# a STAGE of a change's life, and it regulates one or more CATEGORIES. Her categories are
+# maintainability, architecture fitness and behavior; authoritySafety is added, for the rules
+# about who may do what (a claim, a merge, a close).
+#
+# Namespace: https://ikigai-rs.dev/ns/harness# (prefix `harness:`), the one the authors'
+# private tooling describes its own harness in: same IRIs, same meaning. This file defines the
+# terms this starter uses, a subset of that vocabulary.
+#
+# FORMAT: the Turtle subset tools/harness.py reads (its docstring says which). No blank nodes.
+
+@prefix harness: <https://ikigai-rs.dev/ns/harness#> .
+@prefix log:     <https://ikigai-rs.dev/ns/log#> .
+@prefix rdf:     <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+
+# ── controls ───────────────────────────────────────────────────────────────────────────────
+
+harness:Control a rdfs:Class ;
+    rdfs:label "Control" ;
+    rdfs:comment "One thing that regulates what a coding agent does: a rule stated in prose, a hook, a refusal in a tool, a CI check, a review. Named by a stable IRI whose last segment is a kebab-case id that never changes, so the firings recorded under it stay joined to it." .
+
+harness:Guide a rdfs:Class ;
+    rdfs:subClassOf harness:Control ;
+    rdfs:label "Guide" ;
+    rdfs:comment "A control stated in prose, for a reader to apply: one rule of AGENTS.md. Always feedforward and inferential. A guide no computational control cites is a rule written down and checked nowhere." .
+
+# ── direction ──────────────────────────────────────────────────────────────────────────────
+
+harness:Direction a rdfs:Class ;
+    rdfs:label "Direction" ;
+    rdfs:comment "Whether a control acts before the agent does (feedforward) or observes what it did (feedback)." .
+
+harness:feedforward a harness:Direction ;
+    rdfs:label "guide" ;
+    rdfs:comment "A guide: it shapes an action before it is taken." .
+
+harness:feedback a harness:Direction ;
+    rdfs:label "sensor" ;
+    rdfs:comment "A sensor: it observes an action or its result, and refuses, warns or reports." .
+
+# ── execution ──────────────────────────────────────────────────────────────────────────────
+
+harness:Execution a rdfs:Class ;
+    rdfs:label "Execution" ;
+    rdfs:comment "Who decides: a program (computational) or a model or a person (inferential)." .
+
+harness:computational a harness:Execution ;
+    rdfs:label "computational" ;
+    rdfs:comment "A program decides, the same way every time." .
+
+harness:inferential a harness:Execution ;
+    rdfs:label "inferential" ;
+    rdfs:comment "A model or a person decides: a rule to be applied, a review, an audit, a dispatcher checking evidence." .
+
+# ── stage ──────────────────────────────────────────────────────────────────────────────────
+
+harness:Stage a rdfs:Class ;
+    rdfs:label "Stage" ;
+    rdfs:comment "Where in a change's life a control acts." .
+
+harness:toolCall a harness:Stage ;
+    rdfs:label "tool-call" ;
+    rdfs:comment "At one call an agent makes, before its effect lands: a hook that runs before a tool, or a tool that refuses its own command." .
+
+harness:preCommit a harness:Stage ;
+    rdfs:label "pre-commit" ;
+    rdfs:comment "Before a change is committed or pushed: the local gates." .
+
+harness:postCommit a harness:Stage ;
+    rdfs:label "post-commit" ;
+    rdfs:comment "After a commit lands locally: a review requested for it." .
+
+harness:ci a harness:Stage ;
+    rdfs:label "CI" ;
+    rdfs:comment "On a pull request, in its continuous integration." .
+
+harness:merge a harness:Stage ;
+    rdfs:label "merge" ;
+    rdfs:comment "Deciding whether work is done: merging a pull request, closing an item." .
+
+harness:periodic a harness:Stage ;
+    rdfs:label "periodic" ;
+    rdfs:comment "On a cadence a person chooses rather than on every change: an audit." .
+
+harness:runtime a harness:Stage ;
+    rdfs:label "runtime" ;
+    rdfs:comment "While something runs unattended: the worker loop choosing, running and handing back items." .
+
+# ── category ───────────────────────────────────────────────────────────────────────────────
+
+harness:Category a rdfs:Class ;
+    rdfs:label "Category" ;
+    rdfs:comment "What a control regulates." .
+
+harness:maintainability a harness:Category ;
+    rdfs:label "maintainability" ;
+    rdfs:comment "Whether the code and its records stay easy to change and true to read." .
+
+harness:architectureFitness a harness:Category ;
+    rdfs:label "architecture fitness" ;
+    rdfs:comment "Whether the structure holds: where things live, what may depend on what." .
+
+harness:behavior a harness:Category ;
+    rdfs:label "behavior" ;
+    rdfs:comment "Whether the software does what it should, and whether the evidence that says so can be trusted." .
+
+harness:authoritySafety a harness:Category ;
+    rdfs:label "authority/safety" ;
+    rdfs:comment "Who may do what: one holder per item, one agent per working tree, the dispatcher closes." .
+
+# ── outcome ────────────────────────────────────────────────────────────────────────────────
+
+harness:Outcome a rdfs:Class ;
+    rdfs:label "Outcome" ;
+    rdfs:comment "What a sensor does when it fires." .
+
+harness:refuse a harness:Outcome ;
+    rdfs:label "refuse" ;
+    rdfs:comment "The action does not happen." .
+
+harness:warn a harness:Outcome ;
+    rdfs:label "warn" ;
+    rdfs:comment "The action happens, and the agent is told what it costs." .
+
+harness:report a harness:Outcome ;
+    rdfs:label "report" ;
+    rdfs:comment "Findings for someone to read; nothing is allowed or refused by it, and nothing is recorded as a firing." .
+
+# ── properties of a control ────────────────────────────────────────────────────────────────
+
+harness:direction a rdf:Property ;
+    rdfs:domain harness:Control ;
+    rdfs:range harness:Direction ;
+    rdfs:label "direction" ;
+    rdfs:comment "Exactly one: feedforward or feedback." .
+
+harness:execution a rdf:Property ;
+    rdfs:domain harness:Control ;
+    rdfs:range harness:Execution ;
+    rdfs:label "execution" ;
+    rdfs:comment "Exactly one: computational or inferential." .
+
+harness:stage a rdf:Property ;
+    rdfs:domain harness:Control ;
+    rdfs:range harness:Stage ;
+    rdfs:label "stage" ;
+    rdfs:comment "One or more: where in a change's life the control acts." .
+
+harness:category a rdf:Property ;
+    rdfs:domain harness:Control ;
+    rdfs:range harness:Category ;
+    rdfs:label "category" ;
+    rdfs:comment "One or more: what the control regulates." .
+
+harness:outcome a rdf:Property ;
+    rdfs:domain harness:Control ;
+    rdfs:range harness:Outcome ;
+    rdfs:label "outcome" ;
+    rdfs:comment "On a sensor, one or more: what it does when it fires." .
+
+harness:enforcedAt a rdf:Property ;
+    rdfs:domain harness:Control ;
+    rdfs:range xsd:string ;
+    rdfs:label "enforcedAt" ;
+    rdfs:comment "Where the control's code is: `path#function` relative to the repository's root (`#<module>` for module-level code, a recipe name for a justfile), or `owner/repo:path` in another repository. Repeated when one control acts from several places." .
+
+harness:statedBy a rdf:Property ;
+    rdfs:domain harness:Control ;
+    rdfs:range harness:Guide ;
+    rdfs:label "statedBy" ;
+    rdfs:comment "The prose rule this control mechanizes. A sensor that cites none is met only by tripping it; a guide nothing cites is enforced nowhere." .
+
+harness:statedIn a rdf:Property ;
+    rdfs:domain harness:Guide ;
+    rdfs:range xsd:string ;
+    rdfs:label "statedIn" ;
+    rdfs:comment "The file a guide is written in, relative to the repository's root." .
+
+harness:section a rdf:Property ;
+    rdfs:domain harness:Guide ;
+    rdfs:range xsd:string ;
+    rdfs:label "section" ;
+    rdfs:comment "Where in that file, as a reader looks for it: for AGENTS.md, the text of its `## ` heading." .
+
+harness:noFiringTest a rdf:Property ;
+    rdfs:domain harness:Control ;
+    rdfs:range xsd:string ;
+    rdfs:label "noFiringTest" ;
+    rdfs:comment "Why no test can show this sensor firing, stated where the sensor is. Every other sensor that records firings names a test that fires it (harness:firedBy)." .
+
+# ── proofs: which test shows a sensor firing ───────────────────────────────────────────────
+
+harness:Test a rdfs:Class ;
+    rdfs:label "Test" ;
+    rdfs:comment "One test case of the suite that proves a sensor can fire, named by its module, class and method." .
+
+harness:firedBy a rdf:Property ;
+    rdfs:domain harness:Control ;
+    rdfs:range harness:Test ;
+    rdfs:label "firedBy" ;
+    rdfs:comment "A test that drove this sensor through its real code path and saw the firing recorded: the proof it CAN fire, so a silence in the firing log is quiet, not blindness." .
+
+# ── the firing log: an ikigai-log extension ────────────────────────────────────────────────
+#
+# The extension shape ikigai-log reads ("the mapping is data"): entry classes are
+# `rdfs:subClassOf log:Entry`, keys are `log:keyName` bindings whose rdfs:range decides what a
+# value becomes. `seq` is ikigai-log's own log:sequence.
+
+harness:Firing a rdfs:Class ;
+    rdfs:subClassOf log:Entry ;
+    log:minLevel log:warn ;
+    log:subjectPredicate harness:firedControl ;
+    rdfs:label "Firing" ;
+    rdfs:comment "One time a sensor fired: one line of a working tree's .gonk/state/harness/firings.log. Its subject column is the control's IRI." .
+
+harness:Refusal a rdfs:Class ;
+    rdfs:subClassOf harness:Firing ;
+    rdfs:label "Refusal" ;
+    rdfs:comment "A firing whose outcome was refuse: the action did not happen." .
+
+harness:Warning a rdfs:Class ;
+    rdfs:subClassOf harness:Firing ;
+    rdfs:label "Warning" ;
+    rdfs:comment "A firing whose outcome was warn: the action went on, and the agent was told." .
+
+harness:firedControl a rdf:Property ;
+    rdfs:domain harness:Firing ;
+    rdfs:range harness:Control ;
+    rdfs:label "firedControl" ;
+    rdfs:comment "The control that fired: the subject column, refined (log:subjectPredicate) on harness:Firing." .
+
+harness:session a rdf:Property ;
+    log:keyName "session" ;
+    rdfs:domain harness:Firing ;
+    rdfs:range rdfs:Resource ;
+    rdfs:label "session" ;
+    rdfs:comment "The agent session the firing happened in, as urn:agents:session:{id}, when the agent says which (the Claude Code hook does)." .
+
+harness:tool a rdf:Property ;
+    log:keyName "tool" ;
+    rdfs:domain harness:Firing ;
+    rdfs:range xsd:string ;
+    rdfs:label "tool" ;
+    rdfs:comment "The agent's tool whose call fired the control: Edit, Write, NotebookEdit." .
+
+harness:commandDigest a rdf:Property ;
+    log:keyName "cmd" ;
+    rdfs:domain harness:Firing ;
+    rdfs:range xsd:string ;
+    rdfs:label "commandDigest" ;
+    rdfs:comment "`sha256:` and the first 12 hex digits of the command's SHA-256: enough to tie repeated firings of one command together. The command's text is never logged; it can carry a secret." .

@@ -17,6 +17,11 @@ the first rule (claim before you write) into a refusal.
 Edits to `.gonk/state/` and `.gonk/local.toml` are always allowed, since the protocol itself
 writes them. A file outside a repository made from this starter is not the hook's business.
 
+Each refusal is a sensor of the repository's harness (`edit-without-live-claim`,
+`edit-hook-not-wired`, `edit-hook-unreadable-input` in `.gonk/harness/harness.ttl`) and adds
+one line to `.gonk/state/harness/firings.log`, naming the tool and the session but never the
+file. Recording is best effort: the hook decides the same whether or not the line lands.
+
 ## Turning it on
 
 Merge `settings.sample.json` into `.claude/settings.json` (shared with the team) or

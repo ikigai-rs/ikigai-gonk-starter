@@ -1,0 +1,39 @@
+guide:every-commit-is-reviewed a harness:Guide ;
+    rdfs:label "every commit asks for a review" ;
+    rdfs:comment "Each commit asks gonk to review the files it touched; a reviewer writes pending findings, read-only, and a person triages them." ;
+    harness:statedIn "AGENTS.md" ; harness:section "Review on every commit" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:postCommit ; harness:category harness:behavior .
+
+guide:a-finding-is-a-claim a harness:Guide ;
+    rdfs:label "a finding is a claim" ;
+    rdfs:comment "Reproduce a finding before acting on it, and file each one acted on as one item keyed by the finding." ;
+    harness:statedIn "AGENTS.md" ; harness:section "Review on every commit" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:postCommit ; harness:category harness:behavior .
+
+guide:a-person-publishes-findings a harness:Guide ;
+    rdfs:label "only a person publishes a finding" ;
+    rdfs:comment "The reviewer cannot publish a finding; a person decides each one in gonk's queue." ;
+    harness:statedIn "AGENTS.md" ; harness:section "Review on every commit" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:postCommit ; harness:category harness:authoritySafety .
+
+ctl:review-not-queued a harness:Control ;
+    rdfs:label "review hook: nothing queued" ;
+    rdfs:comment "The post-commit hook queues no review when the working tree is not wired to gonk, reaches it over QUIC, has no `ikigai-gonk` on PATH, or the hook itself failed; it says so and the commit goes ahead." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:postCommit ; harness:category harness:behavior ;
+    harness:outcome harness:warn ;
+    harness:enforcedAt "hooks/git/review-on-commit.py#requests" , "hooks/git/review-on-commit.py#main" ;
+    harness:statedBy guide:every-commit-is-reviewed ;
+    harness:firedBy test:test_harness:SensorsFire.test_review_not_queued .
+
+ctl:review-pass a harness:Control ;
+    rdfs:label "gonk's review of a commit's files" ;
+    rdfs:comment "gonk's review pass reads each queued file through a model, read-only, and writes pending findings for a person to triage. Recorded on gonk, not in this working tree's firing log." ;
+    harness:direction harness:feedback ; harness:execution harness:inferential ;
+    harness:stage harness:postCommit ; harness:category harness:behavior ;
+    harness:outcome harness:report ;
+    harness:enforcedAt "ikigai-rs/ikigai-gonk:src" ;
+    harness:statedBy guide:every-commit-is-reviewed .

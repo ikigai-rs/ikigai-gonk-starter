@@ -1,0 +1,16 @@
+guide:one-agent-per-tree a harness:Guide ;
+    rdfs:label "one agent per item, one agent per working tree" ;
+    rdfs:comment "An item has one holder at a time and a working tree one agent at a time; parallel agents each get a working tree and a holder name of their own, and a tree holds one claim." ;
+    harness:statedIn "AGENTS.md" ; harness:section "2. One agent per claimed item, one agent per working tree" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:toolCall ; harness:category harness:authoritySafety .
+
+ctl:one-claim-per-tree a harness:Control ;
+    rdfs:label "a working tree holds one claim" ;
+    rdfs:comment "`tools/gonk.py claim` refuses a second item while this working tree's claim file records another." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:toolCall ; harness:category harness:authoritySafety ;
+    harness:outcome harness:refuse ;
+    harness:enforcedAt "tools/gonk.py#cmd_claim" ;
+    harness:statedBy guide:one-agent-per-tree ;
+    harness:firedBy test:test_harness:SensorsFire.test_one_claim_per_tree .

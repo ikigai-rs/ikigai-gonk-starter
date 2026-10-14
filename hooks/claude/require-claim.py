@@ -11,6 +11,9 @@ the agent why; exit 0 lets it through.
 This is a second layer. The protocol in AGENTS.md works without it, and every other agent
 keeps it by following the rules. What it does not cover, stated so nobody relies on it:
 a write through a shell command (`Bash`), which no hook can attribute to a file reliably.
+
+Each refusal is a sensor of the repository's harness (`.gonk/harness/harness.ttl`) and is
+recorded in its firing log, best effort: recording never changes what the hook decides.
 """
 
 from __future__ import annotations
@@ -30,6 +33,25 @@ def repo_of(path: Path) -> Path | None:
         if (candidate / ".gonk" / "layout.toml").is_file():
             return candidate
     return None
+
+
+def fire(control: str, repo: Path | None, event: dict) -> None:
+    """Record a refusal in `repo`'s harness firing log (tools/harness.py). Never raises."""
+    if repo is None:
+        return
+    try:
+        sys.path.insert(0, str(repo / "tools"))
+        import gonk  # the repository's own copy
+
+        gonk.fire(
+            control,
+            "refusal",
+            repo,
+            tool=event.get("tool_name"),
+            session=event.get("session_id"),
+        )
+    except Exception:  # noqa: BLE001  (recording a firing never changes the decision)
+        pass
 
 
 def decide(event: dict, make_ikigai=None) -> tuple[int, str]:
@@ -58,6 +80,7 @@ def decide(event: dict, make_ikigai=None) -> tuple[int, str]:
         cfg = gonk.load(repo)
         gonk.need(cfg, "ledger", "target")
     except gonk.ConfigError as e:
+        fire("edit-hook-not-wired", repo, event)
         return (
             2,
             "require-claim: this repository is not wired to gonk yet, so no claim can be "
@@ -66,6 +89,7 @@ def decide(event: dict, make_ikigai=None) -> tuple[int, str]:
     allowed, why = gonk.check_claim(cfg, (make_ikigai or gonk.Ikigai)(cfg.target))
     if allowed:
         return 0, ""
+    fire("edit-without-live-claim", repo, event)
     return 2, f"require-claim: refused an edit to {relative}: {why}"
 
 
@@ -73,6 +97,7 @@ def main() -> int:
     try:
         event = json.load(sys.stdin)
     except ValueError as e:
+        fire("edit-hook-unreadable-input", repo_of(Path.cwd().resolve()), {})
         print(f"require-claim: the hook input was not JSON ({e}); refusing", file=sys.stderr)
         return 2
     code, message = decide(event)

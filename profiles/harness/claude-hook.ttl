@@ -1,0 +1,29 @@
+ctl:edit-without-live-claim a harness:Control ;
+    rdfs:label "claim hook: an edit needs a live claim" ;
+    rdfs:comment "The optional Claude Code hook refuses a file edit unless this working tree holds a claim gonk still says is its holder's, on an open item, with time left on the lease. It cannot see a file written by a shell command." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:toolCall ; harness:category harness:authoritySafety ;
+    harness:outcome harness:refuse ;
+    harness:enforcedAt "hooks/claude/require-claim.py#decide" ;
+    harness:statedBy guide:claim-before-write , guide:stop-when-claim-gone ;
+    harness:firedBy test:test_harness:SensorsFire.test_edit_without_live_claim .
+
+ctl:edit-hook-not-wired a harness:Control ;
+    rdfs:label "claim hook: no claim can be checked" ;
+    rdfs:comment "The claim hook refuses a file edit in a repository that names no ledger, or does not say how to reach gonk, since no claim can be checked there." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:toolCall ; harness:category harness:authoritySafety ;
+    harness:outcome harness:refuse ;
+    harness:enforcedAt "hooks/claude/require-claim.py#decide" ;
+    harness:statedBy guide:claim-before-write ;
+    harness:firedBy test:test_harness:SensorsFire.test_edit_hook_not_wired .
+
+ctl:edit-hook-unreadable-input a harness:Control ;
+    rdfs:label "claim hook: input it cannot read" ;
+    rdfs:comment "The claim hook refuses when the tool call it is given is not JSON: it fails closed. The firing is recorded in the repository the hook runs in, when there is one." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:toolCall ; harness:category harness:authoritySafety ;
+    harness:outcome harness:refuse ;
+    harness:enforcedAt "hooks/claude/require-claim.py#main" ;
+    harness:statedBy guide:claim-before-write ;
+    harness:firedBy test:test_harness:SensorsFire.test_edit_hook_unreadable_input .

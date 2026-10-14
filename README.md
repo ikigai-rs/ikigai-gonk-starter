@@ -46,8 +46,10 @@ artifacts/<name>/        one directory per deployable thing, any language each
   layout.toml            the spec format(s), the artifacts root, queries, scripts
   gonk.toml              the ledger this repository's work lives in
   process.toml           the process this repository works by (its profiles)
+  harness/               the process's rules and sensors as a graph, and its vocabulary
   queries/  scripts/     saved SPARQL and workflow scripts (reserved; see below)
-tools/gonk.py            init, seed, file, next, claim, release, report, close, status
+tools/gonk.py            init, seed, file, next, claim, release, report, close, status, harness
+tools/harness.py         the harness: its graph, its firing log, and the check that holds both true
 tools/worker.py          the worker loop: take an item, run an agent on it, hand it back
 tools/new.py             generate a repository with the library-lending sample in it
 profiles/                the process profiles new.py can generate with (see Choosing a process)
@@ -171,6 +173,25 @@ is dropped into a queue on gonk's machine, which no network door reaches, and go
 the repository as it finds it in its own browse root; so the hook queues requests from a
 working tree on gonk's machine, and from any other it says so and lets the commit go ahead.
 The `hub`'s worktrees, like any working tree, are on whichever machine runs the agent.
+
+**Your harness.** The rules in `AGENTS.md` are *guides*: they act before an agent does. A
+repository also carries *sensors*, the places its tools enforce a rule: the claim hook refusing
+an edit, `report` refusing a hand-back without evidence, the worker skipping a repository
+another agent holds. (The words are Birgitta Böckeler's, from
+[Harness engineering for coding agent users](https://martinfowler.com/articles/harness-engineering.html).)
+`.gonk/harness/harness.ttl` describes every one of both for the process the repository works
+by, assembled from the profiles like `AGENTS.md` is: each control with a stable IRI, whether it
+is a guide or a sensor, whether a program or a person decides, where in a change's life it acts,
+the rule it enforces, where its code is, and the test that shows it firing. Every refusal or
+warning a sensor makes is one line in `.gonk/state/harness/firings.log` (git-ignored; ikigai-log's
+line grammar, never a command's text), recorded best effort, so a decision is the same whether
+or not the line lands. `python3 tools/harness.py check` holds the graph to the code and to
+`AGENTS.md`, and `python3 tools/gonk.py harness` (`just harness`) loads the graph and this
+tree's firings into gonk and asks four questions of them: which sensors have never fired (and
+whether a test shows each can), which rules no sensor checks, which sensors state no rule, and
+what has fired, how often. Loading writes the named graph `urn:iki:harness:graph:<ledger>`, which
+gonk's owner-only socket may write and a ledger grant may not, so it is the dispatcher's, from
+gonk's machine.
 
 **Bringing existing work in.** A ledger kept elsewhere can be imported rather than retyped:
 gonk imports a kata export, for one (`ikigai-gonk kata import`, in gonk's README).
@@ -306,7 +327,10 @@ stay files.
 
 The sample ships `open-items-for-artifact`, `open-work-by-change` and
 `requirements-with-open-work` (the spec graph joined with the ledger), and the plan
-`next-for-artifact` (the ledger's own `next`, narrowed to one artifact's items).
+`next-for-artifact` (the ledger's own `next`, narrowed to one artifact's items). Every
+repository also carries the four harness questions, `harness-*.rq` (see *Your harness*), which
+`init` does not publish: they read the harness graph, which gonk's script ceiling does not
+admit, so `python3 tools/gonk.py harness` asks them through the store.
 
 ## Worker machines
 
@@ -355,9 +379,10 @@ README says what else waits on the ledger.
 
 ## Coming next
 
-- **Sensors in a profile, not only rules.** A profile names its `AGENTS.md` sections, hooks
-  and checks today; it is the place a later version names which harness controls are on, and
-  a repository would carry the sensors and the queries that show their coverage.
+- **The harness questions as published scripts.** gonk runs a script under a ceiling of
+  ledger reads, so the four questions run through `gonk.py harness` rather than as
+  `urn:script:` resources an agent can call; they become scripts when that ceiling admits the
+  harness graph.
 - **More languages** for the generator: Go, passing the same vectors (Rust and Deno have
   landed: `--target rust`, `--target deno`).
 - **A second spec format**, beside OpenSpec, lifted to the same graph and ledger items by a
@@ -375,7 +400,9 @@ just gates          # or scripts/gates.sh: ruff check, ruff format --check, the 
                     # the sample, generated for every target, running its own tests
 ```
 
-The tests are standard-library `unittest`, and include the worker scripts' hermetic tests,
+The tests are standard-library `unittest`, and include the harness's (`tests/test_harness.py`:
+every sensor that records firings is fired by a test named for it, and the graph names those
+tests), the worker scripts' hermetic tests,
 the worker loop's (an in-memory ledger, a scratch git origin, a stub `gh` and a fake agent, so
 no real agent and no network), and the **public-tree guard** (`tests/test_tree_guard.py`): this repository is public, so no
 tracked file may hold a path under a person's home, an mDNS `.local` host name, a non-loopback

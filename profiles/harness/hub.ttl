@@ -1,0 +1,54 @@
+guide:an-arc-is-its-brief a harness:Guide ;
+    rdfs:label "one arc, one repository, one item" ;
+    rdfs:comment "The hub splits work into arcs that each touch one repository, and files each as an item whose body is its brief." ;
+    harness:statedIn "AGENTS.md" ; harness:section "Hub and spoke" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:toolCall ; harness:category harness:architectureFitness .
+
+guide:a-tree-per-arc a harness:Guide ;
+    rdfs:label "one working tree and one holder per arc" ;
+    rdfs:comment "Each arc gets a working tree and a holder of its own, so two agents never share a tree or a claim." ;
+    harness:statedIn "AGENTS.md" ; harness:section "Hub and spoke" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:toolCall ; harness:category harness:authoritySafety .
+
+guide:arc-merges-on-green a harness:Guide ;
+    rdfs:label "an arc merges its own pull request on green, then reports" ;
+    rdfs:comment "That authority comes through the brief: a session not started from one stops at a green pull request and reports." ;
+    harness:statedIn "AGENTS.md" ; harness:section "Hub and spoke" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:merge ; harness:category harness:authoritySafety .
+
+guide:hub-asks-before-merging a harness:Guide ;
+    rdfs:label "the hub asks a person before merging its own work" ;
+    rdfs:comment "One line with the pull request and its CI, then merge on the answer: a merge is when work becomes shared." ;
+    harness:statedIn "AGENTS.md" ; harness:section "Hub and spoke" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:merge ; harness:category harness:authoritySafety .
+
+guide:hub-closes-on-evidence a harness:Guide ;
+    rdfs:label "the hub closes an arc on its evidence" ;
+    rdfs:comment "The hub closes an arc after checking the evidence, as any dispatcher does." ;
+    harness:statedIn "AGENTS.md" ; harness:section "Hub and spoke" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:merge ; harness:category harness:authoritySafety .
+
+ctl:arc-needs-brief a harness:Control ;
+    rdfs:label "hub: an arc is its brief" ;
+    rdfs:comment "`tools/hub.py arc` refuses a brief that is missing or empty: an arc's item body is its brief." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:toolCall ; harness:category harness:architectureFitness ;
+    harness:outcome harness:refuse ;
+    harness:enforcedAt "tools/hub.py#cmd_arc" ;
+    harness:statedBy guide:an-arc-is-its-brief ;
+    harness:firedBy test:test_harness:SensorsFire.test_arc_needs_brief .
+
+ctl:dispatch-needs-new-tree a harness:Control ;
+    rdfs:label "hub: a new working tree per arc" ;
+    rdfs:comment "`tools/hub.py dispatch` refuses a directory that exists: an arc's working tree is new, never one reused." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:toolCall ; harness:category harness:authoritySafety ;
+    harness:outcome harness:refuse ;
+    harness:enforcedAt "tools/hub.py#cmd_dispatch" ;
+    harness:statedBy guide:a-tree-per-arc ;
+    harness:firedBy test:test_harness:SensorsFire.test_dispatch_needs_new_tree .
