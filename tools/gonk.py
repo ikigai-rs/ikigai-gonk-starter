@@ -865,12 +865,17 @@ def parse_ledgers(text: str) -> dict[str, tuple[int, int]]:
 def offered(answer: Answer) -> bool | None:
     """Whether a `describe` found an endpoint: True, False, or None when gonk did not answer.
 
-    `describe` of a name the peer does not bind still exits 0, with a placeholder whose
-    title is `contract unavailable` and a note naming `no endpoint resolved`."""
+    `describe` of a name the peer does not bind exits 0 with a placeholder whose title is
+    `contract unavailable` and a note naming `no endpoint resolved`. A gonk without a model
+    mount (cli 0.1.56) instead exits 1 with `no endpoint resolved` on stderr — that is still
+    an answer: the name is absent. Only a real failure (connect refused, timeout, etc.)
+    returns None."""
+    text = answer.text()
+    if "no endpoint resolved" in text or "contract unavailable" in text:
+        return False
     if not answer.ok:
         return None
-    text = answer.text()
-    return not ("no endpoint resolved" in text or "contract unavailable" in text)
+    return True
 
 
 # --------------------------------------------------------------------------- claims
