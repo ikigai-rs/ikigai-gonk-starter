@@ -138,11 +138,12 @@ the same question the opposite way refuse to combine, with the reason: `audits` 
 
 - **`solo`.** You are both roles. Claim, open a pull request, read its CI, report, then close
   your own item. The smallest process, and the one to start with.
+  ([Book chapter](https://ikigai-rs.github.io/ikigai-tutorial/gonk/ways/solo.html))
 - **`workers`.** You (or a hub) dispatch, and machines work: label an item `worker:<name>`,
   and a worker running `tools/worker.py` claims it, works it in a fresh worktree, opens a pull
   request and hands it back with the evidence. It brings the worker loop, its sample
   configuration and its service units; [`worker/README.md`](worker/README.md) sets the
-  machine up.
+  machine up. ([Book chapter](https://ikigai-rs.github.io/ikigai-tutorial/gonk/ways/workers.html))
 - **`review-every-commit`.** `hooks/git/post-commit` (installed with `just hooks`) drops one
   review request per changed file into gonk's review queue with `ikigai-gonk review request`
   and returns at once, so a commit never waits on gonk or a model. gonk needs this repository
@@ -150,16 +151,17 @@ the same question the opposite way refuse to combine, with the reason: `audits` 
   write pending findings, and a person publishes or declines each. Another per-commit
   reviewer works as well: roborev, for one, files its findings into the ledger through gonk's
   own bridge (`ikigai-gonk roborev file`). The profile needs no such tool and reads no tool's
-  report format.
+  report format. ([Book chapter](https://ikigai-rs.github.io/ikigai-tutorial/gonk/ways/review-every-commit.html))
 - **`hub`.** `tools/hub.py arc` files an arc from its brief (`.gonk/templates/brief.md`) and
   links it, and `tools/hub.py dispatch` gives it a worktree and a holder of its own. The arc's
   agent merges its own pull request on green and reports; the hub closes it, and asks a person
-  before merging work of its own.
+  before merging work of its own. ([Book chapter](https://ikigai-rs.github.io/ikigai-tutorial/gonk/ways/hub-and-spoke.html))
 - **`spec`.** The rules for `openspec/`: a change in behavior is a change folder before it is
   code, `seed` files its tasks in order, and the spec is kept true as changes finish.
+  ([Book chapter](https://ikigai-rs.github.io/ikigai-tutorial/gonk/ways/spec-first.html))
 - **`audits`.** `just audit <files>… [--budget N]` files an unled audit from
   `.gonk/templates/audit.md`: the file list, a budget of tool calls, a reproduction for every
-  bug, one item per finding.
+  bug, one item per finding. ([Book chapter](https://ikigai-rs.github.io/ikigai-tutorial/gonk/ways/audits.html))
 
 **Local or remote gonk.** Every profile works the same against gonk on this machine (the
 socket) or on another (QUIC with a machine identity), since every request goes through
@@ -173,7 +175,7 @@ The `hub`'s worktrees, like any working tree, are on whichever machine runs the 
 **Bringing existing work in.** A ledger kept elsewhere can be imported rather than retyped:
 gonk imports a kata export, for one (`ikigai-gonk kata import`, in gonk's README).
 
-The gonk Book's *Ways of working* part walks through each of these processes end to end.
+The gonk Book's [*Ways of working*](https://ikigai-rs.github.io/ikigai-tutorial/gonk/ways/solo.html) part walks through each of these processes end to end.
 
 ## Setting it up
 
