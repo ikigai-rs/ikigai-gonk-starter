@@ -192,6 +192,8 @@ whether a test shows each can), which rules no sensor checks, which sensors stat
 what has fired, how often. Loading writes the named graph `urn:iki:harness:graph:<ledger>`, which
 gonk's owner-only socket may write and a ledger grant may not, so it is the dispatcher's, from
 gonk's machine.
+`.gonk/harness/vocabulary.ttl` is the public definition of the harness namespace,
+`https://ikigai-rs.dev/ns/harness#`: every term in it, including those a generated repository does not use.
 
 **Bringing existing work in.** A ledger kept elsewhere can be imported rather than retyped:
 gonk imports a kata export, for one (`ikigai-gonk kata import`, in gonk's README).

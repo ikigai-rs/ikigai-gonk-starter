@@ -1,6 +1,13 @@
 # The harness vocabulary: the terms `.gonk/harness/harness.ttl` describes this repository's
 # harness in, and the ikigai-log extension its firing log is written in.
 #
+# THIS FILE IS THE NAMESPACE'S PUBLIC DEFINITION. Every term of
+# https://ikigai-rs.dev/ns/harness# is defined here, and this file is the one to serve at that
+# address. A repository generated from this starter uses a subset of it; the rest (incidents,
+# the daily drift stage, a firing's repository, a coverage report kept as a graph) is here so
+# that any tool describing a harness in this namespace finds every term it uses defined in one
+# public place.
+#
 # The model is Birgitta Böckeler's ("Harness engineering for coding agent users",
 # martinfowler.com): a harness is CONTROLS. A control is a GUIDE (feedforward: it shapes what
 # an agent does before it acts) or a SENSOR (feedback: it observes what was done), it is
@@ -9,17 +16,25 @@
 # maintainability, architecture fitness and behavior; authoritySafety is added, for the rules
 # about who may do what (a claim, a merge, a close).
 #
-# Namespace: https://ikigai-rs.dev/ns/harness# (prefix `harness:`), the one the authors'
-# private tooling describes its own harness in: same IRIs, same meaning. This file defines the
-# terms this starter uses, a subset of that vocabulary.
+# Namespace: https://ikigai-rs.dev/ns/harness# (prefix `harness:`). The authors' own tooling
+# describes its harness in the same IRIs with the same meaning; tests/test_harness.py holds
+# that tooling's terms and structure to this file when a checkout of it sits beside this one,
+# and skips otherwise. owl:versionInfo below changes whenever a term is added or changed, so
+# one deployed definition can be told from the next.
 #
 # FORMAT: the Turtle subset tools/harness.py reads (its docstring says which). No blank nodes.
 
 @prefix harness: <https://ikigai-rs.dev/ns/harness#> .
 @prefix log:     <https://ikigai-rs.dev/ns/log#> .
+@prefix owl:     <http://www.w3.org/2002/07/owl#> .
 @prefix rdf:     <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+
+<https://ikigai-rs.dev/ns/harness#> a owl:Ontology ;
+    rdfs:label "ikigai harness vocabulary" ;
+    rdfs:comment "Terms for describing the harness a coding agent works in: its controls (guides and sensors), where and when each acts, what it regulates, the tests that show a sensor can fire, the log of every time one does, and the coverage questions asked of both." ;
+    owl:versionInfo "0.1.0" .
 
 # ── controls ───────────────────────────────────────────────────────────────────────────────
 
@@ -31,6 +46,10 @@ harness:Guide a rdfs:Class ;
     rdfs:subClassOf harness:Control ;
     rdfs:label "Guide" ;
     rdfs:comment "A control stated in prose, for a reader to apply: one rule of AGENTS.md. Always feedforward and inferential. A guide no computational control cites is a rule written down and checked nowhere." .
+
+harness:Incident a rdfs:Class ;
+    rdfs:label "Incident" ;
+    rdfs:comment "Something that went wrong, recorded so the harness learns from it: one entry of a repository's incident log, named by a stable IRI that ends in the entry's id. The controls it produced cite it (harness:existsFor)." .
 
 # ── direction ──────────────────────────────────────────────────────────────────────────────
 
@@ -85,6 +104,10 @@ harness:ci a harness:Stage ;
 harness:merge a harness:Stage ;
     rdfs:label "merge" ;
     rdfs:comment "Deciding whether work is done: merging a pull request, closing an item." .
+
+harness:dailyDrift a harness:Stage ;
+    rdfs:label "daily drift" ;
+    rdfs:comment "On a daily clock, whether or not anything changed: scans that find drift in what a repository depends on or promises, including in repositories nobody is working on." .
 
 harness:periodic a harness:Stage ;
     rdfs:label "periodic" ;
@@ -172,6 +195,12 @@ harness:enforcedAt a rdf:Property ;
     rdfs:label "enforcedAt" ;
     rdfs:comment "Where the control's code is: `path#function` relative to the repository's root (`#<module>` for module-level code, a recipe name for a justfile), or `owner/repo:path` in another repository. Repeated when one control acts from several places." .
 
+harness:existsFor a rdf:Property ;
+    rdfs:domain harness:Control ;
+    rdfs:range harness:Incident ;
+    rdfs:label "existsFor" ;
+    rdfs:comment "An incident this control exists because of. An incident no sensor cites is one the harness has learned from only in prose." .
+
 harness:statedBy a rdf:Property ;
     rdfs:domain harness:Control ;
     rdfs:range harness:Guide ;
@@ -251,9 +280,105 @@ harness:tool a rdf:Property ;
     rdfs:label "tool" ;
     rdfs:comment "The agent's tool whose call fired the control: Edit, Write, NotebookEdit." .
 
+harness:repo a rdf:Property ;
+    log:keyName "repo" ;
+    rdfs:domain harness:Firing ;
+    rdfs:range xsd:string ;
+    rdfs:label "repo" ;
+    rdfs:comment "The repository the call was for (for a refusal that protects a working tree, the tree it protected), by its name alone, or `-`. No path is ever logged." .
+
 harness:commandDigest a rdf:Property ;
     log:keyName "cmd" ;
     rdfs:domain harness:Firing ;
     rdfs:range xsd:string ;
     rdfs:label "commandDigest" ;
     rdfs:comment "`sha256:` and the first 12 hex digits of the command's SHA-256: enough to tie repeated firings of one command together. The command's text is never logged; it can carry a secret." .
+
+# ── the coverage report, kept as a graph ───────────────────────────────────────────────────
+#
+# A tool that keeps its coverage report as a graph names it with these. One report has a stable
+# IRI (for example one ending in the time it was made, compact UTC). Each question's answer is a
+# W3C result set (rs:, http://www.w3.org/2001/sw/DataAccess/tests/result-set#) whose solutions
+# and bindings are skolemized under the answer's IRI, never blank nodes. This starter prints its
+# answers (`python3 tools/gonk.py harness`) and keeps no report, so its own graph uses none of
+# these.
+
+harness:Window a rdfs:Class ;
+    rdfs:label "Window" ;
+    rdfs:comment "The span of time a coverage report reads firings over. The questions read it as a resource, so a parameter is data a query joins, never text spliced into the query." .
+
+harness:since a rdf:Property ;
+    rdfs:domain harness:Window ;
+    rdfs:range xsd:dateTime ;
+    rdfs:label "since" ;
+    rdfs:comment "The window's start: firings at or after it count." .
+
+harness:until a rdf:Property ;
+    rdfs:domain harness:Window ;
+    rdfs:range xsd:dateTime ;
+    rdfs:label "until" ;
+    rdfs:comment "The window's end: when the report was made." .
+
+harness:days a rdf:Property ;
+    rdfs:domain harness:Window ;
+    rdfs:range xsd:integer ;
+    rdfs:label "days" ;
+    rdfs:comment "The window's length in days, as asked for." .
+
+harness:Query a rdfs:Class ;
+    rdfs:label "Query" ;
+    rdfs:comment "One coverage question: a saved SPARQL query, named by a stable IRI that ends in its file's name." .
+
+harness:CoverageReport a rdfs:Class ;
+    rdfs:label "CoverageReport" ;
+    rdfs:comment "One run of a coverage report: the window it read firings over, the firing segments it read, and every question's answer." .
+
+harness:window a rdf:Property ;
+    rdfs:domain harness:CoverageReport ;
+    rdfs:range harness:Window ;
+    rdfs:label "window" ;
+    rdfs:comment "The window this report read firings over." .
+
+harness:segmentRead a rdf:Property ;
+    rdfs:domain harness:CoverageReport ;
+    rdfs:range log:Segment ;
+    rdfs:label "segmentRead" ;
+    rdfs:comment "A firing segment the report read, named at the segment's own IRI." .
+
+harness:entryCount a rdf:Property ;
+    rdfs:range xsd:integer ;
+    rdfs:label "entryCount" ;
+    rdfs:comment "On a segment, how many entries it holds; on a report, how many firings it read in all. It has no rdfs:domain because it is said of both." .
+
+harness:closed a rdf:Property ;
+    rdfs:domain log:Segment ;
+    rdfs:range xsd:boolean ;
+    rdfs:label "closed" ;
+    rdfs:comment "Whether the segment ends in log:ProcessStop under a seal (its session ended) rather than still being written." .
+
+harness:breakingFindings a rdf:Property ;
+    rdfs:domain log:Segment ;
+    rdfs:range xsd:integer ;
+    rdfs:label "breakingFindings" ;
+    rdfs:comment "How many breaking findings ikigai-log's verification made on the segment. Findings it only notes, such as an open session's unsealed tail, are not counted." .
+
+harness:answer a rdf:Property ;
+    rdfs:domain harness:CoverageReport ;
+    rdfs:label "answer" ;
+    rdfs:comment "One question's answer: an rs:ResultSet that is also a harness:Answer." .
+
+harness:Answer a rdfs:Class ;
+    rdfs:label "Answer" ;
+    rdfs:comment "A coverage question's result set, in one report." .
+
+harness:query a rdf:Property ;
+    rdfs:domain harness:Answer ;
+    rdfs:range harness:Query ;
+    rdfs:label "query" ;
+    rdfs:comment "The question this answers." .
+
+harness:rowCount a rdf:Property ;
+    rdfs:domain harness:Answer ;
+    rdfs:range xsd:integer ;
+    rdfs:label "rowCount" ;
+    rdfs:comment "How many solutions the answer holds. Zero is a statement; whether it is good news depends on the question." .

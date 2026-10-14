@@ -33,6 +33,9 @@ new = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(new)
 
 H = harness.H
+OWL = "http://www.w3.org/2002/07/owl#"
+# The authors' private harness vocabulary, read only when a checkout of it sits beside this one.
+PRIVATE_VOCAB = ROOT.parent / "ikigai-devtools" / "claude" / "harness" / "vocabulary.ttl"
 PROFILES = new.catalog()["profiles"]
 CONFLICTS = {("review-every-commit", "audits"), ("audits", "review-every-commit")}
 
@@ -289,6 +292,45 @@ class TheGraphAgrees(unittest.TestCase):
         terms = {s.value for s, _, _ in vocab.triples}
         self.assertTrue(terms)
         self.assertTrue(all(t.startswith(H) for t in terms), terms)
+
+    def test_the_vocabulary_is_the_namespaces_public_definition(self):
+        """The file parses in the subset (which refuses a blank node, a collection or a long
+        string with its line, so parsing at all proves there are none), every term has a label
+        and a comment, and the namespace states its one owl:versionInfo."""
+        text = (ROOT / harness.VOCAB_FILE).read_text(encoding="utf-8")
+        vocab = harness.Graph(harness.parse_turtle(text, str(harness.VOCAB_FILE))[0])
+        for s in vocab.by_subject:
+            self.assertEqual(len(vocab.values(s, harness.RDFS + "label")), 1, s.value)
+            self.assertEqual(len(vocab.values(s, harness.RDFS + "comment")), 1, s.value)
+        ontology = harness.I(H)
+        self.assertIn(OWL + "Ontology", vocab.values(ontology, harness.RDF_TYPE))
+        versions = vocab.values(ontology, OWL + "versionInfo")
+        self.assertEqual(len(versions), 1, versions)
+        self.assertRegex(versions[0], r"\A\d+\.\d+\.\d+\Z")
+
+    def test_every_term_the_authors_tooling_defines_is_defined_here_the_same_way(self):
+        """The authors' own tooling describes its harness in this namespace, in a private
+        vocabulary file whose comments cannot be published. This file is the public definition,
+        so it defines every term that one does, with the same structure: the same types,
+        domains, ranges, subclasses and ikigai-log bindings. Labels and comments may differ.
+
+        That file is read only when a checkout of the private repository sits beside this one
+        (`../ikigai-devtools/claude/harness/vocabulary.ttl`). In CI, and for anyone else, it is
+        not there and this test SKIPS, saying so: it holds the two together on the authors'
+        machines, where both are edited."""
+        if not PRIVATE_VOCAB.is_file():
+            self.skipTest(f"no {PRIVATE_VOCAB.relative_to(ROOT.parent)} beside this checkout")
+        public = harness.read_graph(ROOT / harness.VOCAB_FILE)
+        private = harness.read_graph(PRIVATE_VOCAB)
+        prose = {harness.RDFS + "label", harness.RDFS + "comment"}
+
+        def structure(g: harness.Graph) -> set[tuple]:
+            return {(s, p, o) for s, p, o in g.triples if p.value not in prose}
+
+        missing = set(private.by_subject) - set(public.by_subject)
+        self.assertFalse(missing, sorted(t.value for t in missing))
+        differs = structure(private) - structure(public)
+        self.assertFalse(differs, sorted((s.value, p.value, str(o)) for s, p, o in differs))
 
     def test_each_kind_of_disagreement_is_named(self):
         repo = generated(self, ["solo"])
