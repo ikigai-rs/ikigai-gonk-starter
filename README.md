@@ -186,12 +186,15 @@ the rule it enforces, where its code is, and the test that shows it firing. Ever
 warning a sensor makes is one line in `.gonk/state/harness/firings.log` (git-ignored; ikigai-log's
 line grammar, never a command's text), recorded best effort, so a decision is the same whether
 or not the line lands. `python3 tools/harness.py check` holds the graph to the code and to
-`AGENTS.md`, and `python3 tools/gonk.py harness` (`just harness`) loads the graph and this
-tree's firings into gonk and asks four questions of them: which sensors have never fired (and
-whether a test shows each can), which rules no sensor checks, which sensors state no rule, and
-what has fired, how often. Loading writes the named graph `urn:iki:harness:graph:<ledger>`, which
-gonk's owner-only socket may write and a ledger grant may not, so it is the dispatcher's, from
-gonk's machine.
+`AGENTS.md`, and `python3 tools/gonk.py harness` (`just harness`) loads the graph, each sensor's
+wiring in this tree, and this tree's firings into gonk and asks four questions of them: which
+sensors have never fired (whether each is wired here, and whether a test shows it can), which
+rules no sensor checks, which sensors state no rule, and what has fired, how often. A sensor
+whose fragment says `harness:wiredBy` (the Claude Code hook, the review hook, the worker's
+config) is on only where that part of the process is, so a sensor that is silent because nothing
+runs it reads as *not wired*, never as a rule that has landed. Loading writes the named graph
+`urn:iki:harness:graph:<ledger>`, which gonk's owner-only socket may write and a ledger grant may
+not, so it is the dispatcher's, from gonk's machine.
 `.gonk/harness/vocabulary.ttl` is the public definition of the harness namespace,
 `https://ikigai-rs.dev/ns/harness#`: every term in it, including those a generated repository does not use.
 

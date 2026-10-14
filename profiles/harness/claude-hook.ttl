@@ -5,6 +5,7 @@ ctl:edit-without-live-claim a harness:Control ;
     harness:stage harness:toolCall ; harness:category harness:authoritySafety ;
     harness:outcome harness:refuse ;
     harness:enforcedAt "hooks/claude/require-claim.py#decide" ;
+    harness:wiredBy "claude:require-claim" ;
     harness:statedBy guide:claim-before-write , guide:stop-when-claim-gone ;
     harness:firedBy test:test_harness:SensorsFire.test_edit_without_live_claim .
 
@@ -15,6 +16,7 @@ ctl:edit-hook-not-wired a harness:Control ;
     harness:stage harness:toolCall ; harness:category harness:authoritySafety ;
     harness:outcome harness:refuse ;
     harness:enforcedAt "hooks/claude/require-claim.py#decide" ;
+    harness:wiredBy "claude:require-claim" ;
     harness:statedBy guide:claim-before-write ;
     harness:firedBy test:test_harness:SensorsFire.test_edit_hook_not_wired .
 
@@ -25,5 +27,6 @@ ctl:edit-hook-unreadable-input a harness:Control ;
     harness:stage harness:toolCall ; harness:category harness:authoritySafety ;
     harness:outcome harness:refuse ;
     harness:enforcedAt "hooks/claude/require-claim.py#main" ;
+    harness:wiredBy "claude:require-claim" ;
     harness:statedBy guide:claim-before-write ;
     harness:firedBy test:test_harness:SensorsFire.test_edit_hook_unreadable_input .

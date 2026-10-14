@@ -536,6 +536,113 @@ class CheckClaim(unittest.TestCase):
         self.assertIn("holds no claim", why)
 
 
+DT = "http://www.w3.org/2001/XMLSchema#dateTime"
+
+
+def datetime_literal(text: str) -> str:
+    """An xsd:dateTime literal as the store writes it in a tab-separated answer."""
+    return f'"{text}"^^<{DT}>'
+
+
+class CoverageTable(unittest.TestCase):
+    """`gonk.py harness` prints each coverage answer as fixed-width columns, so a checked
+    transcript (the gonk Book's harness chapter) reads the same on every run. An xsd:dateTime
+    is written at fixed precision: a second's fraction is three digits whether or not the store
+    spelled its trailing zeros (`…05:15:00.34Z` is `…05:15:00.340Z`). Ledger item 1480."""
+
+    def test_a_date_time_is_written_at_fixed_precision(self):
+        _, rows = gonk.tsv_rows("?first\n" + datetime_literal("2026-10-14T05:15:00.34Z") + "\n")
+        self.assertEqual(rows, [["2026-10-14T05:15:00.340Z"]])
+        _, rows = gonk.tsv_rows(
+            "?first\n"
+            + datetime_literal("2026-10-14T05:15:00.3Z")
+            + "\n"
+            + datetime_literal("2026-10-14T05:15:00Z")
+            + "\n"
+            + datetime_literal("2026-10-14T05:15:00.3401Z")
+            + "\n"
+        )
+        self.assertEqual(
+            rows,
+            [
+                ["2026-10-14T05:15:00.300Z"],
+                ["2026-10-14T05:15:00.000Z"],
+                ["2026-10-14T05:15:00.340Z"],
+            ],
+        )
+
+    def test_an_instant_is_utc_whatever_the_store_spells_the_offset(self):
+        _, rows = gonk.tsv_rows(
+            "?first\n" + datetime_literal("2026-10-14T05:15:00.340+00:00") + "\n"
+        )
+        self.assertEqual(rows, [["2026-10-14T05:15:00.340Z"]])
+
+    def test_a_column_of_another_type_is_left_as_it_is(self):
+        # Only xsd:dateTime is reformatted: a string that merely looks like a time is a string.
+        _, rows = gonk.tsv_rows('?label\n"05:15:00.34Z"\n"3"\n<urn:ex:a>\n')
+        self.assertEqual(rows, [["05:15:00.34Z"], ["3"], ["urn:ex:a"]])
+
+    def harness_run(self, answer: str) -> str:
+        """`gonk.py harness` against a scratch repository whose one question answers `answer`."""
+        repo = scratch_repo(self)
+        wire(repo)
+        (repo / ".gonk" / "harness").mkdir(parents=True, exist_ok=True)
+        (repo / ".gonk" / "harness" / "harness.ttl").write_text(
+            "@prefix harness: <https://ikigai-rs.dev/ns/harness#> .\n"
+            "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n"
+            "@prefix ctl: <urn:iki:harness:starter:control:> .\n\n"
+            "ctl:evidence-required a harness:Control ;\n"
+            '    rdfs:label "report: evidence" ;\n'
+            "    harness:direction harness:feedback ;\n"
+            "    harness:execution harness:computational ;\n"
+            "    harness:stage harness:toolCall ;\n"
+            "    harness:category harness:authoritySafety ;\n"
+            "    harness:outcome harness:refuse .\n"
+        )
+        (repo / ".gonk" / "queries" / "harness-firings-by-control.rq").write_text(
+            "# QUESTION: How often has each control fired, and when first?\n"
+            "# EMPTY: Nothing has fired.\n"
+            "SELECT ?control ?first ?last WHERE { GRAPH <urn:iki:harness:graph:LEDGER> "
+            "{ ?f ?p ?first } }\n"
+        )
+        fake = FakeIkigai(
+            [
+                ("graph-update", ok("updated <urn:iki:harness:graph:acme>: +9 -0 quads\n")),
+                (":store:graph-select", ok(answer)),
+            ]
+        )
+        code, out, err = run(repo, ["harness"], fake)
+        self.assertEqual(code, 0, out + err)
+        return out
+
+    def test_the_table_is_the_same_width_however_a_time_is_written(self):
+        # The defect: one run answered `…05:15:00.34Z` and another `…05:15:00.340Z`, so the
+        # checked transcript's column changed width between runs and had to elide the row.
+        header = "?control\t?first\t?last\n"
+        control = "<urn:iki:harness:starter:control:evidence-required>\t"
+        early = self.harness_run(
+            header
+            + control
+            + datetime_literal("2026-10-14T05:15:00.34Z")
+            + "\t"
+            + datetime_literal("2026-10-14T06:00:00.5Z")
+            + "\n"
+        )
+        late = self.harness_run(
+            header
+            + control
+            + datetime_literal("2026-10-14T05:15:00.340Z")
+            + "\t"
+            + datetime_literal("2026-10-14T06:00:00.500Z")
+            + "\n"
+        )
+        self.assertEqual(early, late)
+        for line in early.splitlines():
+            if line.startswith("  ctl:"):
+                self.assertIn("2026-10-14T05:15:00.340Z", line)
+                self.assertIn("2026-10-14T06:00:00.500Z", line)
+
+
 class LedgerOutput(unittest.TestCase):
     def test_the_ledgers_listing_parses(self):
         text = (

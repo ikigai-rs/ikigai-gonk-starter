@@ -719,5 +719,86 @@ class Proofs(unittest.TestCase):
             )
 
 
+class Wiring(unittest.TestCase):
+    """A sensor that is not wired is silent because nothing runs it, and the graph says which
+    (harness:wiredBy on the fragment, harness:wired loaded by `gonk.py harness`): a coverage
+    answer can then tell it from a sensor that is wired and quiet. Ledger item 1480."""
+
+    def test_a_wiredby_names_a_part_the_process_carries(self):
+        parts = harness.process_parts(ROOT)
+        self.assertIn("claude:require-claim", parts)
+        for repo in [generated(self, names, "-".join(names)) for names in [["solo"], ["workers"]]]:
+            graph = harness.read_graph(repo / harness.GRAPH_FILE)
+            carried = harness.process_parts(repo)
+            stated = {
+                part
+                for s in graph.of_type(H + "Control")
+                for part in graph.values(s, H + "wiredBy")
+            }
+            self.assertTrue(stated)
+            self.assertLessEqual(stated, carried)
+
+    def test_only_a_sensor_says_what_wires_it(self):
+        repo = generated(self, ["solo"])
+        graph = repo / harness.GRAPH_FILE
+        text = graph.read_text().replace(
+            'harness:section "1. Claim the item before you write" ;',
+            'harness:section "1. Claim the item before you write" ;\n    harness:wiredBy "x" ;',
+            1,
+        )
+        graph.write_text(text)
+        self.assertIn("only a sensor says what wires it", "\n".join(harness.check(repo)))
+
+    def test_a_wiredby_no_part_carries_is_named(self):
+        repo = generated(self, ["solo"])
+        graph = repo / harness.GRAPH_FILE
+        graph.write_text(
+            graph.read_text().replace(
+                'harness:wiredBy "claude:require-claim"', 'harness:wiredBy "no:such"', 1
+            )
+        )
+        out = "\n".join(harness.check(repo))
+        self.assertIn("wiredBy 'no:such'", out)
+        self.assertIn(".gonk/process.toml does not carry", out)
+
+    def test_the_run_says_which_sensors_are_wired_here(self):
+        """`gonk.py harness` decides wiring from the working tree's own files, the same checks
+        `init` reports, and loads it as harness:wired beside the graph."""
+        repo = generated(self, ["solo"])
+        wire(repo)  # a claim needs gonk; the harness load does not, and the fake answers it
+        fake = FakeIkigai(
+            [
+                ("graph-update", ok("updated <urn:iki:harness:graph:acme>: +9 -0 quads\n")),
+                (":store:graph-select", ok("?control\n")),
+            ]
+        )
+        code, out, err = run(gonk.main, repo, ["harness"], fake)
+        self.assertEqual(code, 0, out + err)
+        # The hook is off here (no .claude/settings*.json): its sensors are named not wired.
+        self.assertIn("not wired: ctl:edit-without-live-claim", out)
+        update = next(stdin for command, stdin in fake.calls if "graph-update" in command)
+        self.assertIn("<urn:iki:harness:starter:control:edit-without-live-claim>", update)
+        self.assertIn("https://ikigai-rs.dev/ns/harness#wired", update)
+        self.assertIn('"false"^^<http://www.w3.org/2001/XMLSchema#boolean>', update)
+
+    def test_the_same_tree_wired_says_so(self):
+        repo = generated(self, ["solo"])
+        wire(repo)
+        (repo / ".claude").mkdir()
+        (repo / ".claude" / "settings.json").write_text(
+            '{"hooks": {"PreToolUse": [{"command": "python3 hooks/claude/require-claim.py"}]}}\n'
+        )
+        fake = FakeIkigai(
+            [
+                ("graph-update", ok("updated <urn:iki:harness:graph:acme>: +9 -0 quads\n")),
+                (":store:graph-select", ok("?control\n")),
+            ]
+        )
+        code, out, _ = run(gonk.main, repo, ["harness"], fake)
+        self.assertEqual(code, 0, out)
+        self.assertIn("wired: ctl:edit-without-live-claim", out)
+        self.assertNotIn("not wired: ctl:edit-without-live-claim", out)
+
+
 if __name__ == "__main__":
     unittest.main()

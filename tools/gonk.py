@@ -1194,6 +1194,22 @@ def git_out(repo: Path, *argv: str) -> str | None:
     return done.stdout.strip() if done.returncode == 0 else None
 
 
+def hook_settings_on(repo: Path) -> bool:
+    """Is the Claude Code claim hook merged into this working tree's settings?"""
+    settings = [repo / ".claude" / n for n in ("settings.json", "settings.local.json")]
+    return any(s.is_file() and "require-claim.py" in s.read_text("utf-8") for s in settings)
+
+
+def post_commit_installed(repo: Path) -> bool:
+    """Does this working tree's git point `core.hooksPath` at hooks/git?"""
+    return git_out(repo, "config", "--get", "core.hooksPath") == "hooks/git"
+
+
+def worker_configured(repo: Path) -> bool:
+    """Is this machine configured to run a worker (.gonk/worker.toml)?"""
+    return (repo / ".gonk" / "worker.toml").is_file()
+
+
 def process_rows(cfg: Config, process: dict | None, row) -> None:
     """The process this repository works by, and what its profiles need that `init` can see
     without asking gonk."""
@@ -1215,8 +1231,7 @@ def process_rows(cfg: Config, process: dict | None, row) -> None:
             row("note", "role", role)
     hooks = process.get("hooks", [])
     if "claude:require-claim" in hooks:
-        settings = [repo / ".claude" / n for n in ("settings.json", "settings.local.json")]
-        on = any(s.is_file() and "require-claim.py" in s.read_text("utf-8") for s in settings)
+        on = hook_settings_on(repo)
         row(
             "ok" if on else "note",
             "hook",
@@ -1227,12 +1242,11 @@ def process_rows(cfg: Config, process: dict | None, row) -> None:
         )
     if "git:post-commit" in hooks:
         hook = repo / "hooks" / "git" / "post-commit"
-        hooks_path = git_out(repo, "config", "--get", "core.hooksPath")
         if not hook.is_file():
             row("missing", "hook", "hooks/git/post-commit is not in this repository")
-        elif hooks_path is None and git_out(repo, "rev-parse", "--git-dir") is None:
+        elif git_out(repo, "rev-parse", "--git-dir") is None:
             row("missing", "hook", "not a git working tree yet: `git init`, then `just hooks`")
-        elif hooks_path != "hooks/git":
+        elif not post_commit_installed(repo):
             row(
                 "missing",
                 "hook",
@@ -1243,7 +1257,7 @@ def process_rows(cfg: Config, process: dict | None, row) -> None:
             row("ok", "hook", "post-commit asks gonk to review each commit (core.hooksPath)")
     checks = process.get("checks", [])
     if "worker-config" in checks:
-        if (repo / ".gonk" / "worker.toml").is_file():
+        if worker_configured(repo):
             row("ok", "worker", ".gonk/worker.toml configures this machine's worker loop")
         else:
             row(
@@ -1573,7 +1587,29 @@ def cmd_status(args, cfg: Config, make_ikigai) -> int:
 # --------------------------------------------------------------------------- the harness
 
 HARNESS_PREFIX = "harness-"
-TSV_TERM = re.compile(r'^"(.*)"(?:\^\^<[^>]*>|@[A-Za-z-]+)?$|^<(.*)>$')
+TSV_TERM = re.compile(r'^"(.*)"(?:\^\^<([^>]*)>|@([A-Za-z-]+))?$|^<(.*)>$')
+XSD_DATETIME = "http://www.w3.org/2001/XMLSchema#dateTime"
+
+
+def fixed_datetime(text: str) -> str:
+    """An `xsd:dateTime` at fixed width: `YYYY-MM-DDTHH:MM:SS.mmmZ`, UTC, as ikigai-log's own
+    column is (`tools/harness.py`'s `stamp`).
+
+    A store may write the same instant with or without the trailing zeros of its fraction
+    (`…05:15:00.34Z` and `…05:15:00.340Z`), which changed the width of the coverage table's
+    first and last columns between runs, so a checked transcript had to elide the row (ledger
+    item 1480). A value that is not a date this module can read is left exactly as it came, and
+    so is one with no `T` in it: that is not an xsd:dateTime whatever `fromisoformat` makes of
+    it. A bare local time (no offset) is read as UTC, so the table is the same on every machine.
+    """
+    if "T" not in text:
+        return text
+    try:
+        when = datetime.fromisoformat(text)
+    except ValueError:
+        return text
+    when = (when.replace(tzinfo=UTC) if when.tzinfo is None else when).astimezone(UTC)
+    return when.strftime("%Y-%m-%dT%H:%M:%S") + f".{when.microsecond // 1000:03d}Z"
 
 
 def query_header(text: str) -> dict[str, str]:
@@ -1601,15 +1637,68 @@ def graph_select(ikigai: Ikigai, query: str, ledger: str, graph: str) -> Answer:
     return ikigai.run(command)
 
 
+def sensor_wiring(cfg: Config, graph, process: dict | None) -> dict[str, bool]:
+    """Which of the graph's sensors are turned on in THIS working tree, by control id.
+
+    A sensor whose fragment says `harness:wiredBy <part>` is on only where that part of the
+    process is carried: the Claude Code hook where its settings are merged, the review hook
+    where `core.hooksPath` points at it, the worker's sensors where this machine is configured
+    to run a worker. Decided by the same checks `init` reports (ledger item 1480), so the graph
+    can tell a sensor that is not wired from one that is wired and quiet.
+
+    Only controls carrying `harness:wiredBy` are answered: a sensor without it is on wherever
+    its code is, and needs no statement."""
+    repo = cfg.repo
+    parts = {
+        "claude:require-claim": (process or {}).get("hooks", []),
+        "git:post-commit": (process or {}).get("hooks", []),
+        "worker-config": (process or {}).get("checks", []),
+    }
+    decides = {
+        "claude:require-claim": hook_settings_on,
+        "git:post-commit": post_commit_installed,
+        "worker-config": worker_configured,
+    }
+    out: dict[str, bool] = {}
+    for control in graph.of_type(harness.H + "Control"):
+        for name in graph.values(control, harness.H + "wiredBy"):
+            cid = control.value[len(harness.CONTROL_NS) :]
+            # The part is carried only if the process names it, and it is on only if this
+            # working tree shows it: a repository whose process does not carry the part is not
+            # wired to it however its files look.
+            decide = decides.get(name)
+            out[cid] = bool(decide and name in parts[name] and decide(repo))
+    return out
+
+
+def wiring_triples(wiring: dict[str, bool]) -> list[tuple]:
+    """The wiring this machine decided, as `harness:wired` statements about the controls."""
+    return [
+        (
+            harness.I(harness.CONTROL_NS + cid),
+            harness.I(harness.H + "wired"),
+            harness.L("true" if on else "false", harness.XSD + "boolean"),
+        )
+        for cid, on in sorted(wiring.items())
+    ]
+
+
 def tsv_rows(text: str) -> tuple[list[str], list[list[str]]]:
-    """(columns, rows) of a tab-separated answer, each term shortened for a person to read."""
+    """(columns, rows) of a tab-separated answer, each term shortened for a person to read.
+
+    An `xsd:dateTime` is written at fixed precision (`fixed_datetime`), so a column of times is
+    the same width whatever the store spelled."""
     lines = [ln for ln in text.splitlines() if ln and not ln.startswith("[")]
     if not lines:
         return [], []
 
     def short(term: str) -> str:
         m = TSV_TERM.match(term)
-        value = (m.group(1) if m.group(1) is not None else m.group(2)) if m else term
+        if not m:
+            return term
+        value = m.group(1) if m.group(1) is not None else m.group(4)
+        if m.group(2) == XSD_DATETIME:
+            return fixed_datetime(value)
         value = value.replace('\\"', '"')
         for ns, alias in [
             (harness.CONTROL_NS, "ctl:"),
@@ -1634,7 +1723,13 @@ def cmd_harness(args, cfg: Config, make_ikigai) -> int:
     loaded (a firing's IRI is its log and sequence, so a second load adds nothing). Writing that
     graph needs `urn:cap:store:write:graph:<graph>` (and its read grant, for the update's
     WHERE), which gonk's owner-only socket holds and no ledger grant does: over QUIC a worker or
-    a writer is refused and told so, and the questions are asked of what is already there."""
+    a writer is refused and told so, and the questions are asked of what is already there.
+
+    Beside the description it loads `harness:wired` for each sensor whose fragment names
+    `harness:wiredBy`, decided here from this working tree's own files (`sensor_wiring`). That
+    is the loading tree's wiring, like the description is the loading tree's graph: the load is
+    the dispatcher's, from gonk's machine, and a sensor that is not wired there reads as *not
+    wired* rather than as a rule that has landed (ledger item 1480)."""
     if harness is None:
         raise ConfigError("tools/harness.py is not beside tools/gonk.py")
     need(cfg, "ledger", "target")
@@ -1661,15 +1756,24 @@ def cmd_harness(args, cfg: Config, make_ikigai) -> int:
     firings = segment.firings if segment else []
     target = harness.graph_iri(cfg.ledger)
     other = len(controls) - sensors
+    process = read_process(cfg.repo)
+    # Which of these sensors are turned on in THIS working tree: the same checks `init`
+    # reports, loaded with the graph so a coverage answer can tell a sensor that is not wired
+    # from one that is wired and quiet (ledger item 1480).
+    wiring = sensor_wiring(cfg, graph, process)
     print(
         f"harness: {guides} rule(s), {sensors} sensor(s) and {other} other control(s) in "
         f"{harness.GRAPH_FILE}; {len(firings)} firing(s) in this tree"
     )
+    for cid, on in sorted(wiring.items()):
+        print(f"  {'wired' if on else 'not wired'}: ctl:{cid}")
     ikigai = make_ikigai(cfg.target)
     failed = 0
     if not args.no_load:
         update = harness.load_update(
-            target, graph.triples, harness.firing_triples(segment) if segment else []
+            target,
+            graph.triples,
+            [*wiring_triples(wiring), *(harness.firing_triples(segment) if segment else [])],
         )
         answer = ikigai.run(f"sink {PREFIX}iki:store:graph-update graph={target}", stdin=update)
         if answer.ok:

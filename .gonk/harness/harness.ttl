@@ -311,6 +311,7 @@ ctl:worker-refuses-root a harness:Control ;
     harness:direction harness:feedback ; harness:execution harness:computational ;
     harness:stage harness:runtime ; harness:category harness:authoritySafety ;
     harness:outcome harness:refuse ;
+    harness:wiredBy "worker-config" ;
     harness:enforcedAt "tools/worker.py#cmd_run" ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_refuses_root .
 
@@ -320,6 +321,7 @@ ctl:worker-needs-labels a harness:Control ;
     harness:direction harness:feedback ; harness:execution harness:computational ;
     harness:stage harness:runtime ; harness:category harness:authoritySafety ;
     harness:outcome harness:refuse ;
+    harness:wiredBy "worker-config" ;
     harness:enforcedAt "tools/worker.py#load_worker" ;
     harness:statedBy guide:dispatcher-marks-the-work ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_needs_labels .
@@ -330,6 +332,7 @@ ctl:worker-work-root-in-home a harness:Control ;
     harness:direction harness:feedback ; harness:execution harness:computational ;
     harness:stage harness:runtime ; harness:category harness:authoritySafety ;
     harness:outcome harness:refuse ;
+    harness:wiredBy "worker-config" ;
     harness:enforcedAt "tools/worker.py#work_root" ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_work_root_in_home .
 
@@ -339,6 +342,7 @@ ctl:worker-skips-claimed a harness:Control ;
     harness:direction harness:feedback ; harness:execution harness:computational ;
     harness:stage harness:runtime ; harness:category harness:authoritySafety ;
     harness:outcome harness:refuse ;
+    harness:wiredBy "worker-config" ;
     harness:enforcedAt "tools/worker.py#skip_reason" ;
     harness:statedBy guide:a-claim-is-a-fence ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_skips_claimed .
@@ -349,6 +353,7 @@ ctl:worker-one-repository-label a harness:Control ;
     harness:direction harness:feedback ; harness:execution harness:computational ;
     harness:stage harness:runtime ; harness:category harness:authoritySafety ;
     harness:outcome harness:refuse ;
+    harness:wiredBy "worker-config" ;
     harness:enforcedAt "tools/worker.py#skip_reason" ;
     harness:statedBy guide:dispatcher-marks-the-work ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_one_repository_label .
@@ -359,6 +364,7 @@ ctl:worker-skips-awaiting-dispatcher a harness:Control ;
     harness:direction harness:feedback ; harness:execution harness:computational ;
     harness:stage harness:runtime ; harness:category harness:authoritySafety ;
     harness:outcome harness:refuse ;
+    harness:wiredBy "worker-config" ;
     harness:enforcedAt "tools/worker.py#skip_reason" ;
     harness:statedBy guide:dispatcher-closes-on-evidence ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_skips_awaiting_dispatcher .
@@ -369,6 +375,7 @@ ctl:worker-skips-handed-back a harness:Control ;
     harness:direction harness:feedback ; harness:execution harness:computational ;
     harness:stage harness:runtime ; harness:category harness:behavior ;
     harness:outcome harness:refuse ;
+    harness:wiredBy "worker-config" ;
     harness:enforcedAt "tools/worker.py#skip_reason" ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_skips_handed_back .
 
@@ -378,6 +385,7 @@ ctl:worker-one-agent-per-repository a harness:Control ;
     harness:direction harness:feedback ; harness:execution harness:computational ;
     harness:stage harness:runtime ; harness:category harness:authoritySafety ;
     harness:outcome harness:refuse ;
+    harness:wiredBy "worker-config" ;
     harness:enforcedAt "tools/worker.py#skip_reason" , "tools/worker.py#run_once" , "tools/worker.py#work" ;
     harness:statedBy guide:one-agent-per-repository ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_one_agent_per_repository .
@@ -388,6 +396,7 @@ ctl:worker-claim-lost a harness:Control ;
     harness:direction harness:feedback ; harness:execution harness:computational ;
     harness:stage harness:runtime ; harness:category harness:authoritySafety ;
     harness:outcome harness:refuse ;
+    harness:wiredBy "worker-config" ;
     harness:enforcedAt "tools/worker.py#work_claimed" ;
     harness:statedBy guide:stop-when-claim-gone ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_claim_lost .
@@ -398,6 +407,7 @@ ctl:worker-budget-overrun a harness:Control ;
     harness:direction harness:feedback ; harness:execution harness:computational ;
     harness:stage harness:runtime ; harness:category harness:behavior ;
     harness:outcome harness:refuse ;
+    harness:wiredBy "worker-config" ;
     harness:enforcedAt "tools/worker.py#work_claimed" ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_budget_overrun .
 
@@ -407,6 +417,7 @@ ctl:worker-no-evidence a harness:Control ;
     harness:direction harness:feedback ; harness:execution harness:computational ;
     harness:stage harness:runtime ; harness:category harness:behavior ;
     harness:outcome harness:refuse ;
+    harness:wiredBy "worker-config" ;
     harness:enforcedAt "tools/worker.py#work_claimed" ;
     harness:statedBy guide:report-with-evidence ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_no_evidence .
@@ -417,6 +428,7 @@ ctl:worker-merged-before-exit a harness:Control ;
     harness:direction harness:feedback ; harness:execution harness:computational ;
     harness:stage harness:runtime ; harness:category harness:authoritySafety ;
     harness:outcome harness:warn ;
+    harness:wiredBy "worker-config" ;
     harness:enforcedAt "tools/worker.py#work_claimed" ;
     harness:statedBy guide:worker-never-closes-or-merges ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_merged_before_exit .
@@ -430,6 +442,7 @@ ctl:edit-without-live-claim a harness:Control ;
     harness:stage harness:toolCall ; harness:category harness:authoritySafety ;
     harness:outcome harness:refuse ;
     harness:enforcedAt "hooks/claude/require-claim.py#decide" ;
+    harness:wiredBy "claude:require-claim" ;
     harness:statedBy guide:claim-before-write , guide:stop-when-claim-gone ;
     harness:firedBy test:test_harness:SensorsFire.test_edit_without_live_claim .
 
@@ -440,6 +453,7 @@ ctl:edit-hook-not-wired a harness:Control ;
     harness:stage harness:toolCall ; harness:category harness:authoritySafety ;
     harness:outcome harness:refuse ;
     harness:enforcedAt "hooks/claude/require-claim.py#decide" ;
+    harness:wiredBy "claude:require-claim" ;
     harness:statedBy guide:claim-before-write ;
     harness:firedBy test:test_harness:SensorsFire.test_edit_hook_not_wired .
 
@@ -450,5 +464,6 @@ ctl:edit-hook-unreadable-input a harness:Control ;
     harness:stage harness:toolCall ; harness:category harness:authoritySafety ;
     harness:outcome harness:refuse ;
     harness:enforcedAt "hooks/claude/require-claim.py#main" ;
+    harness:wiredBy "claude:require-claim" ;
     harness:statedBy guide:claim-before-write ;
     harness:firedBy test:test_harness:SensorsFire.test_edit_hook_unreadable_input .

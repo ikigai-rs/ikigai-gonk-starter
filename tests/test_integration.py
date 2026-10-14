@@ -533,7 +533,10 @@ class AgainstARealGonk(unittest.TestCase):
         ]:
             self.assertRegex(by_control, rf"ctl:{control}\s.*\sRefusal\s+1\s", control)
         never = section(again, "harness-sensors-never-fired")
-        self.assertRegex(never, r"ctl:worker-claim-lost\s.*fired by a test")
+        # This tree runs no worker (.gonk/worker.toml is absent), so its sensors are honestly
+        # named not wired rather than read as quiet: the graph tells the two apart now.
+        self.assertRegex(never, r"ctl:worker-claim-lost\s.*\sno\s+not wired")
+        self.assertRegex(never, r"ctl:edit-without-live-claim\s.*\sno\s+not wired")
         self.assertNotIn("ctl:evidence-required", never)
         self.assertNotIn("NO TEST", never)
         unchecked = section(again, "harness-guides-without-sensor")
