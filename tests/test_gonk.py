@@ -306,7 +306,6 @@ class Init(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(fake.target.mount_args()[1], "urn:gk:=quic://gonk-host:1062")
 
-
     def test_a_worker_grant_reports_publishing_once_and_an_enrolled_machine_skips_enrollment(self):
         repo = scratch_repo(self)
         certs = repo / "certs"
