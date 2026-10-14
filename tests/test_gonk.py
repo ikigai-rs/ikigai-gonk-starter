@@ -552,7 +552,7 @@ class LedgerOutput(unittest.TestCase):
     def test_describe_exit_1_no_endpoint_resolved_is_absent(self):
         """A describe that exits 1 with "no endpoint resolved" means absent, not unknown."""
         answer = gonk.Answer(1, "", "no endpoint resolved for urn:gk:nl:sparql")
-        self.assertFalse(gonk.offered(answer))
+        self.assertIs(gonk.offered(answer), False)
 
 
 if __name__ == "__main__":
