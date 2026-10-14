@@ -7,7 +7,8 @@
 # chmod's ACL grammar, openrsync, sshd_config) without a spare Mac. This runs it on one:
 #   - accounts made with dscl, each with its OWN primary group: dsmemberutil must say neither is
 #     in staff, the group that may read every standard home
-#     (/Users/<name> is drwxr-x--- <name>:staff)
+#     (/Users/<name> is drwxr-x--- <name>:staff); a new account's uid is its group's gid, and an
+#     account an earlier setup made with different ids keeps them (never renumbered)
 #   - the ACL deny on the admin's home holds even when the account IS put in staff
 #   - the view: a LaunchDaemon's rsync copy that hubdiag reads and cannot write
 #   - --check green, then RED when the deny is removed and hubdiag is in staff (macOS's form of
@@ -48,16 +49,40 @@ chown -R fixadmin:staff /Users/fixadmin
 ssh-keygen -q -t ed25519 -N '' -C hub-fixture -f "$T/hub"
 echo "   sshd_config Include line: $(grep -n '^Include' /etc/ssh/sshd_config || echo NONE)"
 
+echo "── fixture: hubdiag as an earlier setup made it, uid one above its group's gid (ledger item 1450)"
+# What tweezer got before the fix (hubdiag 551/550): the setup must keep it, never renumber it.
+# Two adjacent ids free as both a uid and a gid, so the fixture collides with nothing here.
+taken() { dscl . -search /Users UniqueID "$1" 2>/dev/null | grep -q . || dscl . -search /Groups PrimaryGroupID "$1" 2>/dev/null | grep -q .; }
+g0=550; while taken "$g0" || taken "$((g0 + 1))"; do g0=$((g0 + 1)); done
+dseditgroup -o create -i "$g0" -r "hub diagnostics (read-only)" hubdiag
+dscl . -create /Users/hubdiag
+dscl . -create /Users/hubdiag UniqueID "$((g0 + 1))"
+dscl . -create /Users/hubdiag PrimaryGroupID "$g0"
+dscl . -create /Users/hubdiag UserShell /bin/zsh
+dscl . -create /Users/hubdiag NFSHomeDirectory /Users/hubdiag
+dscl . -create /Users/hubdiag Password '*'
+dscl . -create /Users/hubdiag IsHidden 1
+echo "   hubdiag: uid $((g0 + 1)), group gid $g0"
+
 views=(--view work=/Users/agent/work --view src=/Users/fixadmin/src)
 echo "── dry run, setup, setup again"
 out="$("$setup" --dry-run --admin fixadmin --key "$T/hub.pub" "${views[@]}" 2>&1)"; st=$?
 expect_exit "dry run" 0 "$st"
-id hubdiag >/dev/null 2>&1 && bad "dry run created hubdiag" || ok "dry run created no account"
+id agent >/dev/null 2>&1 && bad "dry run created agent" || ok "dry run created no account"
+has "the dry run says the new account's id is chosen when applied" "chosen when applied" "$out"
 out="$("$setup" --admin fixadmin --key "$T/hub.pub" "${views[@]}" 2>&1)"; st=$?
 expect_exit "setup" 0 "$st"; printf '%s\n' "$out" | sed 's/^/     | /'
+gid_of() { dscl . -read "/Groups/$1" PrimaryGroupID 2>/dev/null | awk '{print $2}'; }
+au="$(id -u agent)" ag="$(gid_of agent)" ap="$(id -g agent)"
+if [ -n "$au" ] && [ "$au" = "$ag" ] && [ "$ap" = "$ag" ]; then ok "agent: one id for the account and its group ($au)"
+else bad "agent: uid $au, primary gid $ap, group agent's gid $ag: wanted one id for all three (ledger item 1450)"; fi
+hu="$(id -u hubdiag)" hg="$(gid_of hubdiag)"
+if [ "$hu/$hg" = "$((g0 + 1))/$g0" ]; then ok "hubdiag kept its ids (uid $hu, gid $hg): an existing account is never renumbered"
+else bad "hubdiag was renumbered: uid $hu, gid $hg (it had $((g0 + 1))/$g0)"; fi
 out="$("$setup" --admin fixadmin --key "$T/hub.pub" "${views[@]}" 2>&1)"; st=$?
 expect_exit "second setup" 0 "$st"
 has "second setup changes nothing" "0 change(s) made" "$out"
+has "and says why hubdiag's ids differ" "never renumbered" "$out"
 
 for u in hubdiag agent; do
     m="$(dsmemberutil checkmembership -U "$u" -G staff 2>&1)"
