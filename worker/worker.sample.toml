@@ -1,12 +1,16 @@
 # A worker's configuration: copy to .gonk/worker.toml in the worker's checkout and edit.
-# Git-ignored there, because it is this machine's. tools/worker.py reads it; how the machine
-# reaches gonk, the ledger, and the holder name are in .gonk/local.toml and .gonk/gonk.toml,
-# written by `python3 tools/gonk.py init` (see worker/README.md, "Running the worker loop").
+# Git-ignored there, because it is this machine's. A machine that runs one loop per agent
+# has .gonk/worker-<agent>.toml instead, one per agent, written from this file (or from its
+# worker.toml) by `python3 tools/worker.py init-agents` (worker/README.md, step 8).
+# tools/worker.py reads it; how the machine reaches gonk, the ledger, and the holder name
+# are in .gonk/local.toml and .gonk/gonk.toml, written by `python3 tools/gonk.py init` (see
+# worker/README.md, "Running the worker loop"). A loop's own `holder` overrides that one.
 
 # Which items this worker takes: `next` narrowed to items carrying ALL of these labels.
 # Required, so a worker never takes work nobody meant for it. The dispatcher marks an item
 # ready for this machine by adding the label.
 labels = ["worker:my-worker"]
+# holder = "my-worker-codex"   # this loop's holder name, over .gonk/local.toml's
 # Items carrying ANY of these are never taken.
 # without = ["needs-person"]
 
@@ -21,6 +25,8 @@ poll = "60s"           # between polls of `next` when nothing is ready
 # keep = false         # true keeps every worktree after its hand-back
 # gh = "gh"            # the GitHub CLI, if it is not `gh` on PATH
 # stop_file = ".gonk/state/worker/stop"   # create it to stop the loop between items
+# (The default. A loop of its own, .gonk/worker-<agent>.toml, stops at
+# .gonk/state/worker/<agent>/stop, and .gonk/state/worker/stop stops every loop.)
 
 [agent]
 # One of the presets (each the agent's documented non-interactive form):

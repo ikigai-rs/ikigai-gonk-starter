@@ -52,6 +52,7 @@ artifacts/<name>/        one directory per deployable thing, any language each
 tools/gonk.py            init, seed, file, next, claim, release, report, close, status, harness
 tools/harness.py         the harness: its graph, its firing log, and the check that holds both true
 tools/worker.py          the worker loop: take an item, run an agent on it, hand it back
+tools/worker_repos.py    enroll an owner's repositories in a worker, and check it can push
 tools/new.py             generate a repository with the library-lending sample in it
 profiles/                the process profiles new.py can generate with (see Choosing a process)
 templates/               what new.py generates from: the sample, and one directory per language
@@ -377,6 +378,14 @@ python3 tools/worker.py plan                         # what it would take, and w
 python3 tools/worker.py run --once                   # one item, then exit
 python3 tools/worker.py run                          # the loop; worker/units/ runs it as a service
 ```
+
+A machine that runs several agents runs **one loop per agent** from the same checkout, so the
+dispatcher can route each item to the agent that suits it by labeling it `worker:<name>` and
+`agent:<agent>`: `python3 tools/worker.py init-agents --name <name> --agents claude,codex,hermes`
+writes a `.gonk/worker-<agent>.toml` for each, `python3 tools/worker_repos.py --owner <owner>`
+enrolls every repository of an owner in all of them, and `worker/units/gonk-worker@.service`
+runs each as `gonk-worker@<agent>`. The loops share the per-repository locks, so two agents
+never work one repository at once ([`worker/README.md`](worker/README.md), step 8).
 
 One agent per repository: it takes no item whose repository already has a live claim held by
 anyone, and runs one item per repository on its machine. Until gonk's ledger enforces that

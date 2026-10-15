@@ -380,18 +380,135 @@ agent's home: it refuses a work root anywhere else, and refuses to run as root.
     python3 tools/worker.py run --once                            # one item, then exit
 
 `init` and the enrollment are the top-level README's "gonk on another machine"; the claims
-then carry this machine's identity and are stamped a machine's. ⚠ The ssh tunnel in step 7
+then carry this machine's identity and are stamped a machine's. That is one loop running one
+agent. A machine with several agents runs a loop per agent instead (next), from this same
+checkout; the configuration and everything after it below hold for each loop. ⚠ The ssh tunnel in step 7
 forwards **TCP**, which carries gonk's HTTP door. gonk's machine door is **QUIC, which is
 UDP**, and ssh does not forward UDP, so a worker that reaches gonk only through that tunnel
 cannot run the loop over QUIC: it needs gonk's QUIC port reachable directly (or gonk on the
 same machine, over its socket).
 
-**The configuration**, `.gonk/worker.toml` (git-ignored; [`worker.sample.toml`](worker.sample.toml)
-is the commented template):
+#### One loop per agent
+
+A worker machine with several agents (Claude Code, Codex and Hermes, say) runs **one loop per
+agent**, so the dispatcher can route each item to the agent that suits it. It labels the item
+`worker:<name>` AND `agent:<agent>`, and only the loop whose configuration names both takes it.
+Every loop runs from the one checkout, `~/gonk-worker`, under the one account.
+
+    python3 tools/worker.py init-agents --name <worker name> --agents claude,codex,hermes
+    python3 tools/worker_repos.py --owner <owner> --dry-run          # what it would enroll
+    python3 tools/worker_repos.py --owner <owner> --check-push       # enroll; can it push?
+    python3 tools/worker.py --config .gonk/worker-codex.toml plan    # each loop, checked
+    python3 tools/worker.py --config .gonk/worker-codex.toml run --once
+
+- **`init-agents`** writes `.gonk/worker-<agent>.toml` for each agent (git-ignored, like
+  `worker.toml`), from the machine's `.gonk/worker.toml` when it has one, so its settings and
+  repositories come along, and from [`worker.sample.toml`](worker.sample.toml) otherwise. Each
+  gets `labels = ["worker:<name>", "agent:<agent>"]`, `holder = "<name>-<agent>"`, and the
+  `[agent]` table that has run an item end to end here: Claude Code with
+  `--permission-mode bypassPermissions`, Codex with `--sandbox danger-full-access`, Hermes's
+  preset (below says why each is opened). It never overwrites a configuration that exists, so
+  running it again is safe and an edited file stays edited. `--from <file>` starts from another
+  file.
+- **`holder`** in a loop's configuration overrides `.gonk/local.toml`'s, so a claim says which
+  agent holds it (`my-worker-codex`). The holder is a **label**; the identity stays the
+  machine's. gonk records the principal (the machine's certificate) beside the label, so the
+  item shows `my-worker-codex (as urn:iki:host:gonk:client:<fingerprint>)`, and **no new
+  enrollment** is needed: the certificate enrolled with `--worker <ledger>` claims, renews and
+  releases under any holder name. A claim is its holder's label AND its principal, so another
+  machine spelling the same label can neither renew nor take it. The claim, every renewal, the
+  compare-and-set release and every note the loop posts use the loop's holder.
+- **What the loops share, and what each keeps.** Under `.gonk/state/worker/`:
+
+  | | shared by every loop | each loop's own (`<agent>/`) |
+  | --- | --- | --- |
+  | the per-repository locks (`locks/`) | ✓ two agents never work one repository at once, nor share its clone under the work root | |
+  | the items it handed back (`attempts.json`) | | ✓ an item one agent handed back can be routed to another; `--config … forget <N>` clears one loop's |
+  | the stop file | `stop` stops every loop between items | `<agent>/stop` stops that loop alone |
+
+  A machine's single `worker.toml` loop keeps `attempts.json` and `stop` where they always were,
+  directly under `.gonk/state/worker/`.
+- **Routing.** An item labeled only `worker:<name>` is taken by no per-agent loop: it needs an
+  `agent:` label too. And do not run the single loop beside the per-agent ones: its labels are
+  a subset of theirs, so it would take their items.
+- **As services:** [`units/gonk-worker@.service`](units/gonk-worker@.service) is a templated
+  systemd user unit, `gonk-worker@<agent>`, which runs
+  `tools/worker.py run --config ~/gonk-worker/.gonk/worker-<agent>.toml`; each instance logs to
+  the journal under its own name (`journalctl --user -u gonk-worker@codex`). launchd has no
+  templated jobs, so on macOS `python3 tools/worker.py plist --agents claude,codex,hermes --out
+  <dir>` writes one daemon per agent from
+  [`units/dev.ikigai-rs.gonk-worker.plist`](units/dev.ikigai-rs.gonk-worker.plist): its label
+  ends `.<agent>`, it passes `--config`, and it logs to `/tmp/ikigai-gonk-worker-<agent>.log`.
+  Install each as that file's header says.
+
+**Which agent suits which work** (the dispatcher's choice, by the `agent:` label):
+
+- **Codex**: well-specified code fixes that come with a test, where the item says what is wrong
+  and how to show it fixed.
+- **Claude Code**: prose, books and documentation, accessibility, and items that need a
+  judgment call.
+- **Hermes**: a second opinion that is not Claude's, small items, and the non-Claude auditor
+  where a process requires one.
+
+**Moving a machine from the single loop to a loop per agent**, as agent
+(`sudo machinectl shell agent@`):
+
+    cd ~/gonk-worker && git pull --ff-only
+    touch .gonk/state/worker/stop                    # the single loop stops after its item
+    systemctl --user status gonk-worker              # until it says inactive (dead)
+    systemctl --user disable gonk-worker
+    rm .gonk/state/worker/stop                       # it now stops EVERY loop, so remove it
+    python3 tools/worker.py init-agents --name <worker name> --agents claude,codex,hermes
+    python3 tools/worker_repos.py --owner <owner> --check-push
+    for a in claude codex hermes; do python3 tools/worker.py --config .gonk/worker-$a.toml plan; done
+    cp worker/units/gonk-worker@.service ~/.config/systemd/user/
+    systemctl --user daemon-reload
+    systemctl --user enable --now gonk-worker@claude gonk-worker@codex gonk-worker@hermes
+
+A drop-in the single unit had (`systemctl --user edit gonk-worker`, e.g. Claude Code's
+`EnvironmentFile=`) does not carry over: give it to the instance that needs it,
+`systemctl --user edit gonk-worker@claude`. Items handed back by the single loop stay in its
+`.gonk/state/worker/attempts.json`, which the per-agent loops do not read.
+
+#### Enrolling every repository
+
+A worker takes an item only for a repository its configuration names (`[repos.<name>]`).
+[`tools/worker_repos.py`](../tools/worker_repos.py) adds them from GitHub:
+
+    python3 tools/worker_repos.py --owner <owner> --dry-run     # the diff it would make
+    python3 tools/worker_repos.py --owner <owner>               # make it
+    python3 tools/worker_repos.py --owner <owner> --include-private --exclude 'scratch-*'
+    python3 tools/worker_repos.py --check-push                  # only ask, about every one
+
+It lists the owner's repositories (`gh repo list <owner> --json name,url,isArchived,visibility
+--limit 1000`), skips archived ones, private ones unless `--include-private`, any that
+`--only`/`--exclude` (names or shell patterns, comma-separated) leave out, and any whose name a
+`repo:<name>` label cannot carry (`.github`); then it appends a block (`remote`, `github`) for
+each one missing from **each** configuration it is pointed at: every `.gonk/worker*.toml` by
+default, `--config <file>` (repeatable) for some. It only appends: an existing block is never
+edited or removed (one with another name but the same `github` counts as enrolled), every
+comment stays, the file is replaced atomically and keeps its mode, and a second run adds
+nothing.
+
+`--check-push` asks GitHub, for every repository the configurations name, whether the account
+`gh` is signed in as may push (`gh api repos/<owner>/<name> --jq .permissions.push`), and lists
+the ones it may not, with the page to fix it on. The fine-grained token's repository list is a
+manual step: on GitHub, signed in as the account the token belongs to, at
+`https://github.com/settings/personal-access-tokens`, edit the worker's token and add the
+repositories under **Repository access** (an organization that approves tokens then approves
+the change at `https://github.com/organizations/<owner>/settings/personal-access-token-requests`).
+⚠ Unverified here: whether GitHub narrows `permissions.push` to a fine-grained token's own
+repository list, or reports the account's role on the repository. A repository the token was
+not given answers 404 when it is private; a public one answers, and may say `true` for an
+account that could push with another credential. The first push is the final word.
+
+**The configuration**, `.gonk/worker.toml`, or each loop's `.gonk/worker-<agent>.toml`
+(git-ignored; [`worker.sample.toml`](worker.sample.toml) is the commented template):
 
 | key | default | what |
 | --- | --- | --- |
-| `labels` | (required) | `next` is narrowed to items carrying ALL of these, e.g. `["worker:<name>"]`; the dispatcher marks an item for this worker by labeling it |
+| `labels` | (required) | `next` is narrowed to items carrying ALL of these, e.g. `["worker:<name>"]`, or `["worker:<name>", "agent:<agent>"]` for one loop of several; the dispatcher marks an item for this worker by labeling it |
+| `holder` | `.gonk/local.toml`'s | the holder name this loop claims under, e.g. `<name>-<agent>`; a label, never a new identity |
 | `without` | none | items carrying ANY of these are never taken |
 | `[repos.<name>]` | (at least one) | `remote` (what `git clone` takes), `github` (`owner/name`, read from a github.com remote when omitted), `base` (default `main`) |
 | `[agent]` | (required) | `preset` (`claude`, `codex`, `hermes`, `hermes-profile` with `profile`) or `command`, a list with placeholders `{prompt}` `{prompt_file}` `{workdir}` `{branch}` `{item}` `{repo}` `{report_file}` `{profile}` |
@@ -401,7 +518,7 @@ is the commented template):
 | `ci_wait`, `ci_poll` | `10m`, `20s` | how long to wait, after the agent exits, for its pull request's CI to finish |
 | `poll` | `60s` | between polls of `next` when nothing is ready |
 | `keep` | `false` | keep every worktree after its hand-back (`run --keep` for one run) |
-| `gh`, `stop_file` | `gh`, `.gonk/state/worker/stop` | the GitHub CLI; the file that stops the loop between items |
+| `gh`, `stop_file` | `gh`, `.gonk/state/worker/stop` (a loop's own: `.gonk/state/worker/<agent>/stop`) | the GitHub CLI; the file that stops the loop between items (`.gonk/state/worker/stop` stops every loop) |
 
 The presets are each agent's documented non-interactive form (`claude -p`, `codex exec`,
 `hermes -z`). **Hermes, Codex and Claude Code have each run an item end to end on a Linux
@@ -505,7 +622,8 @@ nothing to show), 1 on an error, 2 on a configuration error. The loop (`run`) po
 stop file exists or it is signaled; on SIGTERM it stops the current agent and hands the item
 back with a note first.
 
-**As a service:** [`units/gonk-worker.service`](units/gonk-worker.service) (Linux, a systemd
+**As a service:** for a loop per agent, [`units/gonk-worker@.service`](units/gonk-worker@.service)
+and the generated plists (above). For the single loop, [`units/gonk-worker.service`](units/gonk-worker.service) (Linux, a systemd
 user unit of agent; agent lingers, so it runs with nobody logged in; its log is the journal)
 and [`units/dev.ikigai-rs.gonk-worker.plist`](units/dev.ikigai-rs.gonk-worker.plist) (macOS, a
 LaunchDaemon run as agent, since agent never logs in to the GUI; its log is
@@ -698,8 +816,10 @@ section).
 | --- | --- | --- |
 | [`worker-setup.sh`](worker-setup.sh) | on the worker, as root | setup (idempotent, `--dry-run`), and `--check` |
 | [`probe.sh`](probe.sh) | as the probed account | what this account can reach; read-only by construction |
-| [`../tools/worker.py`](../tools/worker.py) | on the worker, as agent | the worker loop (step 8) |
-| [`worker.sample.toml`](worker.sample.toml) | copied to `.gonk/worker.toml` | the loop's configuration, commented |
-| [`units/gonk-worker.service`](units/gonk-worker.service), [`units/dev.ikigai-rs.gonk-worker.plist`](units/dev.ikigai-rs.gonk-worker.plist) | as agent, by systemd or launchd | the loop as a service, with its PATH |
+| [`../tools/worker.py`](../tools/worker.py) | on the worker, as agent | the worker loop (step 8); `init-agents` and `plist` for a loop per agent |
+| [`../tools/worker_repos.py`](../tools/worker_repos.py) | on the worker, as agent | enrolls an owner's repositories in every loop's configuration; `--check-push` |
+| [`worker.sample.toml`](worker.sample.toml) | copied to `.gonk/worker.toml`, or by `init-agents` to `.gonk/worker-<agent>.toml` | the loop's configuration, commented |
+| [`units/gonk-worker@.service`](units/gonk-worker@.service) | as agent, by systemd | a loop per agent, `gonk-worker@<agent>` |
+| [`units/gonk-worker.service`](units/gonk-worker.service), [`units/dev.ikigai-rs.gonk-worker.plist`](units/dev.ikigai-rs.gonk-worker.plist) | as agent, by systemd or launchd | the single loop as a service, with its PATH; the plist is also what `worker.py plist` generates each agent's daemon from |
 | [`tests/probe-test.sh`](tests/probe-test.sh), [`tests/setup-test.sh`](tests/setup-test.sh) | anywhere, no root | the hermetic tests, run by `scripts/gates.sh` |
 | [`tests/ci-linux.sh`](tests/ci-linux.sh), [`tests/ci-macos.sh`](tests/ci-macos.sh) | on throwaway CI runners only | the boundary, end to end |

@@ -273,7 +273,8 @@ class Rig:
     def gh_argv(self) -> list[str]:
         return [sys.executable, str(FAKES / "gh.py"), "--state", str(self.gh_state)]
 
-    def configure(self, **overrides) -> None:
+    def configure(self, file: str = "worker.toml", **overrides) -> Path:
+        """Write `.gonk/<file>`: worker.toml, or one loop's worker-<agent>.toml."""
         settings = {
             "labels": '["worker:w1"]',
             "work_root": '"~/work"',
@@ -307,11 +308,13 @@ class Rig:
         lines += ["", "[agent]", f"command = {json.dumps(command)}"]
         lines += ["", "[repos.lib]", f'remote = "{self.origin}"', 'github = "acme/lib"']
         lines += ["", "[repos.other]", f'remote = "{self.origin}"', 'github = "acme/other"']
-        (self.checkout / ".gonk" / "worker.toml").write_text("\n".join(lines) + "\n")
+        path = self.checkout / ".gonk" / file
+        path.write_text("\n".join(lines) + "\n")
+        return path
 
-    def worker(self, ikigai) -> worker.Worker:
+    def worker(self, ikigai, config: Path | None = None) -> worker.Worker:
         cfg = gonk.load(self.checkout)
-        wc = worker.load_worker(cfg)
+        wc = worker.load_worker(cfg, config)
         return worker.Worker(cfg, wc, ikigai, home=self.home)
 
     def gh(self) -> dict:

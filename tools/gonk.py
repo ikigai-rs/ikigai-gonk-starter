@@ -1211,8 +1211,12 @@ def post_commit_installed(repo: Path) -> bool:
 
 
 def worker_configured(repo: Path) -> bool:
-    """Is this machine configured to run a worker (.gonk/worker.toml)?"""
-    return (repo / ".gonk" / "worker.toml").is_file()
+    """Is this machine configured to run a worker: its one loop (.gonk/worker.toml), or a loop
+    per agent (.gonk/worker-<agent>.toml, from `tools/worker.py init-agents`)?"""
+    gonk_dir = repo / ".gonk"
+    return (gonk_dir / "worker.toml").is_file() or any(
+        p.is_file() for p in gonk_dir.glob("worker-*.toml")
+    )
 
 
 def process_rows(cfg: Config, process: dict | None, row) -> None:
@@ -1263,7 +1267,12 @@ def process_rows(cfg: Config, process: dict | None, row) -> None:
     checks = process.get("checks", [])
     if "worker-config" in checks:
         if worker_configured(repo):
-            row("ok", "worker", ".gonk/worker.toml configures this machine's worker loop")
+            row(
+                "ok",
+                "worker",
+                ".gonk/worker.toml (or a worker-<agent>.toml per agent) configures this "
+                "machine's worker loop",
+            )
         else:
             row(
                 "note",

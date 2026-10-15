@@ -1,4 +1,6 @@
-# The worker loop as a systemd USER unit of the `agent` account (Linux).
+# The worker loop as a systemd USER unit of the `agent` account (Linux): ONE loop, configured by
+# .gonk/worker.toml. A machine that runs a loop per agent uses gonk-worker@.service instead,
+# one instance per agent (worker/README.md, step 8), and does not run this one beside them.
 #
 # Install, as agent (`sudo machinectl shell agent@` gives a session with a user bus; plain
 # `sudo -iu agent` may answer "Failed to connect to bus"):

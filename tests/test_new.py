@@ -63,9 +63,13 @@ class Generate(unittest.TestCase):
         service units, unchanged, and the justfile recipes that run it. The machine's setup
         (accounts, boundary probe) stays in the starter."""
         units = sorted(p.name for p in (ROOT / "worker" / "units").iterdir())
-        self.assertEqual(units, ["dev.ikigai-rs.gonk-worker.plist", "gonk-worker.service"])
+        self.assertEqual(
+            units,
+            ["dev.ikigai-rs.gonk-worker.plist", "gonk-worker.service", "gonk-worker@.service"],
+        )
         for rel in [
             "tools/worker.py",
+            "tools/worker_repos.py",
             "worker/worker.sample.toml",
             *(f"worker/units/{name}" for name in units),
         ]:

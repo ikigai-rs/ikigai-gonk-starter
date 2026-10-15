@@ -32,7 +32,13 @@ SECTIONS = ROOT / "profiles" / "sections"
 
 # What each profile carries beyond the base, and so what must be ABSENT without it.
 OWN_FILES = {
-    "workers": ["tools/worker.py", "worker/worker.sample.toml", "worker/units/gonk-worker.service"],
+    "workers": [
+        "tools/worker.py",
+        "tools/worker_repos.py",
+        "worker/worker.sample.toml",
+        "worker/units/gonk-worker.service",
+        "worker/units/gonk-worker@.service",
+    ],
     "hub": ["tools/hub.py", ".gonk/templates/brief.md"],
     "review-every-commit": ["hooks/git/post-commit", "hooks/git/review-on-commit.py"],
     "audits": ["tools/audit.py", ".gonk/templates/audit.md"],

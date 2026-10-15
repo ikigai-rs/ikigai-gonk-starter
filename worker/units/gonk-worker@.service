@@ -1,0 +1,49 @@
+# One worker loop PER AGENT, as a templated systemd USER unit of the `agent` account (Linux).
+# `gonk-worker@codex` runs the loop configured by ~/gonk-worker/.gonk/worker-codex.toml, and
+# so on for each agent: the instance name (%i) is the agent's, and the configuration is the
+# one `python3 tools/worker.py init-agents` wrote for it. Every loop runs from the same
+# checkout and shares its per-repository locks, so two agents never work one repository at
+# once (worker/README.md, step 8).
+#
+# Install, as agent (`sudo machinectl shell agent@` gives a session with a user bus; plain
+# `sudo -iu agent` may answer "Failed to connect to bus"):
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp ~/gonk-worker/worker/units/gonk-worker@.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now gonk-worker@claude gonk-worker@codex gonk-worker@hermes
+#   journalctl --user -u gonk-worker@codex -f     # one loop's log; hubdiag reads the journal
+#
+# A machine that ran the single gonk-worker.service stops and disables it first (step 8 says
+# how): the single loop and the per-agent loops would otherwise take the same items.
+#
+# It runs as long as the account LINGERS (worker-setup.sh turns linger on for agent), with or
+# without anyone logged in. `%h` is agent's home; edit WorkingDirectory and ExecStart if the
+# checkout is not ~/gonk-worker.
+#
+# ⚠ A unit reads no .profile or .bashrc, so PATH is set here: the agent's own Rust tools
+# (ikigai) first, then ~/.local/bin (where claude, codex and hermes install), then the system.
+# An agent's own credentials go in a drop-in for that instance only, e.g.
+# `systemctl --user edit gonk-worker@claude` with EnvironmentFile=%h/.config/gonk-worker/claude.env.
+#
+# Stopping one (`systemctl --user stop gonk-worker@codex`) sends SIGTERM: that loop stops its
+# agent, hands the item back with a note and exits. To stop one between items instead, create
+# its stop file, .gonk/state/worker/<agent>/stop; .gonk/state/worker/stop stops every loop.
+
+[Unit]
+Description=gonk worker loop for the %i agent: take ledger items, run %i on each, hand them back
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/gonk-worker
+Environment=PATH=%h/.cargo/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/env python3 %h/gonk-worker/tools/worker.py run --config %h/gonk-worker/.gonk/worker-%i.toml
+Restart=on-failure
+RestartSec=60
+KillMode=mixed
+TimeoutStopSec=90
+
+[Install]
+WantedBy=default.target

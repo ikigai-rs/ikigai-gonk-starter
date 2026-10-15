@@ -49,9 +49,11 @@ does not close it.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import fcntl
 import json
 import os
+import plistlib
 import re
 import shlex
 import signal
@@ -59,6 +61,7 @@ import subprocess
 import sys
 import threading
 import time
+import tomllib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -153,11 +156,46 @@ class WorkerConfig:
     command: list[str]
     profile: str | None
     repos: dict[str, Repo]
-    stop_file: Path
-    state_dir: Path
+    stop_file: Path  # this loop's: stops it between items
+    state_dir: Path  # SHARED by every loop of this checkout: the per-repository locks
+    loop_dir: Path = field(default=None)  # this loop's own: the items it handed back
+    global_stop: Path = field(default=None)  # stops EVERY loop of this checkout
+    loop: str | None = None  # from `worker-<loop>.toml`; None for worker.toml, the one loop
+    holder: str | None = None  # overrides .gonk/local.toml's holder for this loop's claims
+
+    def __post_init__(self) -> None:
+        self.loop_dir = self.loop_dir or self.state_dir
+        self.global_stop = self.global_stop or self.state_dir / "stop"
+
+    def stop_files(self) -> list[Path]:
+        """The files that stop this loop between items: its own, and the one for every loop."""
+        return list(dict.fromkeys([self.stop_file, self.global_stop]))
 
 
 WORKER_TOML = Path(".gonk") / "worker.toml"
+
+# One loop per agent on a machine, from one checkout: `.gonk/worker-<loop>.toml` (git-ignored
+# like worker.toml), run by `worker/units/gonk-worker@.service` as `gonk-worker@<loop>`. The
+# loop's name is the file's: it keeps its own record of the items it handed back and its own
+# stop file under `.gonk/state/worker/<loop>/`, and shares with every other loop of the
+# checkout the per-repository locks (so two agents never work one repository at once, and
+# never share a repository's clone under the work root) and the stop file for all of them.
+LOOP_SHAPE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+LOOP_TOML = re.compile(r"^worker-(.+)\.toml$")
+
+
+def loop_name(path: Path) -> str | None:
+    """The loop a configuration file names: `worker-codex.toml` is `codex`; any other file
+    (`worker.toml` above all) is the machine's one loop, None."""
+    m = LOOP_TOML.match(path.name)
+    if not m:
+        return None
+    if not LOOP_SHAPE.match(m.group(1)):
+        raise gonk.ConfigError(
+            f"{path}: `{m.group(1)}` is not a loop name (a letter or digit, then letters, "
+            "digits, `-` and `_`): name the file worker-<agent>.toml"
+        )
+    return m.group(1)
 
 
 def load_worker(cfg: gonk.Config, path: Path | None = None) -> WorkerConfig:
@@ -257,7 +295,15 @@ def load_worker(cfg: gonk.Config, path: Path | None = None) -> WorkerConfig:
             "items' `repo:<name>` label names it"
         )
 
+    holder = t.get("holder")
+    if holder is not None:
+        problem = gonk.holder_problem(holder) if isinstance(holder, str) else "not a string"
+        if problem:
+            raise gonk.ConfigError(f"{where}: holder: {problem}")
+
+    loop = loop_name(path)
     state_dir = cfg.repo / ".gonk" / "state" / "worker"
+    loop_dir = state_dir / loop if loop else state_dir
     stop = t.get("stop_file")
     return WorkerConfig(
         labels=labels,
@@ -275,8 +321,12 @@ def load_worker(cfg: gonk.Config, path: Path | None = None) -> WorkerConfig:
         command=command,
         profile=profile,
         repos=repos,
-        stop_file=Path(gonk.expand(stop, cfg.repo)) if stop else state_dir / "stop",
+        stop_file=Path(gonk.expand(stop, cfg.repo)) if stop else loop_dir / "stop",
         state_dir=state_dir,
+        loop_dir=loop_dir,
+        global_stop=state_dir / "stop",
+        loop=loop,
+        holder=holder,
     )
 
 
@@ -865,11 +915,17 @@ class Outcome:
 
 class Worker:
     def __init__(self, cfg: gonk.Config, wc: WorkerConfig, ikigai, home: Path | None = None):
+        if wc.holder:
+            # This loop's own holder name (`my-worker-codex`), so a claim shows which agent holds
+            # it. Every claim, renewal, release and note reads `self.cfg.holder`, so replacing
+            # it here is the one place. The machine's identity is unchanged: a holder is a
+            # label the ledger records beside the principal, which stays the certificate's.
+            cfg = dataclasses.replace(cfg, holder=wc.holder)
         gonk.need(cfg, "ledger", "target", "holder")
         self.cfg, self.wc = cfg, wc
         self.ledger = Ledger(cfg, ikigai)
         self.root = work_root(wc.work_root, home or Path.home(), cfg.repo)
-        self.attempts = Attempts(wc.state_dir)
+        self.attempts = Attempts(wc.loop_dir)
         self.shutdown = threading.Event()
         # The skips recorded as firings so far, (control, item): once each per process, since
         # the loop asks again at every poll and a skip that has not changed is not news.
@@ -1216,14 +1272,21 @@ class Worker:
     # ----------------------------------------------------------------- the loop
 
     def loop(self) -> int:
+        loop = f"loop `{self.wc.loop}`, " if self.wc.loop else ""
+        every = (
+            f" (every loop here: touch {self.wc.global_stop})"
+            if self.wc.global_stop != self.wc.stop_file
+            else ""
+        )
         log(
-            f"started: ledger `{self.cfg.ledger}` over {self.cfg.target.describe()}, holder "
-            f"`{self.cfg.holder}`, labels {','.join(self.wc.labels)}, work root {self.root}; "
-            f"stop with: touch {self.wc.stop_file}"
+            f"started: {loop}ledger `{self.cfg.ledger}` over {self.cfg.target.describe()}, "
+            f"holder `{self.cfg.holder}`, labels {','.join(self.wc.labels)}, work root "
+            f"{self.root}; stop with: touch {self.wc.stop_file}{every}"
         )
         while not self.shutdown.is_set():
-            if self.wc.stop_file.exists():
-                log(f"stopping: {self.wc.stop_file} exists (remove it to run again)")
+            stop = next((f for f in self.wc.stop_files() if f.exists()), None)
+            if stop is not None:
+                log(f"stopping: {stop} exists (remove it to run again)")
                 return 0
             outcome = self.run_once()
             if outcome.code in (NOTHING, ERROR):
@@ -1274,7 +1337,8 @@ def build(args, make_ikigai, home: Path | None) -> Worker:
         wc.labels = [w for w in args.labels.split(",") if w]
     if getattr(args, "keep", False):
         wc.keep = True
-    gonk.need(cfg, "ledger", "target", "holder")
+    # The holder may come from the loop's own configuration, so Worker checks it, after that.
+    gonk.need(cfg, "ledger", "target")
     return Worker(cfg, wc, make_ikigai(cfg.target), home=home)
 
 
@@ -1329,6 +1393,252 @@ def cmd_forget(args, make_ikigai, home) -> int:
     return 1
 
 
+# --------------------------------------------------------------------------- per-agent loops
+
+# What `init-agents` writes into each loop's [agent] table: the forms that have run an item end
+# to end on a worker (worker/README.md, step 8). Unattended, an agent commits, pushes and opens
+# the pull request with nobody there to answer a prompt, so Claude Code and Codex run with their
+# own checks opened, and the agent's Unix account is the boundary.
+AGENT_TABLES: dict[str, tuple[str, list[str]]] = {
+    "claude": (
+        "Claude Code with its permission checks off (worker/README.md, step 8).",
+        ['command = ["claude", "-p", "--permission-mode", "bypassPermissions", "{prompt}"]'],
+    ),
+    "codex": (
+        "Codex with its sandbox opened, for the same reason (worker/README.md, step 8).",
+        ['command = ["codex", "exec", "--sandbox", "danger-full-access", "{prompt}"]'],
+    ),
+    "hermes": (
+        'Hermes\'s non-interactive form; `preset = "hermes-profile"` with `profile` picks one.',
+        ['preset = "hermes"'],
+    ),
+}
+
+HEADER_LINE = re.compile(r"^\s*\[")
+KEY_LINE = re.compile(r"^\s*([A-Za-z0-9_-]+)\s*=")
+
+
+def table_regions(lines: list[str]) -> list[tuple[str, int, int]]:
+    """(header, start, end) of each table: from its header line up to the next header, less
+    the comment block just before that header, which introduces the next table and belongs to
+    it (a block of comment lines after the region's last blank line)."""
+    starts = [i for i, line in enumerate(lines) if HEADER_LINE.match(line)]
+    regions = []
+    for n, start in enumerate(starts):
+        end = starts[n + 1] if n + 1 < len(starts) else len(lines)
+        if n + 1 < len(starts):
+            blanks = [i for i in range(start + 1, end) if not lines[i].strip()]
+            after = range(blanks[-1] + 1, end) if blanks else range(0)
+            if blanks and all(lines[i].lstrip().startswith("#") for i in after):
+                end = blanks[-1] + 1
+        regions.append((lines[start].strip(), start, end))
+    return regions
+
+
+def top_key_span(lines: list[str], key: str) -> tuple[int, int] | None:
+    """The lines of a top-level `key = …` (before the first table), a multi-line array too."""
+    first_table = next((i for i, line in enumerate(lines) if HEADER_LINE.match(line)), len(lines))
+    for i in range(first_table):
+        m = KEY_LINE.match(lines[i])
+        if not (m and m.group(1) == key):
+            continue
+        end = i + 1
+        value = lines[i].split("=", 1)[1].split("#", 1)[0].strip()
+        if value.startswith("[") and "]" not in value:  # an array over several lines
+            while end < first_table and "]" not in lines[end].split("#", 1)[0]:
+                end += 1
+            end = min(end + 1, first_table)
+        return i, end
+    return None
+
+
+def agent_config_text(base: str, name: str, agent: str, source: str, from_sample: bool) -> str:
+    """One loop's configuration, from `base` (the machine's worker.toml, or the sample): its
+    settings and repositories kept, its labels, holder and [agent] table this loop's."""
+    lines = base.splitlines()
+    while lines and lines[0].lstrip().startswith("#"):  # the base's own header
+        lines.pop(0)
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    # The tables this loop replaces or drops, from the bottom up so earlier indices hold.
+    drop = [r for r in table_regions(lines) if r[0] == "[agent]"]
+    if from_sample:  # the sample's example repository is nobody's
+        drop += [r for r in table_regions(lines) if r[0].startswith("[repos.")]
+    for _, start, end in sorted(drop, key=lambda r: r[1], reverse=True):
+        while start > 0 and lines[start - 1].lstrip().startswith("#"):
+            start -= 1  # the comment that introduces a table goes with it
+        del lines[start:end]
+    holder = top_key_span(lines, "holder")
+    if holder:
+        del lines[holder[0] : holder[1]]
+    lines = [line for line in lines if not re.match(r"^#\s*holder\s*=", line)]
+    words = [f"worker:{name}", f"agent:{agent}"]
+    new_top = [
+        "labels = " + json.dumps(words),
+        "# This loop's holder name, over .gonk/local.toml's: a claim then says which agent holds",
+        "# it. The machine's identity (its certificate) is unchanged; a holder is a label.",
+        f"holder = {json.dumps(f'{name}-{agent}')}",
+    ]
+    span = top_key_span(lines, "labels")
+    if span:
+        lines[span[0] : span[1]] = new_top
+    else:
+        lines[0:0] = [*new_top, ""]
+    note, table = AGENT_TABLES.get(agent, (None, [f"preset = {json.dumps(agent)}"]))
+    block = ["[agent]", *([f"# {note}"] if note else []), *table]
+    first_repo = next(
+        (r[1] for r in table_regions(lines) if r[0].startswith("[repos.")), len(lines)
+    )
+    # Before the repositories, or at the end; with the comment block introducing them intact.
+    regions = [r for r in table_regions(lines) if r[1] == first_repo]
+    at = first_repo
+    if regions:
+        while at > 0 and lines[at - 1].lstrip().startswith("#"):
+            at -= 1
+    lines[at:at] = [*block, ""]
+    while lines and not lines[-1].strip():
+        lines.pop()
+    if from_sample:
+        lines += [
+            "",
+            "# Every repository this loop may work in, by the name its items' `repo:<name>`",
+            "# label uses: `python3 tools/worker_repos.py --owner <owner>` adds a [repos.<name>]",
+            "# block for each of an owner's repositories to every .gonk/worker*.toml.",
+        ]
+    header = [
+        f"# The `{agent}` loop of worker `{name}`, written by `tools/worker.py init-agents` from",
+        f"#   {source}",
+        "# and never overwritten by it, so edit it freely. Git-ignored, like worker.toml. Run as",
+        f"# a service by worker/units/gonk-worker@.service, as gonk-worker@{agent}.",
+        "",
+    ]
+    return "\n".join(header + lines) + "\n"
+
+
+def write_new(path: Path, text: str) -> bool:
+    """Write `text` to `path` only if nothing is there, atomically: a temporary file in the same
+    directory, then a hard link, which fails rather than replace a file that appeared meanwhile.
+    False when `path` already exists."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    try:
+        os.link(tmp, path)
+        return True
+    except FileExistsError:
+        return False
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def agents_list(text: str) -> list[str]:
+    agents = list(dict.fromkeys(a.strip() for a in text.split(",") if a.strip()))
+    if not agents:
+        raise gonk.ConfigError("--agents names no agent: e.g. --agents claude,codex,hermes")
+    for agent in agents:
+        if not LOOP_SHAPE.match(agent):
+            raise gonk.ConfigError(f"`{agent}` is not an agent name (letters, digits, - and _)")
+    return agents
+
+
+def cmd_init_agents(args, make_ikigai, home) -> int:
+    """One configuration per agent, `.gonk/worker-<agent>.toml`, from the machine's
+    `.gonk/worker.toml` when it has one (its settings and repositories kept), else from the
+    sample. Idempotent: a configuration that exists is never touched."""
+    repo = Path(args.repo).resolve() if args.repo else gonk.find_repo(Path.cwd())
+    agents = agents_list(args.agents)
+    label = f"worker:{args.name}"
+    if not LABEL_SHAPE.match(label):
+        raise gonk.ConfigError(f"--name {args.name!r}: `{label}` is not a label word")
+    for agent in agents:
+        if agent not in AGENT_TABLES and agent not in PRESETS:
+            raise gonk.ConfigError(
+                f"`{agent}`: init-agents writes the [agent] table of {', '.join(AGENT_TABLES)} "
+                f"or a preset ({', '.join(PRESETS)}); write any other loop's by hand"
+            )
+        problem = gonk.holder_problem(f"{args.name}-{agent}")
+        if problem:
+            raise gonk.ConfigError(f"--name {args.name!r}: the holder {problem}")
+    if args.source:
+        base_path = Path(args.source).resolve()
+    elif (repo / WORKER_TOML).is_file():
+        base_path = repo / WORKER_TOML
+    else:
+        base_path = Path(__file__).resolve().parent.parent / "worker" / "worker.sample.toml"
+    from_sample = base_path.name == "worker.sample.toml"
+    base = base_path.read_text(encoding="utf-8")
+    starter = Path(__file__).resolve().parent.parent
+    source = str(base_path)
+    for root in (repo, starter):
+        if base_path.is_relative_to(root):
+            source = str(base_path.relative_to(root))
+            break
+    for agent in agents:
+        path = repo / ".gonk" / f"worker-{agent}.toml"
+        text = agent_config_text(base, args.name, agent, source, from_sample)
+        t = tomllib.loads(text)  # a configuration this wrote that does not parse is a bug here
+        expected = [label, f"agent:{agent}"]
+        if t.get("labels") != expected or t.get("holder") != f"{args.name}-{agent}":
+            raise gonk.ConfigError(f"{path}: the configuration written would not say {expected}")
+        if path.exists():
+            print(f"kept     {path.relative_to(repo)} (it exists; init-agents never overwrites)")
+        elif write_new(path, text):
+            print(f"wrote    {path.relative_to(repo)}  labels {','.join(expected)}")
+        else:
+            print(f"kept     {path.relative_to(repo)} (it appeared meanwhile)")
+    if not any((repo / ".gonk").glob("worker-*.toml")):
+        return ERROR
+    print(
+        "next: `python3 tools/worker_repos.py --owner <owner>` adds the repositories to each, "
+        "then `python3 tools/worker.py --config .gonk/worker-<agent>.toml plan` checks one"
+    )
+    return 0
+
+
+PLIST = Path("worker") / "units" / "dev.ikigai-rs.gonk-worker.plist"
+
+
+def agent_plist(template: bytes, agent: str) -> bytes:
+    """The launchd daemon for one loop, from the single-loop plist: its own label, its own
+    log, and `run --config <checkout>/.gonk/worker-<agent>.toml`. launchd has no templated
+    units, so each loop is a file of its own."""
+    plist = plistlib.loads(template)
+    checkout = plist["WorkingDirectory"]
+    plist["Label"] = f"{plist['Label']}.{agent}"
+    argv = list(plist["ProgramArguments"])
+    at = argv.index("run") + 1
+    argv[at:at] = ["--config", f"{checkout}/.gonk/worker-{agent}.toml"]
+    plist["ProgramArguments"] = argv
+    for key in ("StandardOutPath", "StandardErrorPath"):
+        log_path = Path(plist[key])
+        plist[key] = str(log_path.with_name(f"{log_path.stem}-{agent}{log_path.suffix}"))
+    text = plistlib.dumps(plist).decode("utf-8")
+    note = (
+        f"<!--\n  The `{agent}` loop of the worker, generated by `tools/worker.py plist` from\n"
+        f"  {PLIST}. Install it the way that file's header\n"
+        f"  says, under this file's name; stop it with\n"
+        f"  `sudo launchctl bootout system/{plist['Label']}`.\n-->\n"
+    )
+    head, rest = text.split("<plist", 1)
+    return (head + note + "<plist" + rest).encode("utf-8")
+
+
+def cmd_plist(args, make_ikigai, home) -> int:
+    template = (Path(__file__).resolve().parent.parent / PLIST).read_bytes()
+    out = Path(args.out).resolve() if args.out else None
+    for agent in agents_list(args.agents):
+        data = agent_plist(template, agent)
+        if out is None:
+            sys.stdout.write(data.decode("utf-8"))
+            continue
+        label = plistlib.loads(data)["Label"]
+        path = out / f"{label}.plist"
+        out.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        print(f"wrote {path}")
+    return 0
+
+
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="worker.py", description=__doc__.splitlines()[0])
     p.add_argument(
@@ -1350,6 +1660,30 @@ def parser() -> argparse.ArgumentParser:
     s = sub.add_parser("forget", help="let this worker take an item it handed back before")
     s.add_argument("item", type=int)
     s.set_defaults(run=cmd_forget)
+
+    s = sub.add_parser(
+        "init-agents", help="write .gonk/worker-<agent>.toml for each agent; never overwrites"
+    )
+    s.add_argument("--name", required=True, help="the worker's name, as in its worker:<name>")
+    s.add_argument("--agents", required=True, help="comma-separated, e.g. claude,codex,hermes")
+    s.add_argument(
+        "--from",
+        dest="source",
+        help="the configuration to start from (default: .gonk/worker.toml, else the sample)",
+    )
+    s.set_defaults(run=cmd_init_agents)
+
+    s = sub.add_parser("plist", help="the macOS launchd daemon for each agent's loop")
+    s.add_argument("--agents", required=True, help="comma-separated, e.g. claude,codex,hermes")
+    s.add_argument("--out", help="write <label>.plist files here (default: standard output)")
+    s.set_defaults(run=cmd_plist)
+
+    # `--config` after the command too (`run --config .gonk/worker-codex.toml`, as the
+    # templated unit says it), as well as before it.
+    for name in ("run", "plan", "forget"):
+        sub.choices[name].add_argument(
+            "--config", default=argparse.SUPPRESS, help="the worker configuration"
+        )
     return p
 
 

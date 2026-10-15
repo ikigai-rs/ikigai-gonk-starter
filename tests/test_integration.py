@@ -82,10 +82,12 @@ class ScratchGonk:
         self.socket = self.dir / "g.sock"
         self.proc = None
 
-    def add_client(self, name: str, ledger: str) -> str:
-        """Enroll a QUIC client; answer the principal gonk printed for it."""
+    def add_client(self, name: str, ledger: str, worker: bool = False) -> str:
+        """Enroll a QUIC client, a writer of `ledger` or (`worker`) under the narrower worker
+        grant; answer the principal gonk printed for it."""
+        grant = ["--worker", ledger] if worker else ["--ledger", f"{ledger}=write"]
         out = subprocess.run(
-            [GONK, "client", "add", name, "--ledger", f"{ledger}=write"]
+            [GONK, "client", "add", name, *grant]
             + ["--port", str(self.quic_port), "--config-home", str(self.config_home)],
             capture_output=True,
             text=True,

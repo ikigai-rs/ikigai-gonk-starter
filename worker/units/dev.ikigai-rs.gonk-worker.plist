@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  The worker loop as a launchd DAEMON that runs as the `agent` account (macOS).
+  The worker loop as a launchd DAEMON that runs as the `agent` account (macOS): ONE loop,
+  configured by .gonk/worker.toml. A machine that runs a loop per agent installs one daemon
+  per agent instead, each generated from this file by the plist command of tools/worker.py
+  (launchd has no templated jobs; worker/README.md, step 8, has the line), and does not run
+  this one beside them.
 
   A daemon rather than a LaunchAgent, because agent never logs in to the GUI, and a
   LaunchAgent loads only in a login session. The admin installs it:
