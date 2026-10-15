@@ -143,6 +143,17 @@ class EachProfile(unittest.TestCase):
                 self.assertEqual(text in agents, expected, f"{name}: {section.stem}")
             self.assertEqual(agents, new.agents_md([name]), name)
 
+    def test_each_carries_accessibility_md_and_the_agents_rule(self):
+        # Ledger item 1620: whatever the process, a generated repository has an
+        # ACCESSIBILITY.md to grow and the AGENTS.md rule that points agents at it.
+        for name, repo in self.repos.items():
+            self.assertTrue((repo / "ACCESSIBILITY.md").is_file(), name)
+            self.assertIn(
+                "Read `ACCESSIBILITY.md` before any change to a user interface",
+                (repo / "AGENTS.md").read_text(),
+                name,
+            )
+
     def test_its_files_and_hooks_are_present_and_executable_and_others_absent(self):
         for name, repo in self.repos.items():
             for owner, files in OWN_FILES.items():

@@ -98,6 +98,13 @@ as `<ledger>#N` (`default#12` for the default ledger) or as a link to it, and a 
 as `PR #N`, or `owner/repo#N` for another repository. In a commit message, write
 `ledger item N`.
 
+## 7. Read ACCESSIBILITY.md before changing what people see
+
+Read `ACCESSIBILITY.md` before any change to a user interface or to rendered output: a page,
+a view, terminal text, generated markup or a picture. Keep the rules it states, and record
+what you tested, with what, and what you did not. Never claim testing that did not happen, by
+a person or a tool, and never weaken a check to make a change pass.
+
 ## Specs, artifacts, queries and scripts
 
 - **Specs** are in `openspec/`: `specs/` is what the system does now, `changes/` what is
