@@ -400,5 +400,36 @@ class GenerateDeno(unittest.TestCase):
             self.assertFalse((deno / rel).exists(), rel)
 
 
+# The rule every generated AGENTS.md carries (profiles/sections/accessibility.md).
+ACCESSIBILITY_RULE = "Read `ACCESSIBILITY.md` before any change to a user interface"
+
+
+class Accessibility(unittest.TestCase):
+    """Every target's repository carries an ACCESSIBILITY.md to grow and the AGENTS.md rule
+    that points every agent at it (ledger item 1620)."""
+
+    def test_every_target_carries_accessibility_md_and_the_agents_rule(self):
+        template = ROOT / "templates" / "library" / "ACCESSIBILITY.md"
+        for target in new.targets():
+            repo = scratch(self).with_name(target)
+            new.generate(repo, target)
+            text = (repo / "ACCESSIBILITY.md").read_text(encoding="utf-8")
+            self.assertEqual(text, template.read_text(encoding="utf-8"), target)
+            self.assertIn("WCAG 2.2 Level AA", text, target)
+            self.assertIn("Evaluation in progress. No conformance claim.", text, target)
+            self.assertIn("**Nothing in this repository has been tested", text, target)
+            self.assertIn("within 7 days", text, target)
+            self.assertNotIn("{{", text, target)
+            self.assertIn(ACCESSIBILITY_RULE, (repo / "AGENTS.md").read_text(), target)
+            harness = (repo / ".gonk" / "harness" / "harness.ttl").read_text()
+            self.assertIn("guide:read-accessibility-first", harness, target)
+
+    def test_the_starter_states_the_rule_and_has_its_own_file(self):
+        self.assertIn(ACCESSIBILITY_RULE, (ROOT / "AGENTS.md").read_text())
+        own = (ROOT / "ACCESSIBILITY.md").read_text(encoding="utf-8")
+        self.assertIn("Evaluation in progress. No conformance claim.", own)
+        self.assertNotEqual(own, (ROOT / "templates" / "library" / "ACCESSIBILITY.md").read_text())
+
+
 if __name__ == "__main__":
     unittest.main()

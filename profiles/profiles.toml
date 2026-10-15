@@ -27,6 +27,7 @@ sections = [
     "pull-requests",
     "report",
     "bare-numbers",
+    "accessibility",
     "layout",
     "spec-first",
     "workers",
@@ -47,6 +48,7 @@ sections = [
     "pull-requests",
     "report",
     "bare-numbers",
+    "accessibility",
     "layout",
     "claude-hook",
 ]

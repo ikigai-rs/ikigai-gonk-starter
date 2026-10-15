@@ -40,6 +40,7 @@ through a pull request with green CI, evidence on every report and close, and ne
 ```text
 AGENTS.md                the rules, for every agent and every person
 CLAUDE.md                `@AGENTS.md`: Claude Code imports the same rules (not a symlink; see below)
+ACCESSIBILITY.md         what this repository shows people, how it is tested, how to report a barrier
 openspec/                specs (what the system does now) and changes (what is proposed)
 artifacts/<name>/        one directory per deployable thing, any language each
 .gonk/                   which ledger, how to reach gonk, and where everything lives
@@ -411,6 +412,14 @@ tracked file may hold a path under a person's home, an mDNS `.local` host name, 
 IPv4 address, or the name of one of the project's own machines. The integration tests start
 a scratch gonk of their own (a temporary directory, an ephemeral port, its own socket) when
 `ikigai-gonk` and `ikigai` are on PATH, and skip, saying why, when they are not, as in CI.
+
+## Accessibility
+
+[ACCESSIBILITY.md](ACCESSIBILITY.md) says what this starter shows people and generates, how it is
+tested, and how to report a barrier (an issue with the `accessibility` label); it makes no
+conformance claim. Every repository `tools/new.py` generates gets its own `ACCESSIBILITY.md` to
+grow, from `templates/library/ACCESSIBILITY.md`, and an `AGENTS.md` rule to read it before any
+change to what people see.
 
 ## License
 

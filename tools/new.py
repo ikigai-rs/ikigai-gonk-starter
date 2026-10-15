@@ -16,6 +16,7 @@ The result is a repository that works the way this starter teaches: AGENTS.md an
   .gonk/scripts/          a workflow script (a plan): next, for one artifact
   .gonk/harness/          the process's rules and sensors as a graph (tools/harness.py)
   tools/worker.py         the worker loop, for a machine that takes items unattended
+  ACCESSIBILITY.md        what the project shows people and how it is tested, to grow with it
 
 Four layers are copied in order, a later one replacing a file an earlier one wrote: this
 starter's own files (so a generated repository always carries the current tools), what each
