@@ -1,6 +1,6 @@
 # Working on Windows
 
-**Use WSL2.** Run the agent, `git`, `python3`, `ikigai` and `just` inside a WSL2 Linux
+**Use WSL2.** Run the agent, `git`, `python3` and `ikigai` inside a WSL2 Linux
 distribution, on a clone in the Linux filesystem, and everything in this repository works as
 it does on Linux. Native Windows is not supported yet: the `ikigai` client that
 `tools/gonk.py` calls has no Windows build, and its local-socket transport is Unix-only.
@@ -74,20 +74,23 @@ unless it says otherwise.
    tools that bring both traps above back. OpenAI's
    [Codex on WSL](https://learn.chatgpt.com/docs/windows/wsl) page gives the same advice
    ("faster I/O and fewer symlink and permission issues").
-4. **Install the tools inside WSL**: Python 3.11 or later, `git`, `gh`, `just`, the `ikigai`
-   client, and the agent itself with its Linux installer.
+4. **Install the tools inside WSL**: Python 3.11 or later, `git`, `gh`, the `ikigai` client,
+   and the agent itself with its Linux installer. `just` is optional: every recipe is one
+   `python3 tools/...` command (`just claim 12` is `python3 tools/gonk.py claim 12`).
 
 ### Reaching gonk, and being reached
 
 - **gonk on the same machine**, inside the same distribution: the local socket works as on
   Linux (`init --socket <path>`).
 - **gonk on another machine**: `init --quic quic://<host>:<port> --cert-dir <bundle>`.
-  Outbound connections from WSL2's default NAT network are expected to work; this has not
-  been tested from WSL.
+  Outbound QUIC to the edge door is TESTED with `networkingMode=mirrored` (reported from a
+  WSL2 machine in Talk, 2026-10-17). Under the default NAT network it is expected to work and
+  is UNTESTED.
 - **Anything that must accept connections from the LAN** (a gonk others use, or a worker the
   hub reaches over ssh) is behind WSL2's NAT by default. `networkingMode=mirrored` in
   `%UserProfile%\.wslconfig` under `[wsl2]` mirrors Windows' interfaces into Linux; it needs
-  Windows 11 22H2 or later, and inbound connections also need a Hyper-V firewall rule. Without
+  Windows 11 22H2 or later, and inbound connections also need a Hyper-V firewall rule
+  (inbound is not tested; outbound is, as above). Without
   it, a `netsh interface portproxy` rule on Windows is the fallback. Both are on Microsoft's
   [WSL networking](https://learn.microsoft.com/en-us/windows/wsl/networking) page; neither is
   tested here. The worker's commands, with its ports, are in the starter's
@@ -96,16 +99,57 @@ unless it says otherwise.
 ### Staying up
 
 WSL stops a distribution when it is idle and the VM after that, and Windows sleep stops
-everything. For a machine that serves or works unattended, `.wslconfig`:
+everything. **A gonk started from a shell dies with that shell under WSL**: one was lost this
+way, and about 17 hours of daily Progress with it (reported in Talk, 2026-10-17). Run it as a
+service instead. For a machine that serves or works unattended:
 
-```ini
-[general]
-instanceIdleTimeout=-1   # documented: -1 disables a distribution's idle shutdown
-```
+1. `.wslconfig` (Windows side, `%UserProfile%\.wslconfig`):
 
-The `[wsl2]` key `vmIdleTimeout` (Windows 11 only) sets the VM's idle timeout in
-milliseconds; the documentation does not say what `-1` does, so that is UNKNOWN. Keep Windows
-itself from sleeping in its power settings.
+   ```ini
+   [general]
+   instanceIdleTimeout=-1   # documented: -1 disables a distribution's idle shutdown
+   ```
+
+   then `wsl --shutdown`. The `[wsl2]` key `vmIdleTimeout` (Windows 11 only) sets the VM's
+   idle timeout in milliseconds; the documentation does not say what `-1` does, so that is
+   UNKNOWN. Keep Windows itself from sleeping in its power settings.
+2. `systemd=true` in `/etc/wsl.conf` (setup step 2), reported working.
+3. A systemd user unit, `~/.config/systemd/user/gonk.service`. The `ExecStart` is a
+   placeholder: use the command you start your gonk with, with absolute paths.
+
+   ```ini
+   [Unit]
+   Description=gonk
+
+   [Service]
+   ExecStart=/home/<you>/path/to/gonk <the arguments you start it with>
+   Restart=on-failure
+
+   [Install]
+   WantedBy=default.target
+   ```
+
+   ```sh
+   systemctl --user daemon-reload
+   systemctl --user enable --now gonk.service
+   loginctl enable-linger "$USER"   # keep the user manager running with no login session
+   ```
+
+   `journalctl --user -u gonk` reads its log. The unit was adopted on an always-on WSL2
+   machine; its exact text here is a template and has not been run from this repository.
+
+`networkingMode=mirrored` with `systemd=true` are the settings reported as tested.
+
+### Windows shell traps when driving WSL
+
+- **PowerShell strips the quotes** when it passes `bash -c '...'` through to `wsl`, so the
+  command arrives split into words. Start a shell and type the command in it, put it in a
+  script file, or quote for both layers (`wsl bash -c "'...'"`).
+- **Git Bash rewrites `/home/...` paths** in arguments into Windows paths
+  (`C:/Program Files/Git/home/...`) before `wsl` sees them. Set `MSYS_NO_PATHCONV=1` for the
+  command, or double the leading slash.
+
+Both are reported from a Windows machine, not tested here.
 
 ### `/mnt/c` exposes the Windows user to every Linux account
 
