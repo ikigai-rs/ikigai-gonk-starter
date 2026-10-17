@@ -215,7 +215,7 @@ def check_push(gh: list[str], slugs: list[str]) -> list[tuple[str, str]]:
 
 
 def token_kind(gh: list[str]) -> str:
-    """"classic", "fine-grained" or "" (unknown), from the prefix class `gh auth status` shows."""
+    """The token class `gh auth status` shows: classic, fine-grained, or "" when unknown."""
     done = run_gh(gh, "auth", "status")
     text = f"{done.stdout}\n{done.stderr}"
     if "github_pat_" in text:

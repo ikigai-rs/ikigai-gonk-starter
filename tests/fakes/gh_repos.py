@@ -6,7 +6,8 @@
 
 The state file holds `repos` (the rows `repo list` answers, every field as gh names it) and
 `push` (owner/name to true or false; a repository missing from it answers 404, as GitHub does
-for one the token cannot see). `auth`, when present, is what `auth status` prints. Every call is recorded under `calls`; anything else fails.
+for one the token cannot see). `auth`, when present, is what `auth status` prints.
+Every call is recorded under `calls`; anything else fails.
 """
 
 from __future__ import annotations
