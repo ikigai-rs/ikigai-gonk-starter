@@ -188,10 +188,11 @@ echo "── --check's walk: build output and caches pruned, macOS ~/Library too
 # --list-candidates runs the walk alone, as this user, so it is tested without root.
 Hm="$sb/home"
 mkdir -p "$Hm/.ssh" "$Hm/Documents" "$Hm/src/x/target/debug" "$Hm/Library/Mail/V10" \
-         "$Hm/Library/Mobile Documents/com~apple~CloudDocs" "$Hm/Library/Caches/c" "$Hm/.cache/x"
+         "$Hm/Library/Mobile Documents/com~apple~CloudDocs" "$Hm/Library/Caches/c" "$Hm/.cache/x" \
+         "$Hm/Pictures/Photos Library.photoslibrary/originals"
 for f in .bash_history .ssh/id_ed25519 Documents/notes.txt src/x/main.rs src/x/target/debug/out \
          Library/Mail/V10/msg.emlx "Library/Mobile Documents/com~apple~CloudDocs/doc.txt" \
-         Library/Caches/c/blob .cache/x/blob; do printf 'x\n' > "$Hm/$f"; done
+         "Pictures/Photos Library.photoslibrary/originals/p.heic" Library/Caches/c/blob .cache/x/blob; do printf 'x\n' > "$Hm/$f"; done
 out="$(bash "$setup" --list-candidates "$Hm" 2>"$sb/err")"; st=$?
 err="$(cat "$sb/err")"
 expect_exit "--list-candidates exits 0, without root" 0 "$st"
@@ -205,8 +206,11 @@ case "$out" in *target/debug*|*/Library/Caches/*|*/.cache/*) echo "  FAIL build 
 if [ "$(uname -s)" = Darwin ]; then
     case "$out" in *"/Library/"*) echo "  FAIL macOS: ~/Library was walked"; fail=$((fail+1)) ;;
         *) echo "  ok   macOS: ~/Library (Mail, Mobile Documents) is pruned"; pass=$((pass+1)) ;; esac
+    case "$out" in *"/Pictures/"*) echo "  FAIL macOS: ~/Pictures was walked"; fail=$((fail+1)) ;;
+        *) echo "  ok   macOS: ~/Pictures (Photos library) is pruned"; pass=$((pass+1)) ;; esac
 else
     has "Linux: the walk is unchanged (a Library directory is an ordinary one)" "$Hm/Library/Mail/V10/msg.emlx" "$out"
+    has "Linux: ~/Pictures is an ordinary directory" "$Hm/Pictures/Photos Library.photoslibrary/originals/p.heic" "$out"
 fi
 # A walk that takes longer than five seconds says how far it has got: a find that prints one name,
 # sleeps six seconds and prints another stands in for a slow home.
