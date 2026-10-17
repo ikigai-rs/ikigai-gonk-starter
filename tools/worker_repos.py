@@ -22,8 +22,10 @@ the old one.
 
 `--check-push` asks GitHub, for every repository enrolled in those configurations, whether the
 account the worker's `gh` is signed in as may push there (`gh api repos/<owner>/<name> --jq
-.permissions.push`), and lists the ones it may not. A fine-grained token's list of repositories
-is a manual step on GitHub, and this says where.
+.permissions.push`), and lists the ones it may not. What it then says depends on the token's type
+(`gh auth status`): a fine-grained token's list of repositories is a manual step on GitHub, and
+this says where; a classic token reaches what the account's collaborator grants reach, so this
+points to `repo-protect --grant-worker` instead.
 
 Exit status: 0 done; 1 gh or a write failed; 2 a usage or configuration error; 3 `--check-push`
 found repositories the worker cannot push to.
@@ -212,6 +214,26 @@ def check_push(gh: list[str], slugs: list[str]) -> list[tuple[str, str]]:
     return cannot
 
 
+def token_kind(gh: list[str]) -> str:
+    """"classic", "fine-grained" or "" (unknown), from the prefix class `gh auth status` shows."""
+    done = run_gh(gh, "auth", "status")
+    text = f"{done.stdout}\n{done.stderr}"
+    if "github_pat_" in text:
+        return "fine-grained"
+    if re.search(r"\bgh[pousr]_", text):
+        return "classic"
+    return ""
+
+
+def classic_page() -> list[str]:
+    return [
+        "The worker's token is a CLASSIC token: it reaches exactly the repositories the account",
+        "may push to as a collaborator or member, and no token setting changes that. Grant the",
+        "worker's account on each repository above (`repo-protect --grant-worker`), or have an",
+        "owner invite it. worker/README.md step 3 has both token routes.",
+    ]
+
+
 def token_page(owners: list[str]) -> list[str]:
     lines = [
         "A fine-grained token's repositories are chosen by hand on GitHub. Signed in as the",
@@ -296,7 +318,10 @@ def main(argv: list[str] | None = None) -> int:
         for slug, why in cannot:
             print(f"  {slug}  ({why})")
         owners = sorted({slug.split("/")[0] for slug, _ in cannot})
-        print("\n".join(token_page(owners)))
+        if token_kind(gh) == "classic":
+            print("\n".join(classic_page()))
+        else:
+            print("\n".join(token_page(owners)))
         return CANNOT_PUSH
     except gonk.ConfigError as e:
         print(f"worker_repos.py: {e}", file=sys.stderr)

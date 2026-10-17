@@ -177,6 +177,17 @@ class Enrolling(unittest.TestCase):
         asked = [c[1] for c in calls if c[0] == "api"]
         self.assertEqual(sorted(asked), ["repos/acme/app", "repos/acme/lib", "repos/acme/site.www"])
 
+    def test_a_classic_token_is_pointed_at_the_collaborator_grants(self):
+        state = json.loads(self.state.read_text())
+        state["push"] = {"acme/lib": True}
+        state["auth"] = "  - Token: ghp_****\n  - Token scopes: 'read:org', 'repo'"
+        self.state.write_text(json.dumps(state))
+        code, out = self.run_tool("--owner", "acme", "--check-push")
+        self.assertEqual(code, worker_repos.CANNOT_PUSH, out)
+        self.assertIn("CLASSIC token", out)
+        self.assertIn("repo-protect --grant-worker", out)
+        self.assertNotIn("settings/personal-access-tokens", out)
+
     def test_check_push_alone_asks_about_every_enrolled_repository(self):
         state = json.loads(self.state.read_text())
         state["push"] = {"acme/lib": True}

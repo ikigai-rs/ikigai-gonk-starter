@@ -20,7 +20,7 @@ its private tooling repository and reads the same probe output and the same fact
 | account | is | holds | may read | may write |
 | --- | --- | --- | --- | --- |
 | the admin | the person who owns the machine | their keys, their checkouts, their history | everything of theirs | their own tree |
-| `agent` | the worker (by design, it never works in a person's checkouts) | the fine-grained GitHub token; a worktree per item under `~agent/work` | its own home | its own home |
+| `agent` | the worker (by design, it never works in a person's checkouts) | the GitHub token; a worktree per item under `~agent/work` | its own home | its own home |
 | `hubdiag` | the hub's eyes | nothing | the journal; the **views** (by default `~agent/work`) | nothing |
 
 Neither `agent` nor `hubdiag` has sudo or a password. `hubdiag` logs in by key only, and sshd lets it
@@ -195,8 +195,10 @@ comes first.
 
 ### 3. The GitHub token, as `agent`
 
-A **fine-grained** personal access token, scoped to the organization whose repositories the worker
-works in:
+Two routes. Which one is open depends on whether the worker's GitHub account is a **member** of
+the organization: GitHub offers an organization as resource owner only to its members.
+
+**Route A, the worker is a member: a fine-grained token** scoped to the organization:
 
 1. Organization setting, once: `github.com/organizations/<org>/settings/personal-access-tokens`:
    allow fine-grained tokens, and decide whether they need approval.
@@ -206,6 +208,26 @@ works in:
      **Commit statuses** read, **Metadata** read (mandatory).
    - Not **Workflows** (a worker must not edit CI), not **Administration**.
 3. If the organization requires approval, an owner approves it; until then it reads nothing.
+
+**Route B, the worker is an outside collaborator** (ikigai-worker is one): it cannot create that
+token. Making it a member costs a paid seat and exposes private repositories through the
+organization's base permission, so use a **classic** token instead:
+
+1. `github.com/settings/tokens/new` (classic), an expiry, and only the scope **`public_repo`**:
+   not `repo`, not `workflow`. Its reach is bounded by the collaborator grants the account has on
+   public repositories, and nothing the token says widens that.
+2. `gh auth login --with-token` refuses a classic token without the **`repo`** and **`read:org`**
+   scopes, and `public_repo` alone is refused. Either create the token with those scopes too (the
+   token then reaches every repository the account may push to, private ones included, still
+   bounded by the grants), or accept that `gh auth login` is not the way to store it.
+   Measured on one worker, 2026-10-16: a classic token with `repo` and `read:org` pushed to 8 of 47
+   enrolled repositories, exactly its collaborator grants.
+3. Which repositories the worker can push to is decided by those grants, not by the token:
+   `tools/worker_repos.py --check-push` says which are missing, and `repo-protect --grant-worker`
+   grants them.
+
+Either way, then:
+
 4. On the worker, AS the agent (the token is typed, never echoed, and never in history):
 
        sudo -iu agent
@@ -217,9 +239,9 @@ works in:
    keeps the token in `~agent/.config/gh/hosts.yml`, which the boundary protects. Check what
    `gh auth status` reports rather than assume (not yet tried on a worker Mac).
 5. `sudo ./worker/worker-setup.sh --check` again, so the facts name the holder: the `[agent]`
-   block should say `holds a FINE-GRAINED token`.
+   block should say `holds a FINE-GRAINED token` (route A) or a classic one (route B).
 
-⚠ **No Checks permission exists for fine-grained tokens.** `gh pr checks` fails with *Resource
+⚠ **No Checks permission exists for fine-grained tokens** (a classic token has no such limit, and `gh pr checks` works with it). With a fine-grained token `gh pr checks` fails with *Resource
 not accessible by personal access token (statusCheckRollup)*. The Actions API answers, and is
 enough when all of a repository's CI is GitHub Actions:
 
@@ -603,6 +625,8 @@ manual step: on GitHub, signed in as the account the token belongs to, at
 `https://github.com/settings/personal-access-tokens`, edit the worker's token and add the
 repositories under **Repository access** (an organization that approves tokens then approves
 the change at `https://github.com/organizations/<owner>/settings/personal-access-token-requests`).
+With a classic token it says instead that the collaborator grants decide, and points to
+`repo-protect --grant-worker` (it reads the token's type from `gh auth status`).
 ⚠ Unverified here: whether GitHub narrows `permissions.push` to a fine-grained token's own
 repository list, or reports the account's role on the repository. A repository the token was
 not given answers 404 when it is private; a public one answers, and may say `true` for an

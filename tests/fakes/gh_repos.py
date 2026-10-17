@@ -6,7 +6,7 @@
 
 The state file holds `repos` (the rows `repo list` answers, every field as gh names it) and
 `push` (owner/name to true or false; a repository missing from it answers 404, as GitHub does
-for one the token cannot see). Every call is recorded under `calls`; anything else fails.
+for one the token cannot see). `auth`, when present, is what `auth status` prints. Every call is recorded under `calls`; anything else fails.
 """
 
 from __future__ import annotations
@@ -36,6 +36,8 @@ def main() -> int:
             out = "true\n" if state["push"][slug] else "false\n"
         else:
             code, err = 1, "gh: Not Found (HTTP 404)\n"
+    elif argv == ["auth", "status"] and "auth" in state:
+        out = state["auth"] + "\n"
     else:
         code, err = 1, f"gh_repos.py: not a call worker_repos.py makes: {argv}\n"
     path.write_text(json.dumps(state, indent=2))
