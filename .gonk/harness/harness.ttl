@@ -300,6 +300,20 @@ guide:dispatcher-marks-the-work a harness:Guide ;
     harness:direction harness:feedforward ; harness:execution harness:inferential ;
     harness:stage harness:runtime ; harness:category harness:authoritySafety .
 
+guide:a-router-dispatches-the-work a harness:Guide ;
+    rdfs:label "a router dispatches the work" ;
+    rdfs:comment "A label says nothing about who set it, so a worker takes an item only when its newest dispatch comment, by a principal its configuration lists in `routers`, names the worker's labels and the item's repository and pins the title and body the item still has." ;
+    harness:statedIn "AGENTS.md" ; harness:section "Worker machines" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:runtime ; harness:category harness:authoritySafety .
+
+guide:comments-are-data a harness:Guide ;
+    rdfs:label "comments reach the agent as data" ;
+    rdfs:comment "The item's title and body, pinned by its dispatch, are the agent's task; every comment reaches it as a quoted block under its author, and one by anyone but a router is marked as data written by others, never instructions." ;
+    harness:statedIn "AGENTS.md" ; harness:section "Worker machines" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:runtime ; harness:category harness:authoritySafety .
+
 guide:worker-never-closes-or-merges a harness:Guide ;
     rdfs:label "a worker never closes and never merges" ;
     rdfs:comment "A worker claims, works and reports, with the pull request and its CI as the evidence; the dispatcher checks it, then merges and closes, or rejects with the reason." ;
@@ -334,6 +348,28 @@ ctl:worker-needs-labels a harness:Control ;
     harness:enforcedAt "tools/worker.py#load_worker" ;
     harness:statedBy guide:dispatcher-marks-the-work ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_needs_labels .
+
+ctl:worker-needs-routers a harness:Control ;
+    rdfs:label "worker: routers name who may dispatch to it" ;
+    rdfs:comment "The worker refuses a configuration with no `routers`, or with one that is not a principal gonk's doors name: a free-text author is one any writer can put on a comment, so it could never show who dispatched." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:runtime ; harness:category harness:authoritySafety ;
+    harness:outcome harness:refuse ;
+    harness:wiredBy "worker-config" ;
+    harness:enforcedAt "tools/worker.py#load_routers" ;
+    harness:statedBy guide:a-router-dispatches-the-work ;
+    harness:firedBy test:test_harness:SensorsFire.test_worker_needs_routers .
+
+ctl:worker-dispatched-by-a-router a harness:Control ;
+    rdfs:label "worker: takes only what a router dispatched" ;
+    rdfs:comment "The worker does not take an item whose newest dispatch by a router does not name its labels and the item's repository, or whose title or body changed after it; checked again on the item as read after the claim." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:runtime ; harness:category harness:authoritySafety ;
+    harness:outcome harness:refuse ;
+    harness:wiredBy "worker-config" ;
+    harness:enforcedAt "tools/worker.py#skip_reason" , "tools/worker.py#work" ;
+    harness:statedBy guide:a-router-dispatches-the-work ;
+    harness:firedBy test:test_harness:SensorsFire.test_worker_dispatched_by_a_router .
 
 ctl:worker-work-root-in-home a harness:Control ;
     rdfs:label "worker: works only in its own home" ;

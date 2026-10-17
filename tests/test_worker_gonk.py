@@ -19,7 +19,7 @@ import unittest
 
 from support import gonk
 from test_integration import GONK, IKIGAI, ScratchGonk
-from worker_support import Rig, worker
+from worker_support import DISPATCHER, Rig, worker
 
 
 def tool(repo, *argv: str) -> tuple[int, str]:
@@ -44,10 +44,25 @@ class TheWorkerAgainstARealGonk(unittest.TestCase):
         self.quiet.__enter__()
         self.addCleanup(self.quiet.__exit__, None, None, None)
 
-    def file(self, title: str, labels: str) -> int:
+    def file(self, title: str, labels: str, dispatch: bool = True) -> int:
+        """File an item and, for one a worker is meant to take, dispatch it as the test's
+        router over the socket, where `--as` names the author (the socket names nobody)."""
         code, out = tool(self.rig.checkout, "file", title, "--labels", labels)
         self.assertEqual(code, 0, out)
-        return int(out.split()[0].split("#")[1])
+        number = int(out.split()[0].split("#")[1])
+        routing = [w for w in labels.split(",") if not w.startswith("repo:")]
+        if dispatch and routing:
+            code, out = tool(
+                self.rig.checkout, "dispatch", str(number), "--labels", ",".join(routing),
+                "--as", DISPATCHER,
+            )  # fmt: skip
+            self.assertEqual(code, 0, out)
+        return number
+
+    def human_texts(self, item: dict) -> list[str]:
+        """The item's comment texts, oldest first, less its dispatch."""
+        ordered = sorted(item["comments"], key=lambda c: c["time"])
+        return [c["text"] for c in ordered if gonk.parse_dispatch(c["text"]) is None]
 
     def item(self, number: int) -> dict:
         cfg = gonk.load(self.rig.checkout)
@@ -77,7 +92,7 @@ class TheWorkerAgainstARealGonk(unittest.TestCase):
         item = self.item(other)
         self.assertIsNone(item["claim"])
         self.assertEqual(item["status"], "open")
-        texts = [c["text"] for c in sorted(item["comments"], key=lambda c: c["time"])]
+        texts = self.human_texts(item)
         self.assertEqual(len(texts), 1, texts)  # the release added no comment of its own
         # (The stub gh files every pull request under its state's slug, acme/lib.)
         self.assertTrue(texts[0].startswith("Evidence: https://github.com/acme/lib/pull/1\n"))
@@ -148,7 +163,7 @@ class TheWorkerAgainstARealGonk(unittest.TestCase):
         item = self.item(n)
         self.assertIsNone(item["claim"])
         self.assertEqual(item["status"], "open")
-        texts = [c["text"] for c in item["comments"]]
+        texts = self.human_texts(item)
         self.assertEqual(len(texts), 1, texts)
         for words in says:
             self.assertIn(words, texts[0])

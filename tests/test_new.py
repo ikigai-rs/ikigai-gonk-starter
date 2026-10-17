@@ -90,11 +90,15 @@ class Generate(unittest.TestCase):
     def test_the_generated_worker_runs_from_the_generated_tree(self):
         """Its `plan`, as a separate process in the generated repository: worker.py finds
         gonk.py beside it, reads the sample configuration copied into place and the gonk
-        wiring init writes, and gets as far as asking gonk (a socket nobody listens on)."""
+        wiring init writes, and gets as far as asking gonk (a socket nobody listens on), once
+        its operator has named who may route work to it (the sample's router is a placeholder,
+        refused until then)."""
         repo = scratch(self)
         new.generate(repo, "python")
-        sample = (repo / "worker" / "worker.sample.toml").read_bytes()
-        (repo / ".gonk" / "worker.toml").write_bytes(sample)
+        sample = (repo / "worker" / "worker.sample.toml").read_text()
+        [line] = [w for w in sample.splitlines() if w.startswith("routers = ")]
+        router = 'routers = ["urn:iki:gonk:passkey:dispatcher-test"]'
+        (repo / ".gonk" / "worker.toml").write_text(sample.replace(line, router))
         (repo / ".gonk" / "gonk.toml").write_text('ledger = "library"\n')
         (repo / ".gonk" / "local.toml").write_text(
             f'transport = "socket"\nsocket = "{repo / "none.sock"}"\nholder = "w1"\n'

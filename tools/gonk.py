@@ -230,11 +230,102 @@ def expand(path: str, base: Path) -> str:
 # What gonk names a QUIC client, by every host's convention `urn:iki:host:{name}:client:<fp>`
 # (ikigai-gonk PR 126, ledger item 1183). The older spelling is a permanent alias: gonk never
 # mints it again and never rewrites it where it is stored (item authors, its access log), and
-# treats both spellings of one fingerprint as one machine. This tool compares no principals (a
-# claim is compared by its holder NAME, free text the ledger matches exactly), so the alias is
-# only ever printed, as what older records say.
+# treats both spellings of one fingerprint as one machine. A claim is compared by its holder
+# NAME (free text the ledger matches exactly); the one place this tool compares principals is a
+# dispatch's author (`same_principal`, below), and there the two spellings are one machine.
 CLIENT_IRI_PREFIX = "urn:iki:host:gonk:client:"
 LEGACY_CLIENT_IRI_PREFIX = "urn:iki:gonk:client:"
+
+# Every principal gonk's doors name (ikigai-gonk `admit::PRINCIPAL_PREFIXES`): a signed-in
+# passkey, a QUIC client in either spelling, a layer mirror. gonk's HTTP and QUIC doors REFUSE
+# a write whose `author` has one of these shapes unless it is the request's own principal, the
+# one the door authenticated (ikigai-gonk `admit::author_refusal`, since 2026-10-07); a
+# free-text author (`hub`, `brian`) passes any door, so it proves nothing. The owner's socket
+# names any author: whoever can open it is the gonk host's own account.
+PASSKEY_IRI_PREFIX = "urn:iki:gonk:passkey:"
+LAYER_IRI_PREFIX = "urn:iki:gonk:layer:"
+PRINCIPAL_PREFIXES = (
+    PASSKEY_IRI_PREFIX,
+    CLIENT_IRI_PREFIX,
+    LEGACY_CLIENT_IRI_PREFIX,
+    LAYER_IRI_PREFIX,
+)
+
+
+def principal_form(text: str) -> str | None:
+    """`text` as one principal, compared the way gonk's doors compare it: surrounding space
+    dropped, the prefix's case ignored, a QUIC client's older spelling read as the newer one.
+    None when `text` is not shaped like a principal gonk names, which is exactly the author a
+    door does NOT check (free text), so it can never stand for one.
+
+    >>> principal_form(" URN:IKI:GONK:CLIENT:ab12")
+    'urn:iki:host:gonk:client:ab12'
+    >>> principal_form("urn:iki:gonk:passkey:QlJJQU4")
+    'urn:iki:gonk:passkey:QlJJQU4'
+    >>> principal_form("hub") is None
+    True
+    """
+    text = text.strip()
+    lowered = text.lower()
+    for prefix in PRINCIPAL_PREFIXES:
+        if lowered.startswith(prefix) and len(text) > len(prefix):
+            rest = text[len(prefix) :]
+            if not re.fullmatch(r"[A-Za-z0-9._~:+=-]+", rest):
+                return None
+            if prefix == LEGACY_CLIENT_IRI_PREFIX:
+                prefix = CLIENT_IRI_PREFIX
+            return prefix + rest
+    return None
+
+
+def same_principal(a: str | None, b: str | None) -> bool:
+    """Whether two authors are one principal gonk names (never true of free text)."""
+    pa, pb = principal_form(a or ""), principal_form(b or "")
+    return pa is not None and pa == pb
+
+
+# A dispatch: the dispatcher's comment that routes an item to a worker and pins its brief.
+#
+#     Dispatch: worker:<name> agent:<agent> repo:<repo>
+#     brief: sha256:<64 hex digits>
+#
+# The ledger records no setter for a label (a label is a plain literal on the item) and lets any
+# writer replace an item's title and body without attributing the edit; a comment is appended,
+# never edited, and its `author` is checked by gonk's doors when it is shaped like a principal.
+# So the routing and the brief are both stated in a comment, by an author the worker can check:
+# the labels it names are the ones that routed the item, and the digest is of the title and body
+# the dispatcher sent. A label or an edit made after the dispatch, by anyone, does not match it.
+DISPATCH_PREFIX = "Dispatch:"
+DISPATCH_DIGEST = re.compile(r"^brief:\s*sha256:([0-9a-f]{64})\s*$")
+
+
+def brief_digest(title: str | None, body: str | None) -> str:
+    """The SHA-256 of an item's brief as the ledger serves it: its title, a newline, its body,
+    in UTF-8 (a title is one line, so the newline cannot be ambiguous), lowercase hex.
+
+    >>> brief_digest("Fix it", "It is broken.")[:16]
+    'a7e165a38ffa1705'
+    """
+    text = (title or "") + "\n" + (body or "")
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def dispatch_text(labels: list[str], title: str | None, body: str | None) -> str:
+    """The dispatch comment for these routing labels and this brief."""
+    return f"{DISPATCH_PREFIX} {' '.join(labels)}\nbrief: sha256:{brief_digest(title, body)}"
+
+
+def parse_dispatch(text: str) -> tuple[list[str], str | None] | None:
+    """(the labels a dispatch names, its brief digest or None), or None when `text` is no
+    dispatch at all."""
+    lines = (text or "").strip().splitlines()
+    if not lines or not lines[0].startswith(DISPATCH_PREFIX):
+        return None
+    labels = lines[0][len(DISPATCH_PREFIX) :].split()
+    digest = next((m.group(1) for m in map(DISPATCH_DIGEST.match, lines[1:]) if m), None)
+    return labels, digest
+
+
 PEM_CERT = re.compile(r"-----BEGIN CERTIFICATE-----\s*(.+?)\s*-----END CERTIFICATE-----", re.DOTALL)
 
 
@@ -1571,6 +1662,58 @@ def cmd_reject(args, cfg: Config, make_ikigai) -> int:
     return show(answer)
 
 
+def cmd_dispatch(args, cfg: Config, make_ikigai) -> int:
+    """The dispatcher routes an item to a worker: its routing labels, then a dispatch comment
+    (`dispatch_text`) that names them with the item's `repo:` label and pins the brief's digest.
+    A worker takes an item only when its newest dispatch is by a principal in the worker's
+    `routers` and still matches (tools/worker.py, `dispatch_problem`), so the comment's AUTHOR is
+    what counts: over QUIC gonk names this machine's client; over the owner's socket nothing
+    names anyone, so `--as` says which principal the dispatch is from."""
+    need(cfg, "ledger", "target")
+    labels = [w for w in (args.labels or "").split(",") if w]
+    if not labels or not all(re.fullmatch(r"[A-Za-z0-9._:-]+", w) for w in labels):
+        raise ConfigError(
+            "--labels is the routing labels, comma-separated: worker:<name>,agent:<kind>"
+        )
+    author = None
+    if args.as_principal:
+        author = principal_form(args.as_principal)
+        if author is None:
+            raise ConfigError(
+                f"--as {args.as_principal!r} is not a principal gonk names "
+                f"({', '.join(p + '…' for p in PRINCIPAL_PREFIXES)}): a free-text author is "
+                "one anybody can write, so no worker takes a dispatch from it"
+            )
+    elif cfg.target.socket:
+        raise ConfigError(
+            "over the socket gonk names no author, so a dispatch from here would be from nobody "
+            "and no worker would take it: pass --as <your principal> (your passkey's or your "
+            "machine's IRI, as the workers' `routers` list it)"
+        )
+    ikigai = make_ikigai(cfg.target)
+    item, err = item_json(cfg, ikigai, args.item)
+    if item is None:
+        raise ConfigError(f"could not read item {args.item}: {err}")
+    repos = [w for w in item.get("labels") or [] if w.startswith("repo:")]
+    if len(repos) != 1:
+        raise ConfigError(
+            f"item {args.item} has {len(repos)} `repo:` labels; a worker works in exactly one "
+            "repository, so label it with one first"
+        )
+    for label in labels:
+        if label in (item.get("labels") or []):
+            continue
+        answer = ikigai.run(f"sink {cfg.resource('label')} item={args.item}", stdin=label)
+        if not answer.ok:
+            return show(answer)
+    named = [w for w in labels if not w.startswith("repo:")] + repos
+    text = dispatch_text(named, item.get("title"), item.get("body"))
+    words = [f"sink {cfg.resource('comment')} item={args.item}"]
+    if author:
+        words.append(f"author={author}")
+    return show(ikigai.run(" ".join(words), stdin=text))
+
+
 def cmd_close(args, cfg: Config, make_ikigai) -> int:
     need(cfg, "ledger", "target")
     note = evidence_note(args, cfg)
@@ -1877,6 +2020,21 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("item", type=int)
     s.add_argument("--note", help="why the evidence did not hold (required)")
     s.set_defaults(run=cmd_reject)
+
+    s = sub.add_parser(
+        "dispatch",
+        help="route an item to a worker: labels and a dispatch it checks (a dispatcher's act)",
+    )
+    s.add_argument("item", type=int)
+    s.add_argument(
+        "--labels", help="the routing labels, e.g. worker:<name>,agent:<kind> (required)"
+    )
+    s.add_argument(
+        "--as",
+        dest="as_principal",
+        help="the principal the dispatch is from; required over the socket, which names nobody",
+    )
+    s.set_defaults(run=cmd_dispatch)
 
     s = sub.add_parser("close", help="close an item, with evidence (the dispatcher's act)")
     s.add_argument("item", type=int)

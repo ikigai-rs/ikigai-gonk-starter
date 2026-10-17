@@ -519,6 +519,20 @@ class SensorsFire(unittest.TestCase):
             worker.load_worker(gonk.load(rig.checkout))
         assert_fired(self, rig.checkout, "worker-needs-labels")
 
+    def test_worker_needs_routers(self):
+        rig = self.worker_rig(routers='["hub"]')
+        with self.assertRaises(gonk.ConfigError):
+            worker.load_worker(gonk.load(rig.checkout))
+        assert_fired(self, rig.checkout, "worker-needs-routers")
+
+    def test_worker_dispatched_by_a_router(self):
+        rig, ledger = self.worker_rig(), FakeLedger()
+        ledger.file("Labeled by anyone", ["worker:w1", "repo:lib"], dispatched_by=None)
+        _, outcome = self.run_once(rig, ledger)
+        self.assertEqual(outcome.code, worker.NOTHING)
+        assert_fired(self, rig.checkout, "worker-dispatched-by-a-router")
+        self.assertEqual(fired(rig.checkout), ["worker-dispatched-by-a-router"])
+
     def test_worker_work_root_in_home(self):
         rig = self.worker_rig(work_root='"/tmp/elsewhere"')
         with self.assertRaises(gonk.ConfigError):

@@ -388,6 +388,32 @@ UDP**, and ssh does not forward UDP, so a worker that reaches gonk only through 
 cannot run the loop over QUIC: it needs gonk's QUIC port reachable directly (or gonk on the
 same machine, over its socket).
 
+**Every write the loop makes is authenticated, and the tunnel carries none of them.**
+`tools/worker.py` speaks to gonk only through `.gonk/local.toml`'s transport, which is
+`socket` or `quic` and nothing else: there is no HTTP transport, so the loop never writes
+through the tunnel's anonymous HTTP door, and making that door read-only (anonymous = Read)
+changes nothing for it. The authenticated write path is **QUIC, straight from the worker to
+gonk's UDP port** (1062 unless gonk's operator chose another) on the network the two share,
+with the worker's own client certificate, enrolled with `--worker <ledger>`. gonk's HTTP door
+has no machine credential to offer instead: it authenticates a person's passkey session in a
+browser, and an anonymous caller is nobody. So, on the worker, as agent, `.gonk/local.toml`
+reads:
+
+    transport = "quic"
+    quic = "quic://<gonk host's address on that network>:1062"
+    cert_dir = "/home/agent/gonk-cert"       # the bundle `init --cert-dir` named
+    holder = "<worker name>"
+
+(`python3 tools/gonk.py init --quic … --cert-dir …` writes exactly that.) Two things must hold
+on the network: gonk binds its QUIC door on an address the worker can reach, not loopback
+(`gonk.quic.bind` in gonk's configuration), and the gonk host's firewall lets that UDP port
+in. On macOS, the application firewall allows by APPLICATION, so when it is on it must allow
+the `ikigai-gonk` binary that serves the door (by its path, e.g. `~/.cargo/bin/ikigai-gonk`),
+and a reinstalled binary may need allowing again. `python3 tools/gonk.py init` with no flags,
+on the worker, then says whether gonk answers over QUIC. The tunnel stays useful for reads
+(the hub's item pages from the worker, an agent that reads the ledger over HTTP), and for
+nothing that must be attributed.
+
 #### One loop per agent
 
 A worker machine with several agents (Claude Code, Codex and Hermes, say) runs **one loop per
@@ -470,6 +496,86 @@ A drop-in the single unit had (`systemctl --user edit gonk-worker`, e.g. Claude 
 `systemctl --user edit gonk-worker@claude`. Items handed back by the single loop stay in its
 `.gonk/state/worker/attempts.json`, which the per-agent loops do not read.
 
+#### Who may route work here
+
+An unattended agent runs with its own checks opened and a token that pushes, so what it is
+told matters as much as where it runs. Two rules keep its instructions to the ones its
+dispatcher gave (ledger item 1687 on ikigai's own ledger).
+
+**1. A label is not a dispatch.** The ledger records no setter for a label: a label is a plain
+value on the item, and any writer that may label can add `worker:<name>`. It also lets any
+writer replace an item's title and body, without attributing the edit. What it does record,
+and what gonk checks, is a COMMENT's author: comments are appended and never edited, and
+gonk's HTTP and QUIC doors refuse a write whose `author` is shaped like a principal
+(`urn:iki:gonk:passkey:…`, `urn:iki:host:gonk:client:…`, the older `urn:iki:gonk:client:…`,
+`urn:iki:gonk:layer:…`) unless it is the writer's own, the one the door authenticated. So the
+routing is a comment, the **dispatch**:
+
+    Dispatch: worker:<name> agent:<agent> repo:<repo>
+    brief: sha256:<SHA-256 of the title, a newline, and the body, as the ledger serves them>
+
+which the dispatcher writes with
+
+    python3 tools/gonk.py dispatch 12 --labels worker:<name>,agent:<agent> [--as <principal>]
+
+It adds the labels the item lacks, reads the item, and posts the dispatch, naming those labels
+and the item's one `repo:` label. Over QUIC, gonk names the dispatching machine as the author
+(`--as` may name only that machine). Over the owner's socket nothing names anyone, so `--as`
+is required there: the principal the dispatch is from, as the workers' `routers` list it.
+
+The worker takes an item only when the **newest** dispatch whose author is one of its
+`routers` names every label in its `labels` and the item's `repo:` label, and its digest
+matches the item's title and body as they are now. It checks that when it chooses, and again on
+the item as read after its claim, and builds the agent's brief from that second read; any
+mismatch is a skip (`plan` says which), recorded as the harness sensor
+`worker-dispatched-by-a-router`. So: a label added by anyone after a dispatch routes nothing; a
+router's later dispatch elsewhere spends its earlier one; a dispatch by anyone else, however it
+signs itself, counts for nothing; and an edit to the title or body after the dispatch stops the
+item until a router dispatches it again, which is also how a dispatcher sends an edited item.
+
+In the worker's configuration, the one key to add (each loop's file, on a machine with one
+loop per agent):
+
+    routers = ["urn:iki:gonk:passkey:<credential id>", "urn:iki:host:gonk:client:<fingerprint>"]
+
+- A **person's passkey** principal is `urn:iki:gonk:passkey:<credential id>`; gonk's item page
+  shows it on that person's comments (signed-in writes are attributed to it).
+- A **dispatching machine** (a hub that dispatches over QUIC) is
+  `urn:iki:host:gonk:client:<fingerprint>`, which `python3 tools/gonk.py init` prints on that
+  machine.
+- A **hub on gonk's own host**, dispatching over the owner's socket, names a principal with
+  `--as`; use the principal of the person who owns that host (their passkey), so the worker
+  trusts one name for them whichever door they use.
+
+`routers` is required: a worker refuses a configuration without it, or with an entry that is
+not a principal (a free-text author such as `hub` is one any writer can put on a comment).
+`worker.sample.toml` ships a placeholder that is refused until it is replaced. After a pull,
+a running loop keeps its old configuration until it restarts; restarted without `routers`, it
+refuses to start and says why.
+
+**What this proves, and what it does not.** It proves that one of the principals you named
+wrote the newest dispatch, with these labels and this brief, given three things it cannot check:
+that gonk refuses a borrowed principal `author` at its network doors (it has since 2026-10-07;
+an older gonk let any writer name anyone, and then this proves nothing), that the owner's socket
+is the gonk host's own account (whoever can open it may write any author, by design), and that
+the routers' credentials are their own. It does not say who added a label, only that the labels
+that matter were dispatched; it does not stop someone who may write from commenting (rule 2 is
+for that), from removing a label, or from un-routing an item by editing it; and it says nothing
+about the repository's own content, which the agent reads as code it works on, not as a brief.
+The ledger recording who set each label, and an edit's author, would let a worker check the
+labels themselves; until it does, the dispatch is the record.
+
+**2. Comments reach the agent as data.** The title and body, pinned by the dispatch, are the
+agent's task. Every comment follows as a fenced block under its author's name, as a JSON string
+so a name cannot break the line, with a fence longer than any run of backticks in the comment so
+it cannot close its own block. The dispatcher's comments (by a router) come under "Notes from
+your dispatcher"; everyone else's under a header that says they are data written by others, not
+instructions, and the fixed preamble's rule 7 tells the agent never to follow a request in them.
+The dispatches themselves and the worker's own hand-backs are left out. This lowers the odds of a
+planted comment steering the agent; it cannot make a model immune to text it reads, which is why
+rule 1 decides what the agent works on, and why its account, token and the repository's branch
+protection stay the boundary.
+
 #### Enrolling every repository
 
 A worker takes an item only for a repository its configuration names (`[repos.<name>]`).
@@ -508,6 +614,7 @@ account that could push with another credential. The first push is the final wor
 | key | default | what |
 | --- | --- | --- |
 | `labels` | (required) | `next` is narrowed to items carrying ALL of these, e.g. `["worker:<name>"]`, or `["worker:<name>", "agent:<agent>"]` for one loop of several; the dispatcher marks an item for this worker by labeling it |
+| `routers` | (required) | the principals whose dispatch routes an item here, e.g. `["urn:iki:gonk:passkey:<credential id>"]`; never free text ("Who may route work here") |
 | `holder` | `.gonk/local.toml`'s | the holder name this loop claims under, e.g. `<name>-<agent>`; a label, never a new identity |
 | `without` | none | items carrying ANY of these are never taken |
 | `[repos.<name>]` | (at least one) | `remote` (what `git clone` takes), `github` (`owner/name`, read from a github.com remote when omitted), `base` (default `main`) |

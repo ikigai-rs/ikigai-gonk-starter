@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import plistlib
 import threading
 import time
@@ -20,7 +21,7 @@ from pathlib import Path
 
 from support import ROOT, gonk
 from test_integration import GONK, IKIGAI, ScratchGonk
-from worker_support import FakeLedger, Rig, worker
+from worker_support import DISPATCHER, FakeLedger, Rig, worker
 
 CODEX = '["worker:w1", "agent:codex"]'
 CLAUDE = '["worker:w1", "agent:claude"]'
@@ -103,10 +104,12 @@ class LoopsSideBySide(unittest.TestCase):
         item = self.ledger.items[n]
         item["awaiting"] = None
         item["labels"] = sorted(["worker:w1", "agent:claude", "repo:lib"])
+        self.ledger.dispatch(n)
         take, skip, _ = self.loop(self.claude_toml).candidates()
         self.assertEqual([i["number"] for i, _ in take], [n], skip)
         # The codex loop still remembers it (`worker.py --config … forget <N>` clears that).
         item["labels"] = sorted(["worker:w1", "agent:codex", "repo:lib"])
+        self.ledger.dispatch(n)
         take, skip, _ = self.loop(self.codex_toml).candidates()
         self.assertEqual(take, [])
         self.assertIn("handed it back already", dict(skip)[f"acme#{n}"])
@@ -155,7 +158,7 @@ class TheHolderOverride(unittest.TestCase):
         self.assertEqual(set(claims), {"w1-codex"})
         releases = [c for c, _ in ledger.calls if c.startswith("delete")]
         self.assertEqual(releases, [f"delete urn:gk:iki:ledger:acme:claim item={n} from=w1-codex"])
-        [comment] = ledger.items[n]["comments"]
+        [comment] = ledger.human_comments(n)
         self.assertIn("gonk worker `w1-codex` handed this back", comment["text"])
 
     def test_local_toml_need_not_name_a_holder_when_the_loop_does(self):
@@ -218,11 +221,19 @@ class InitAgents(unittest.TestCase):
             self.assertNotIn("repos", t, "the sample's example repository is nobody's")
             commands[agent] = t["agent"]
             self.assertEqual(t["budget"], "45m")  # the sample's settings come along
-            # It loads once a repository is enrolled, as worker_repos.py appends one.
+            # It loads once a repository is enrolled, as worker_repos.py appends one, and its
+            # operator names who may route work to it: the sample's router is a placeholder,
+            # refused until then.
             path = self.gonk_dir / f"worker-{agent}.toml"
             with path.open("a") as f:
                 f.write('\n[repos.lib]\nremote = "https://github.com/acme/lib.git"\n')
+            with self.assertRaises(gonk.ConfigError):
+                worker.load_worker(gonk.load(self.rig.checkout), path)
+            text = path.read_text()
+            [line] = [w for w in text.splitlines() if w.startswith("routers = ")]
+            path.write_text(text.replace(line, f"routers = {json.dumps([DISPATCHER])}"))
             wc = worker.load_worker(gonk.load(self.rig.checkout), path)
+            self.assertEqual(wc.routers, [DISPATCHER])
             self.assertEqual((wc.loop, wc.holder), (agent, f"w1-{agent}"))
         self.assertIn("bypassPermissions", commands["claude"]["command"])
         self.assertIn("danger-full-access", commands["codex"]["command"])
@@ -237,6 +248,7 @@ class InitAgents(unittest.TestCase):
         self.assertEqual(sorted(t["repos"]), ["lib", "other"])
         self.assertEqual(t["labels"], ["worker:w1", "agent:codex"])
         self.assertEqual(t["agent"]["command"][:2], ["codex", "exec"])
+        self.assertEqual(t["routers"], [DISPATCHER])  # who may route work comes along too
         self.assertIn(".gonk/worker.toml", (self.gonk_dir / "worker-codex.toml").read_text())
 
     def test_a_second_run_never_overwrites(self):
@@ -323,8 +335,41 @@ class TheHolderOverrideAgainstARealGonk(unittest.TestCase):
             f'transport = "quic"\nquic = "quic://127.0.0.1:{g.quic_port}"\n'
             f'cert_dir = "{g.bundle("w1")}"\nholder = "w1"\n'
         )
+
+        # Over QUIC a dispatch may not borrow another principal's name: gonk's door refuses an
+        # `author` shaped like a principal that is not the client's own, which is what makes a
+        # dispatch's author worth checking.
+        def dispatch(*extra: str) -> tuple[int, str]:
+            out = io.StringIO()
+            argv = [
+                "--repo",
+                str(rig.checkout),
+                "dispatch",
+                str(n),
+                "--labels",
+                "worker:w1,agent:codex",
+            ]
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+                return gonk.main([*argv, *extra]), out.getvalue()
+
+        code, said = dispatch("--as", "urn:iki:gonk:passkey:somebody-else")
+        self.assertNotEqual(code, 0, said)
+        self.assertIn("only the door names one", said)
+        # With no `--as` the door names the machine itself, and this loop trusts that machine.
+        code, said = dispatch()
+        self.assertEqual(code, 0, said)
+        item, err = gonk.item_json(gonk.load(rig.checkout), socket, n)
+        self.assertIsNone(err)
+        [sent] = [c for c in item["comments"] if gonk.parse_dispatch(c["text"])]
+        self.assertTrue(gonk.same_principal(sent["author"], principal), sent)
         rig.agent_flags = ["--sleep", "2.5"]
-        path = rig.configure("worker-codex.toml", labels=CODEX, holder='"w1-codex"', lease='"10s"')
+        path = rig.configure(
+            "worker-codex.toml",
+            labels=CODEX,
+            holder='"w1-codex"',
+            lease='"10s"',
+            routers=json.dumps([principal]),
+        )
         seen = {}
 
         def watch():

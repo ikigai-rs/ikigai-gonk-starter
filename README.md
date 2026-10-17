@@ -143,8 +143,8 @@ the same question the opposite way refuse to combine, with the reason: `audits` 
 - **`solo`.** You are both roles. Claim, open a pull request, read its CI, report, then close
   your own item. The smallest process, and the one to start with.
   ([Book chapter](https://ikigai-rs.github.io/ikigai-tutorial/gonk/ways/solo.html))
-- **`workers`.** You (or a hub) dispatch, and machines work: label an item `worker:<name>`,
-  and a worker running `tools/worker.py` claims it, works it in a fresh worktree, opens a pull
+- **`workers`.** You (or a hub) dispatch, and machines work: dispatch an item to
+  `worker:<name>` (`gonk.py dispatch`), and a worker running `tools/worker.py` claims it, works it in a fresh worktree, opens a pull
   request and hands it back with the evidence. It brings the worker loop, its sample
   configuration and its service units; [`worker/README.md`](worker/README.md) sets the
   machine up. ([Book chapter](https://ikigai-rs.github.io/ikigai-tutorial/gonk/ways/workers.html))
@@ -372,8 +372,22 @@ and hands the item back: the pull request it opened and that pull request's CI, 
 `Evidence:` comment, then the claim released. **It never closes and never merges**: the
 dispatcher checks the evidence and does both.
 
+**A label is not a dispatch.** The ledger records no setter for a label, and anyone who can
+write to it can label an item, so a worker takes an item only when its newest **dispatch** by
+a principal in the worker's `routers` names the worker's labels and the item's `repo:`, and
+pins the title and body the item still has. The dispatcher writes it:
+
 ```sh
-cp worker/worker.sample.toml .gonk/worker.toml       # labels, repositories, agent, budget
+python3 tools/gonk.py dispatch 12 --labels worker:<name>,agent:<agent> [--as <principal>]
+```
+
+and the agent gets the title and body as its task, with every comment quoted under its
+author, and the ones by anyone but a router marked as data, never instructions
+([`worker/README.md`](worker/README.md), "Who may route work here", says what this proves and
+what it does not).
+
+```sh
+cp worker/worker.sample.toml .gonk/worker.toml       # labels, routers, repositories, agent
 python3 tools/worker.py plan                         # what it would take, and why not the rest
 python3 tools/worker.py run --once                   # one item, then exit
 python3 tools/worker.py run                          # the loop; worker/units/ runs it as a service

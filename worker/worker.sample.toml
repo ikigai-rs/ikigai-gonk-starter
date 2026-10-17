@@ -14,6 +14,19 @@ labels = ["worker:my-worker"]
 # Items carrying ANY of these are never taken.
 # without = ["needs-person"]
 
+# Who may route work here: the principals whose DISPATCH sends an item to this worker. Required.
+# A label alone says nothing about who set it (the ledger records no setter, and anyone who can
+# write to the ledger can label), so the worker takes an item only when its newest dispatch
+# comment by one of these names this worker's labels and the item's repo:, and pins the title
+# and body it still has. The dispatcher writes it with `python3 tools/gonk.py dispatch N
+# --labels worker:<name>,agent:<kind>`. Each entry is a principal gonk's doors name, never free
+# text (worker/README.md, "Who may route work here"): a person's passkey,
+#   "urn:iki:gonk:passkey:<credential id>"       (gonk's item page shows it on their comments)
+# or a dispatching machine's client certificate,
+#   "urn:iki:host:gonk:client:<sha256 fingerprint>"
+# The placeholder below is refused until you replace it.
+routers = ["urn:iki:gonk:passkey:<the dispatcher's credential id>"]
+
 # Where worktrees go: <work_root>/<repo>/item-<N>. Must be under this account's own home.
 work_root = "~/work"
 
