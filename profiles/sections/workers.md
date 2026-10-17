@@ -19,5 +19,10 @@ items the dispatcher marks for them, and work each one in a fresh working tree o
   request, reads its CI, and hands the item back with both as the evidence. The dispatcher
   checks that evidence, then merges and closes, or answers with
   `python3 tools/gonk.py reject 12 --note "<why>"`, and the item is ready again.
+- **A worker runs as an account of its own.** Never as root, and only in a work root strictly
+  under that account's home: not a person's checkouts, not a shared directory.
+- **A worker has a budget, and takes an item once.** An agent that runs past its wall-clock
+  budget is stopped and the item handed back without evidence. An item the worker handed back
+  is not taken again until `worker.py forget` clears it.
 - **One agent per repository.** A worker takes no item whose repository already has a live
   claim held by anyone, and runs one item per repository on its machine.

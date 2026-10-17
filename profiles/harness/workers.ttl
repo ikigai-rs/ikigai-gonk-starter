@@ -26,6 +26,20 @@ guide:worker-never-closes-or-merges a harness:Guide ;
     harness:direction harness:feedforward ; harness:execution harness:inferential ;
     harness:stage harness:runtime ; harness:category harness:authoritySafety .
 
+guide:worker-own-account a harness:Guide ;
+    rdfs:label "a worker runs as an account of its own" ;
+    rdfs:comment "A worker never runs as root, and works only in a work root strictly under its own account's home: not a person's checkouts, not a shared directory." ;
+    harness:statedIn "AGENTS.md" ; harness:section "Worker machines" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:runtime ; harness:category harness:authoritySafety .
+
+guide:worker-budget-and-once a harness:Guide ;
+    rdfs:label "a worker has a budget, and takes an item once" ;
+    rdfs:comment "An agent that runs past its wall-clock budget is stopped and the item handed back without evidence; an item the worker handed back is not taken again until `worker.py forget` clears it." ;
+    harness:statedIn "AGENTS.md" ; harness:section "Worker machines" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:runtime ; harness:category harness:authoritySafety .
+
 guide:one-agent-per-repository a harness:Guide ;
     rdfs:label "one agent per repository" ;
     rdfs:comment "A worker takes no item whose repository has a live claim held by anyone, and runs one item per repository on its machine." ;
@@ -41,6 +55,7 @@ ctl:worker-refuses-root a harness:Control ;
     harness:outcome harness:refuse ;
     harness:wiredBy "worker-config" ;
     harness:enforcedAt "tools/worker.py#cmd_run" ;
+    harness:statedBy guide:worker-own-account ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_refuses_root .
 
 ctl:worker-needs-labels a harness:Control ;
@@ -84,6 +99,7 @@ ctl:worker-work-root-in-home a harness:Control ;
     harness:outcome harness:refuse ;
     harness:wiredBy "worker-config" ;
     harness:enforcedAt "tools/worker.py#work_root" ;
+    harness:statedBy guide:worker-own-account ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_work_root_in_home .
 
 ctl:worker-skips-claimed a harness:Control ;
@@ -127,6 +143,7 @@ ctl:worker-skips-handed-back a harness:Control ;
     harness:outcome harness:refuse ;
     harness:wiredBy "worker-config" ;
     harness:enforcedAt "tools/worker.py#skip_reason" ;
+    harness:statedBy guide:worker-budget-and-once ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_skips_handed_back .
 
 ctl:worker-one-agent-per-repository a harness:Control ;
@@ -148,7 +165,7 @@ ctl:worker-claim-lost a harness:Control ;
     harness:outcome harness:refuse ;
     harness:wiredBy "worker-config" ;
     harness:enforcedAt "tools/worker.py#work_claimed" ;
-    harness:statedBy guide:stop-when-claim-gone ;
+    harness:statedBy guide:stop-when-claim-gone , guide:a-claim-is-a-lease ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_claim_lost .
 
 ctl:worker-budget-overrun a harness:Control ;
@@ -159,6 +176,7 @@ ctl:worker-budget-overrun a harness:Control ;
     harness:outcome harness:refuse ;
     harness:wiredBy "worker-config" ;
     harness:enforcedAt "tools/worker.py#work_claimed" ;
+    harness:statedBy guide:worker-budget-and-once , guide:hand-back-when-you-stop ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_budget_overrun .
 
 ctl:worker-no-evidence a harness:Control ;
@@ -169,7 +187,7 @@ ctl:worker-no-evidence a harness:Control ;
     harness:outcome harness:refuse ;
     harness:wiredBy "worker-config" ;
     harness:enforcedAt "tools/worker.py#work_claimed" ;
-    harness:statedBy guide:report-with-evidence ;
+    harness:statedBy guide:report-with-evidence , guide:hand-back-when-you-stop ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_no_evidence .
 
 ctl:worker-merged-before-exit a harness:Control ;
