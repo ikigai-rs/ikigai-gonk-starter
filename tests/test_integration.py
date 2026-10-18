@@ -545,8 +545,8 @@ class AgainstARealGonk(unittest.TestCase):
         self.assertIn("guide:reproduce-before-fix", unchecked)
         self.assertNotIn("guide:a-claim-is-a-fence", unchecked)
         unstated = section(again, "harness-sensors-without-guide")
-        self.assertIn("ctl:reject-needs-reason", unstated)
-        self.assertNotIn("ctl:evidence-required", unstated)
+        # Every sensor cites a rule of AGENTS.md (ledger item 1474), so none is unstated.
+        self.assertNotIn("ctl:", unstated)
 
         # Why the questions are not published: gonk holds every script run to a ceiling of
         # ledger reads, the owner's too. Published by hand, one is refused naming the graph.
