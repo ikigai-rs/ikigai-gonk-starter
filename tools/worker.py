@@ -74,6 +74,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import gonk  # noqa: E402  (beside this file; the path above makes it importable)
+import worker_usage  # noqa: E402
 
 # --------------------------------------------------------------------------- durations
 
@@ -166,6 +167,7 @@ class WorkerConfig:
     state_dir: Path  # SHARED by every loop of this checkout: the per-repository locks
     loop_dir: Path = field(default=None)  # this loop's own: the items it handed back
     global_stop: Path = field(default=None)  # stops EVERY loop of this checkout
+    usage: dict = field(default_factory=dict)  # the [usage] table: see tools/worker_usage.py
     loop: str | None = None  # from `worker-<loop>.toml`; None for worker.toml, the one loop
     holder: str | None = None  # overrides .gonk/local.toml's holder for this loop's claims
 
@@ -202,6 +204,36 @@ def loop_name(path: Path) -> str | None:
             "digits, `-` and `_`): name the file worker-<agent>.toml"
         )
     return m.group(1)
+
+
+def load_usage(u, where: str, command: list[str]) -> dict:
+    """The [usage] table, checked: command (a list), threshold (percent), every, status_item."""
+    if not isinstance(u, dict):
+        raise gonk.ConfigError(f"{where}: [usage] is a table")
+    cmd = u.get("command")
+    if isinstance(cmd, str):
+        cmd = shlex.split(cmd)
+    if cmd is not None and (not cmd or not all(isinstance(c, str) for c in cmd)):
+        raise gonk.ConfigError(f"{where}: [usage] command is a command line that prints JSON")
+    threshold = u.get("threshold", worker_usage.DEFAULT_THRESHOLD)
+    if (
+        isinstance(threshold, bool)
+        or not isinstance(threshold, (int, float))
+        or not 0 < threshold <= 100
+    ):
+        raise gonk.ConfigError(f"{where}: [usage] threshold is a percent, above 0 and at most 100")
+    item = u.get("status_item")
+    if item is not None and (isinstance(item, bool) or not isinstance(item, int) or item < 1):
+        raise gonk.ConfigError(f"{where}: [usage] status_item is an item number")
+    every = seconds(str(u.get("every", "1h")), "usage every")
+    agent = u.get("agent") or Path(command[0]).name
+    return {
+        "command": cmd,
+        "threshold": float(threshold),
+        "every": every,
+        "status_item": item,
+        "agent": agent,
+    }
 
 
 def load_worker(cfg: gonk.Config, path: Path | None = None) -> WorkerConfig:
@@ -335,6 +367,7 @@ def load_worker(cfg: gonk.Config, path: Path | None = None) -> WorkerConfig:
         global_stop=state_dir / "stop",
         loop=loop,
         holder=holder,
+        usage=load_usage(t.get("usage", {}), where, command),
     )
 
 
@@ -1062,6 +1095,16 @@ class Worker:
         # the loop asks again at every poll and a skip that has not changed is not news.
         self.skips_fired: set[tuple[str, int]] = set()
         self.skipped: list[tuple[str, int]] = []
+        u = wc.usage
+        self.usage = worker_usage.UsageWatch(
+            u.get("agent", "agent"),
+            u.get("command"),
+            u.get("threshold", 85.0),
+            u.get("every", 3600),
+            u.get("status_item"),
+            self.ledger,
+            log,
+        )
 
     # ----------------------------------------------------------------- choosing
 
@@ -1151,6 +1194,9 @@ class Worker:
     # ----------------------------------------------------------------- one item
 
     def run_once(self) -> Outcome:
+        held = self.usage.check()
+        if held:
+            return Outcome(NOTHING, held)
         take, skip, err = self.candidates()
         if err:
             return Outcome(ERROR, f"gonk did not answer next: {err}")

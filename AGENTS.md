@@ -152,6 +152,15 @@ items the dispatcher marks for them, and work each one in a fresh working tree o
   request, reads its CI, and hands the item back with both as the evidence. The dispatcher
   checks that evidence, then merges and closes, or answers with
   `python3 tools/gonk.py reject 12 --note "<why>"`, and the item is ready again.
+- **Usage against the weekly limit.** Between items, before the loop asks `next` and at most
+  once an hour, the worker runs the `[usage] command` of `.gonk/worker*.toml` for its agent
+  (`tools/worker_usage.py`; Claude Code, Codex and Hermes alike, each loop its own). The command
+  prints a JSON reading (plan, used, limit, percent, reset time); with none, or one that fails,
+  the reading is `unknown`, never a guess. The report line (`Usage: agent=… plan=… used=…
+  limit=… percent=… resets=… read=…`) is logged and posted as a comment on the standing
+  `status_item`, with no token or account id. Above `threshold` percent (default 85) the loop
+  takes no NEW item for that agent, and says so, until a reading is under it or its reset time
+  has passed; an item already running is not stopped.
 - **One agent per repository.** A worker takes no item whose repository already has a live
   claim held by anyone, and runs one item per repository on its machine.
 
