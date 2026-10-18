@@ -578,6 +578,7 @@ class SensorsFire(unittest.TestCase):
     def test_worker_skips_handed_back(self):
         rig, ledger = self.worker_rig(), FakeLedger()
         n = ledger.file("Tried", ["worker:w1", "repo:lib"])
+        time.sleep(0.05)  # the hand-back comes after the dispatch, as it does in life
         worker.Attempts(rig.checkout / ".gonk" / "state" / "worker").record("acme", n, "x")
         _, outcome = self.run_once(rig, ledger)
         self.assertEqual(outcome.code, worker.NOTHING)

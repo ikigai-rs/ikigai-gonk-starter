@@ -60,6 +60,16 @@ firings needs a test in `tests/test_harness.py`'s `SensorsFire` named for it, wh
 `harness:firedBy` names. An id never changes once firings carry it. Terms:
 `.gonk/harness/vocabulary.ttl`.
 
+**Rules that stay prose.** `.gonk/queries/harness-guides-without-sensor.rq` lists rules no
+computational control states; these stay so, on purpose (ledger item 1474):
+`reproduce-before-fix` and `last-command-exit-status` are judgements about how an agent
+worked, with nothing in a tool call to observe; `stage-files-by-name` would need a hook on
+every `git add`, and the repository's hooks are optional; `no-bare-numbers` cannot be told from
+a URL fragment or a heading by pattern without false refusals; `change-starts-as-a-folder` and
+`keep-the-spec-true` ask whether a change alters what a spec says, which only a reader can
+tell (the dispatcher's check and review are the control). Revisit one when a cheap, exact
+signal for it appears.
+
 **The starter's own `AGENTS.md` and `.gonk/process.toml` are the default process**, so a
 repository made by copying this starter as a template has the same rules and record as one
 `new.py` generates without `--process`. So is its

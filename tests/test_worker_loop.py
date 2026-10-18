@@ -417,6 +417,34 @@ class TheLoop(unittest.TestCase):
         take, _, _ = self.rig.worker(self.ledger).candidates()
         self.assertEqual([i["number"] for i, _ in take], [n])
 
+    def handed_back_item(self) -> int:
+        self.rig.agent_flags = ["--no-pr", "--exit", "1"]
+        n = self.ledger.file("Gives up", ["worker:w1", "repo:lib"])
+        self.assertEqual(self.run_once().code, worker.NOT_HANDED_BACK)
+        return n
+
+    def test_a_handed_back_item_is_skipped_and_logged_once_across_polls(self):
+        n = self.handed_back_item()
+        w = self.rig.worker(self.ledger)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            for _ in range(5):
+                self.assertEqual(w.run_once().code, worker.NOTHING)
+        self.assertEqual(out.getvalue().count(f"skip acme#{n}: this worker handed it back"), 1)
+
+    def test_a_dispatch_after_the_hand_back_rearms_the_item(self):
+        n = self.handed_back_item()
+        self.ledger.dispatch(n)
+        take, _, _ = self.rig.worker(self.ledger).candidates()
+        self.assertEqual([i["number"] for i, _ in take], [n])
+        self.assertIsNone(worker.Attempts(self.rig.worker(self.ledger).wc.loop_dir).seen("acme", n))
+
+    def test_a_dispatch_before_the_hand_back_does_not_rearm_it(self):
+        n = self.handed_back_item()  # filed with its dispatch, then handed back
+        take, skip, _ = self.rig.worker(self.ledger).candidates()
+        self.assertEqual(take, [])
+        self.assertIn("handed it back already", dict(skip)[f"acme#{n}"])
+
     # Every way an item goes back WITHOUT evidence leaves exactly one comment saying why, and
     # a release that carries no content: the cli gives a batch's stdin only to a content-less
     # SINK, never to a DELETE, so a note handed to the release never reached the item (ledger

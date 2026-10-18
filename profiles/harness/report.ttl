@@ -7,7 +7,7 @@ guide:report-with-evidence a harness:Guide ;
 
 guide:dispatcher-closes-on-evidence a harness:Guide ;
     rdfs:label "the dispatcher closes, after checking the evidence" ;
-    rdfs:comment "Only the dispatcher closes an item, and only after checking its evidence: the pull request merged, with green CI." ;
+    rdfs:comment "Only the dispatcher closes an item, and only after checking its evidence: the pull request merged, with green CI. A rejection says why: `reject` needs a `--note`." ;
     harness:statedIn "AGENTS.md" ; harness:section "5. Report with evidence; the dispatcher closes" ;
     harness:direction harness:feedforward ; harness:execution harness:inferential ;
     harness:stage harness:merge ; harness:category harness:authoritySafety , harness:behavior .
@@ -29,6 +29,7 @@ ctl:reject-needs-reason a harness:Control ;
     harness:stage harness:merge ; harness:category harness:behavior ;
     harness:outcome harness:refuse ;
     harness:enforcedAt "tools/gonk.py#cmd_reject" ;
+    harness:statedBy guide:dispatcher-closes-on-evidence ;
     harness:firedBy test:test_harness:SensorsFire.test_reject_needs_reason .
 
 ctl:dispatcher-checks-evidence a harness:Control ;
