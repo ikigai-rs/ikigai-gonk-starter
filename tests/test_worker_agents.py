@@ -104,15 +104,14 @@ class LoopsSideBySide(unittest.TestCase):
         item = self.ledger.items[n]
         item["awaiting"] = None
         item["labels"] = sorted(["worker:w1", "agent:claude", "repo:lib"])
-        self.ledger.dispatch(n)
+        self.ledger.dispatch(n, labels=[*item["labels"], "agent:codex"])
         take, skip, _ = self.loop(self.claude_toml).candidates()
         self.assertEqual([i["number"] for i, _ in take], [n], skip)
-        # The codex loop still remembers it (`worker.py --config … forget <N>` clears that).
-        item["labels"] = sorted(["worker:w1", "agent:codex", "repo:lib"])
-        self.ledger.dispatch(n)
-        take, skip, _ = self.loop(self.codex_toml).candidates()
-        self.assertEqual(take, [])
-        self.assertIn("handed it back already", dict(skip)[f"acme#{n}"])
+        # The claude loop took it without the codex loop's memory in the way; that memory is
+        # the codex loop's own, and yields only to a dispatch newer than the hand-back.
+        codex = self.loop(self.codex_toml)
+        self.assertIsNone(worker.Attempts(self.loop(self.claude_toml).wc.loop_dir).seen("acme", n))
+        self.assertIsNotNone(worker.Attempts(codex.wc.loop_dir).seen("acme", n))
 
     def test_a_loops_stop_file_stops_it_alone(self):
         codex, claude = self.loop(self.codex_toml), self.loop(self.claude_toml)

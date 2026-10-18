@@ -549,6 +549,23 @@ def dispatch_problem(item: dict, routers: list[str], labels: list[str]) -> str |
     return None
 
 
+def redispatched_since(item: dict, routers: list[str], at: str | None) -> bool:
+    """Whether a router dispatched the item after the instant `at` (a hand-back)."""
+    try:
+        since = gonk.parse_instant(at or "")
+    except ValueError:
+        return False
+    for c in item.get("comments") or []:
+        if gonk.parse_dispatch(c.get("text") or "") is None or not by_router(c, routers):
+            continue
+        try:
+            if gonk.parse_instant(c.get("time") or "") > since:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 # --------------------------------------------------------------------------- local state
 
 
@@ -574,7 +591,7 @@ class Attempts:
         table = self.read()
         table[f"{ledger}#{number}"] = {
             "outcome": outcome,
-            "at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
         }
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps(table, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -1062,6 +1079,7 @@ class Worker:
         # the loop asks again at every poll and a skip that has not changed is not news.
         self.skips_fired: set[tuple[str, int]] = set()
         self.skipped: list[tuple[str, int]] = []
+        self.skip_logged: dict[str, str] = {}
 
     # ----------------------------------------------------------------- choosing
 
@@ -1115,6 +1133,10 @@ class Worker:
                 "it is awaiting its dispatcher (handed back, awaiting review)"
             )
         seen = self.attempts.seen(self.cfg.ledger, item["number"])
+        if seen and redispatched_since(item, self.wc.routers, seen.get("at")):
+            # The hub routed the item again after this worker handed it back: a fresh assignment.
+            self.attempts.forget(self.cfg.ledger, item["number"])
+            seen = None
         if seen:
             return gonk.sensor("worker-skips-handed-back"), (
                 f"this worker handed it back already ({seen['outcome']}, {seen['at']}); "
@@ -1155,7 +1177,10 @@ class Worker:
         if err:
             return Outcome(ERROR, f"gonk did not answer next: {err}")
         for display, why in skip:
-            log(f"skip {display}: {why}")
+            # Once per item per reason: the loop asks again at every poll.
+            if self.skip_logged.get(display) != why:
+                self.skip_logged[display] = why
+                log(f"skip {display}: {why}")
         for control, number in self.skipped:
             self.fire_skip(control, number)
         for item, repo in take:
