@@ -7,7 +7,7 @@ Saved SPARQL over the ledger and the spec graph, one query per `<name>.rq` file:
 | `open-items-for-artifact` | the open items that touch one artifact, by priority (`artifact=service`) | the ledger |
 | `open-work-by-change` | open and total items for each change in flight | the ledger |
 | `requirements-with-open-work` | each requirement with open items about it, and how many | the spec graph and the ledger |
-| `harness-sensors-never-fired` | the sensors with no firing yet, and whether a test shows each can fire | the harness graph |
+| `harness-sensors-never-fired` | the sensors with no firing yet, whether each is wired here, and whether a test shows it can fire | the harness graph |
 | `harness-guides-without-sensor` | the rules of AGENTS.md no computational control checks | the harness graph |
 | `harness-sensors-without-guide` | the sensors that state no rule | the harness graph |
 | `harness-firings-by-control` | how often each control refused or warned, first and last | the harness graph |

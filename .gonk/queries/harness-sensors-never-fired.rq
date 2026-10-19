@@ -5,7 +5,13 @@
 # and that refuse or warn, record firings: CI, a review, an audit and the dispatcher's check
 # record theirs elsewhere, so they are not asked about. A row is a sensor with no firing in any
 # working tree's log loaded into this graph (`python3 tools/gonk.py harness` loads one).
-# `proof` says what the silence means:
+# `wired` is whether this sensor is turned on in the working tree that loaded the graph: a
+# sensor that is not wired is silent because nothing runs it, which is not the same as a rule
+# landing. `-` is a sensor whose fragment states no harness:wiredBy, so it is on wherever its
+# code is. `proof` says what the silence means:
+#   "not wired"              the sensor is off here (harness:wired false): its silence says
+#                            nothing about whether its rule is landing, so turn it on and ask
+#                            again rather than reading it as a rule that has landed.
 #   "fired by a test"        a test drove it and saw the firing recorded (harness:firedBy):
 #                            quiet, not blind. The rule may be landing, or may no longer
 #                            match how anyone works.
@@ -15,7 +21,7 @@
 #                            have drifted.
 PREFIX harness: <https://ikigai-rs.dev/ns/harness#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-SELECT DISTINCT ?control ?label ?proof WHERE {
+SELECT DISTINCT ?control ?label ?wired ?proof WHERE {
   GRAPH <urn:iki:harness:graph:LEDGER> {
     ?control harness:direction harness:feedback ;
              harness:execution harness:computational ;
@@ -29,10 +35,13 @@ SELECT DISTINCT ?control ?label ?proof WHERE {
       FILTER(STRSTARTS(?at, "tools/") || STRSTARTS(?at, "hooks/"))
     }
     FILTER NOT EXISTS { ?firing harness:firedControl ?control }
+    OPTIONAL { ?control harness:wired ?on }
     OPTIONAL { ?control harness:firedBy ?test }
     OPTIONAL { ?control harness:noFiringTest ?why }
   }
-  BIND(IF(BOUND(?test), "fired by a test",
-          IF(BOUND(?why), "cannot fire (stated)", "NO TEST: may be blind")) AS ?proof)
+  BIND(IF(!BOUND(?on), "-", IF(?on, "yes", "no")) AS ?wired)
+  BIND(IF(BOUND(?on) && !?on, "not wired",
+          IF(BOUND(?test), "fired by a test",
+             IF(BOUND(?why), "cannot fire (stated)", "NO TEST: may be blind"))) AS ?proof)
 }
 ORDER BY ?proof ?control

@@ -40,6 +40,13 @@ has "and gh's hosts.yml" ".config/gh/hosts.yml" "$(printf '%s' "$out" | grep '^F
 out="$(printf '%s\n' "$home/.bash_history" "$home/nonexistent" | bash "$probe" --sections closed --closed "$home" --candidates 2>&1)"
 has "enumerated candidates: the one that opens is named" "can open 1 of 2 enumerated file(s)" "$out"
 has "with its path" "$home/.bash_history" "$out"
+# Progress is stderr-only: stdout is byte-identical with and without it (the hub parses stdout).
+cl="$(printf '%s\n' "$home/.bash_history" "$home/nonexistent" "$home/nonexistent")"
+quiet="$(printf '%s\n' "$cl" | bash "$probe" --sections closed --closed "$home" --candidates 2>/dev/null)"
+loud="$(printf '%s\n' "$cl" | PROBE_PROGRESS_SECS=0 bash "$probe" --sections closed --closed "$home" --candidates 2>"$sb/prog")"
+if [ "$quiet" = "$loud" ]; then echo "  ok   progress leaves stdout byte-identical"; pass=$((pass+1)); else echo "  FAIL progress changed stdout"; fail=$((fail+1)); fi
+has "progress is one stable line on stderr" "probe-progress: tried 1" "$(cat "$sb/prog")"
+case "$loud" in *probe-progress*) echo "  FAIL progress leaked to stdout"; fail=$((fail+1)) ;; *) echo "  ok   no progress on stdout"; pass=$((pass+1)) ;; esac
 
 echo "── the fix: the home closed"
 chmod 0000 "$home"

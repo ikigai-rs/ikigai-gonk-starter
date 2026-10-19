@@ -34,7 +34,7 @@
 <https://ikigai-rs.dev/ns/harness#> a owl:Ontology ;
     rdfs:label "ikigai harness vocabulary" ;
     rdfs:comment "Terms for describing the harness a coding agent works in: its controls (guides and sensors), where and when each acts, what it regulates, the tests that show a sensor can fire, the log of every time one does, and the coverage questions asked of both." ;
-    owl:versionInfo "0.1.0" .
+    owl:versionInfo "0.2.0" .
 
 # ── controls ───────────────────────────────────────────────────────────────────────────────
 
@@ -224,6 +224,18 @@ harness:noFiringTest a rdf:Property ;
     rdfs:range xsd:string ;
     rdfs:label "noFiringTest" ;
     rdfs:comment "Why no test can show this sensor firing, stated where the sensor is. Every other sensor that records firings names a test that fires it (harness:firedBy)." .
+
+harness:wiredBy a rdf:Property ;
+    rdfs:domain harness:Control ;
+    rdfs:range xsd:string ;
+    rdfs:label "wiredBy" ;
+    rdfs:comment "The part of the process that turns this sensor on, where that part is carried: a hook or a check named in `.gonk/process.toml` (`claude:require-claim`, `git:post-commit`, `worker-config`). A sensor with no wiredBy is on wherever its code is; one with it is on only where that part is, and the graph says which (harness:wired)." .
+
+harness:wired a rdf:Property ;
+    rdfs:domain harness:Control ;
+    rdfs:range xsd:boolean ;
+    rdfs:label "wired" ;
+    rdfs:comment "Whether this sensor is turned on in the working tree that loaded the graph: `python3 tools/gonk.py harness` decides it from the same checks `init` reports (the hook's settings merged, `core.hooksPath` set, a worker configured) and loads it with the graph. A sensor that is not wired is silent because nothing runs it, not because the rule is landing, so a coverage answer reads wired before it reads a silence as quiet." .
 
 # ── proofs: which test shows a sensor firing ───────────────────────────────────────────────
 

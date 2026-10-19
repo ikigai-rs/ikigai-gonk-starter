@@ -63,9 +63,13 @@ class Generate(unittest.TestCase):
         service units, unchanged, and the justfile recipes that run it. The machine's setup
         (accounts, boundary probe) stays in the starter."""
         units = sorted(p.name for p in (ROOT / "worker" / "units").iterdir())
-        self.assertEqual(units, ["dev.ikigai-rs.gonk-worker.plist", "gonk-worker.service"])
+        self.assertEqual(
+            units,
+            ["dev.ikigai-rs.gonk-worker.plist", "gonk-worker.service", "gonk-worker@.service"],
+        )
         for rel in [
             "tools/worker.py",
+            "tools/worker_repos.py",
             "worker/worker.sample.toml",
             *(f"worker/units/{name}" for name in units),
         ]:
@@ -86,11 +90,15 @@ class Generate(unittest.TestCase):
     def test_the_generated_worker_runs_from_the_generated_tree(self):
         """Its `plan`, as a separate process in the generated repository: worker.py finds
         gonk.py beside it, reads the sample configuration copied into place and the gonk
-        wiring init writes, and gets as far as asking gonk (a socket nobody listens on)."""
+        wiring init writes, and gets as far as asking gonk (a socket nobody listens on), once
+        its operator has named who may route work to it (the sample's router is a placeholder,
+        refused until then)."""
         repo = scratch(self)
         new.generate(repo, "python")
-        sample = (repo / "worker" / "worker.sample.toml").read_bytes()
-        (repo / ".gonk" / "worker.toml").write_bytes(sample)
+        sample = (repo / "worker" / "worker.sample.toml").read_text()
+        [line] = [w for w in sample.splitlines() if w.startswith("routers = ")]
+        router = 'routers = ["urn:iki:gonk:passkey:dispatcher-test"]'
+        (repo / ".gonk" / "worker.toml").write_text(sample.replace(line, router))
         (repo / ".gonk" / "gonk.toml").write_text('ledger = "library"\n')
         (repo / ".gonk" / "local.toml").write_text(
             f'transport = "socket"\nsocket = "{repo / "none.sock"}"\nholder = "w1"\n'
@@ -518,6 +526,37 @@ class GenerateGo(unittest.TestCase):
             self.assertFalse((go / own).exists(), own)
         self.assertFalse((go / "deno.json").exists())
         self.assertFalse((go / "Cargo.toml").exists())
+
+
+# The rule every generated AGENTS.md carries (profiles/sections/accessibility.md).
+ACCESSIBILITY_RULE = "Read `ACCESSIBILITY.md` before any change to a user interface"
+
+
+class Accessibility(unittest.TestCase):
+    """Every target's repository carries an ACCESSIBILITY.md to grow and the AGENTS.md rule
+    that points every agent at it (ledger item 1620)."""
+
+    def test_every_target_carries_accessibility_md_and_the_agents_rule(self):
+        template = ROOT / "templates" / "library" / "ACCESSIBILITY.md"
+        for target in new.targets():
+            repo = scratch(self).with_name(target)
+            new.generate(repo, target)
+            text = (repo / "ACCESSIBILITY.md").read_text(encoding="utf-8")
+            self.assertEqual(text, template.read_text(encoding="utf-8"), target)
+            self.assertIn("WCAG 2.2 Level AA", text, target)
+            self.assertIn("Evaluation in progress. No conformance claim.", text, target)
+            self.assertIn("**Nothing in this repository has been tested", text, target)
+            self.assertIn("within 7 days", text, target)
+            self.assertNotIn("{{", text, target)
+            self.assertIn(ACCESSIBILITY_RULE, (repo / "AGENTS.md").read_text(), target)
+            harness = (repo / ".gonk" / "harness" / "harness.ttl").read_text()
+            self.assertIn("guide:read-accessibility-first", harness, target)
+
+    def test_the_starter_states_the_rule_and_has_its_own_file(self):
+        self.assertIn(ACCESSIBILITY_RULE, (ROOT / "AGENTS.md").read_text())
+        own = (ROOT / "ACCESSIBILITY.md").read_text(encoding="utf-8")
+        self.assertIn("Evaluation in progress. No conformance claim.", own)
+        self.assertNotEqual(own, (ROOT / "templates" / "library" / "ACCESSIBILITY.md").read_text())
 
 
 if __name__ == "__main__":

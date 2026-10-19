@@ -306,6 +306,34 @@ class Init(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(fake.target.mount_args()[1], "urn:gk:=quic://gonk-host:1062")
 
+    def test_a_worker_grant_reports_publishing_once_and_an_enrolled_machine_skips_enrollment(self):
+        repo = scratch_repo(self)
+        certs = repo / "certs"
+        certs.mkdir()
+        pem = "-----BEGIN CERTIFICATE-----\n" + base64.encodebytes(b"cert").decode()
+        (certs / "client.crt").write_text(pem + "-----END CERTIFICATE-----\n")
+        (certs / "server.crt").write_text("x")
+        (repo / ".gonk" / "queries").mkdir(parents=True, exist_ok=True)
+        for n in ("a", "b"):
+            (repo / ".gonk" / "queries" / f"{n}.rq").write_text("SELECT * WHERE {}\n")
+        args = ["init", "--ledger", "acme", "--holder", "w"]
+        args += ["--quic", "quic://h:1062", "--cert-dir", str(certs)]
+        refused = gonk.Answer(1, "", "denied: needs urn:cap:script:write:acme-a")
+        fake = FakeIkigai(
+            [
+                ("ledgers", ok("acme  1 open  1 total  urn:…\n")),
+                ("describe", ok("x")),
+                ("sink urn:gk:script:", refused),
+            ]
+        )
+        code, out, _ = run(repo, args, fake)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("failed", out)
+        self.assertEqual(out.count("the dispatcher publishes these"), 1, out)
+        self.assertEqual(sum(c.startswith("sink urn:gk:script:") for c, _ in fake.calls), 1)
+        self.assertNotIn("ikigai-gonk client add", out)
+        self.assertIn("nothing to enroll", out)
+
 
 class Claims(unittest.TestCase):
     def setUp(self):
@@ -370,9 +398,10 @@ class Claims(unittest.TestCase):
             [
                 # `handback=true` makes the hand-back the item's state (ledger 0.8.0, ledger
                 # item 1199), so `next` stops offering the item; the Evidence: prefix stays
-                # for the ledgers that have no such state.
+                # for the ledgers that have no such state. Over the socket the holder is the
+                # comment's free-text author, since the door names nobody there.
                 (
-                    "sink urn:gk:iki:ledger:acme:comment item=12 handback=true",
+                    "sink urn:gk:iki:ledger:acme:comment item=12 handback=true author=agent-1",
                     f"Evidence: {url}\n\nok",
                 ),
                 ("delete urn:gk:iki:ledger:acme:claim item=12", ""),
@@ -394,7 +423,7 @@ class Claims(unittest.TestCase):
             fake.calls[1:],
             [
                 (
-                    "sink urn:gk:iki:ledger:acme:comment item=12 handback=true",
+                    "sink urn:gk:iki:ledger:acme:comment item=12 handback=true author=agent-1",
                     f"Evidence: {url}",
                 ),
                 ("delete urn:gk:iki:ledger:acme:claim item=12", ""),
@@ -463,10 +492,23 @@ class Claims(unittest.TestCase):
         self.assertEqual(
             [c for c, _ in fake.calls[1:]],
             [
-                "sink urn:gk:iki:ledger:acme:close item=12 reason=done",
+                "sink urn:gk:iki:ledger:acme:close item=12 reason=done author=agent-1",
                 "delete urn:gk:iki:ledger:acme:claim item=12",
             ],
         )
+
+    def test_the_holder_is_the_author_over_the_socket_and_never_over_quic(self):
+        # Over the owner's socket the door names nobody, so a hand-back would be stored
+        # unattributed; the holder labels it. Over QUIC the door stamps the machine's
+        # principal, and a free-text author would only replace that identity.
+        socket = gonk.Config(self.repo, "acme", gonk.Target(socket="/s.sock"), "agent-1", {})
+        quic = gonk.Config(
+            self.repo, "acme", gonk.Target(quic="quic://box:1062", cert_dir="/c"), "agent-1", {}
+        )
+        nameless = gonk.Config(self.repo, "acme", gonk.Target(socket="/s.sock"), None, {})
+        self.assertEqual(gonk.socket_author(socket), " author=agent-1")
+        self.assertEqual(gonk.socket_author(quic), "")
+        self.assertEqual(gonk.socket_author(nameless), "")
 
     def test_file_puts_the_title_and_body_in_the_content(self):
         fake = FakeIkigai([(":append", ok("acme#1 urn:…\n"))])
@@ -536,6 +578,113 @@ class CheckClaim(unittest.TestCase):
         self.assertIn("holds no claim", why)
 
 
+DT = "http://www.w3.org/2001/XMLSchema#dateTime"
+
+
+def datetime_literal(text: str) -> str:
+    """An xsd:dateTime literal as the store writes it in a tab-separated answer."""
+    return f'"{text}"^^<{DT}>'
+
+
+class CoverageTable(unittest.TestCase):
+    """`gonk.py harness` prints each coverage answer as fixed-width columns, so a checked
+    transcript (the gonk Book's harness chapter) reads the same on every run. An xsd:dateTime
+    is written at fixed precision: a second's fraction is three digits whether or not the store
+    spelled its trailing zeros (`…05:15:00.34Z` is `…05:15:00.340Z`). Ledger item 1480."""
+
+    def test_a_date_time_is_written_at_fixed_precision(self):
+        _, rows = gonk.tsv_rows("?first\n" + datetime_literal("2026-10-14T05:15:00.34Z") + "\n")
+        self.assertEqual(rows, [["2026-10-14T05:15:00.340Z"]])
+        _, rows = gonk.tsv_rows(
+            "?first\n"
+            + datetime_literal("2026-10-14T05:15:00.3Z")
+            + "\n"
+            + datetime_literal("2026-10-14T05:15:00Z")
+            + "\n"
+            + datetime_literal("2026-10-14T05:15:00.3401Z")
+            + "\n"
+        )
+        self.assertEqual(
+            rows,
+            [
+                ["2026-10-14T05:15:00.300Z"],
+                ["2026-10-14T05:15:00.000Z"],
+                ["2026-10-14T05:15:00.340Z"],
+            ],
+        )
+
+    def test_an_instant_is_utc_whatever_the_store_spells_the_offset(self):
+        _, rows = gonk.tsv_rows(
+            "?first\n" + datetime_literal("2026-10-14T05:15:00.340+00:00") + "\n"
+        )
+        self.assertEqual(rows, [["2026-10-14T05:15:00.340Z"]])
+
+    def test_a_column_of_another_type_is_left_as_it_is(self):
+        # Only xsd:dateTime is reformatted: a string that merely looks like a time is a string.
+        _, rows = gonk.tsv_rows('?label\n"05:15:00.34Z"\n"3"\n<urn:ex:a>\n')
+        self.assertEqual(rows, [["05:15:00.34Z"], ["3"], ["urn:ex:a"]])
+
+    def harness_run(self, answer: str) -> str:
+        """`gonk.py harness` against a scratch repository whose one question answers `answer`."""
+        repo = scratch_repo(self)
+        wire(repo)
+        (repo / ".gonk" / "harness").mkdir(parents=True, exist_ok=True)
+        (repo / ".gonk" / "harness" / "harness.ttl").write_text(
+            "@prefix harness: <https://ikigai-rs.dev/ns/harness#> .\n"
+            "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n"
+            "@prefix ctl: <urn:iki:harness:starter:control:> .\n\n"
+            "ctl:evidence-required a harness:Control ;\n"
+            '    rdfs:label "report: evidence" ;\n'
+            "    harness:direction harness:feedback ;\n"
+            "    harness:execution harness:computational ;\n"
+            "    harness:stage harness:toolCall ;\n"
+            "    harness:category harness:authoritySafety ;\n"
+            "    harness:outcome harness:refuse .\n"
+        )
+        (repo / ".gonk" / "queries" / "harness-firings-by-control.rq").write_text(
+            "# QUESTION: How often has each control fired, and when first?\n"
+            "# EMPTY: Nothing has fired.\n"
+            "SELECT ?control ?first ?last WHERE { GRAPH <urn:iki:harness:graph:LEDGER> "
+            "{ ?f ?p ?first } }\n"
+        )
+        fake = FakeIkigai(
+            [
+                ("graph-update", ok("updated <urn:iki:harness:graph:acme>: +9 -0 quads\n")),
+                (":store:graph-select", ok(answer)),
+            ]
+        )
+        code, out, err = run(repo, ["harness"], fake)
+        self.assertEqual(code, 0, out + err)
+        return out
+
+    def test_the_table_is_the_same_width_however_a_time_is_written(self):
+        # The defect: one run answered `…05:15:00.34Z` and another `…05:15:00.340Z`, so the
+        # checked transcript's column changed width between runs and had to elide the row.
+        header = "?control\t?first\t?last\n"
+        control = "<urn:iki:harness:starter:control:evidence-required>\t"
+        early = self.harness_run(
+            header
+            + control
+            + datetime_literal("2026-10-14T05:15:00.34Z")
+            + "\t"
+            + datetime_literal("2026-10-14T06:00:00.5Z")
+            + "\n"
+        )
+        late = self.harness_run(
+            header
+            + control
+            + datetime_literal("2026-10-14T05:15:00.340Z")
+            + "\t"
+            + datetime_literal("2026-10-14T06:00:00.500Z")
+            + "\n"
+        )
+        self.assertEqual(early, late)
+        for line in early.splitlines():
+            if line.startswith("  ctl:"):
+                self.assertIn("2026-10-14T05:15:00.340Z", line)
+                self.assertIn("2026-10-14T06:00:00.500Z", line)
+
+
 class LedgerOutput(unittest.TestCase):
     def test_the_ledgers_listing_parses(self):
         text = (
@@ -548,6 +697,11 @@ class LedgerOutput(unittest.TestCase):
         self.assertFalse(gonk.offered(ok('ik:title "contract unavailable" ;')))
         self.assertTrue(gonk.offered(ok('ik:title "Run a script" ;')))
         self.assertIsNone(gonk.offered(gonk.Answer(1, "", "connect refused")))
+
+    def test_describe_exit_1_no_endpoint_resolved_is_absent(self):
+        """A describe that exits 1 with "no endpoint resolved" means absent, not unknown."""
+        answer = gonk.Answer(1, "", "no endpoint resolved for urn:gk:nl:sparql")
+        self.assertIs(gonk.offered(answer), False)
 
 
 if __name__ == "__main__":

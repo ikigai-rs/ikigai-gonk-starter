@@ -4,10 +4,10 @@ roles = [
     "worker: an unattended machine running tools/worker.py; claims, works, reports",
 ]
 sections = ["roles-workers", "workers"]
-# This starter's own files the profile carries (the worker loop, its configuration's
-# template, its service units), and its justfile recipes that run them. Setting up the worker
+# This starter's own files the profile carries (the worker loop, the repository enroller,
+# its configuration's template, its service units), and its justfile recipes that run them. Setting up the worker
 # MACHINE (accounts, boundary, worker/README.md) stays in the starter.
-starter_files = ["tools/worker.py", "worker/worker.sample.toml"]
+starter_files = ["tools/worker.py", "tools/worker_repos.py", "tools/worker_usage.py", "worker/worker.sample.toml"]
 starter_dirs = ["worker/units"]
 recipes = ["worker", "worker-once", "worker-plan", "worker-forget"]
 checks = ["worker-config"]

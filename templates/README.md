@@ -10,7 +10,8 @@ layers, a later one replacing a file an earlier one wrote:
                              files and recipes; AGENTS.md is assembled from their sections
 library/                     the sample's language-neutral half: the specs and the changes in
                              flight, openspec/vectors.json, the saved queries and the workflow
-                             script, the README, and the check that specs and vectors agree
+                             script, the README, ACCESSIBILITY.md (a starting file the new
+                             project grows), and the check that specs and vectors agree
 <target>/                    one language's artifacts and tests (python/, rust/, deno/ and go/ today), its
                              CI, its .gitignore, and its recipes (justfile.recipes, appended
                              to the starter's)

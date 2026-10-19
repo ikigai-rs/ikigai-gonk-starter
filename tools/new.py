@@ -16,6 +16,7 @@ The result is a repository that works the way this starter teaches: AGENTS.md an
   .gonk/scripts/          a workflow script (a plan): next, for one artifact
   .gonk/harness/          the process's rules and sensors as a graph (tools/harness.py)
   tools/worker.py         the worker loop, for a machine that takes items unattended
+  ACCESSIBILITY.md        what the project shows people and how it is tested, to grow with it
 
 Four layers are copied in order, a later one replacing a file an earlier one wrote: this
 starter's own files (so a generated repository always carries the current tools), what each
@@ -469,7 +470,9 @@ def main(argv: list[str] | None = None) -> int:
         f"in {dest}: {len(written)} files"
     )
     steps = [
-        "git init, then commit everything it wrote (the one commit where every file is yours)",
+        "git init -b main, then commit everything it wrote (the one commit where every file is "
+        "yours; -b main because the worker loop branches from origin/main, and git's own "
+        "default is still master where init.defaultBranch is unset)",
         "python3 scripts/test.py                      every test, as CI runs them",
         "python3 tools/gonk.py init --ledger <name> --socket ~/.ikigai/gonk.sock --holder <you>",
     ]

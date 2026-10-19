@@ -10,6 +10,7 @@ by [ikigai-gonk-starter](https://github.com/ikigai-rs/ikigai-gonk-starter)'s `to
 
 ```text
 AGENTS.md                the rules (CLAUDE.md imports it)
+ACCESSIBILITY.md         what this project shows people, how it is tested, how to report a barrier
 openspec/specs/          what the library does now: catalog, members, loans, renewals, overdue
 openspec/changes/        two changes in flight: cap-late-fees (small), add-holds (both artifacts)
 openspec/vectors.json    every scenario of the specs, as steps any language's tests run

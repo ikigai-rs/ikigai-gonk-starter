@@ -77,4 +77,4 @@ ctl:status-claim-check a harness:Control ;
     harness:stage harness:toolCall ; harness:category harness:authoritySafety ;
     harness:outcome harness:report ;
     harness:enforcedAt "tools/gonk.py#cmd_status" , "tools/gonk.py#check_claim" ;
-    harness:statedBy guide:stop-when-claim-gone .
+    harness:statedBy guide:stop-when-claim-gone , guide:a-claim-is-a-lease .

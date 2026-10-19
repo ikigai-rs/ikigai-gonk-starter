@@ -25,6 +25,10 @@ import worker  # noqa: E402
 
 FAKES = ROOT / "tests" / "fakes"
 
+# The principal every test worker trusts to route work (`routers` in Rig.configure), and the one
+# FakeLedger.file dispatches as unless told otherwise. Not a real credential id.
+DISPATCHER = "urn:iki:gonk:passkey:dispatcher-test"
+
 
 def iso(t: datetime) -> str:
     return t.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
@@ -32,8 +36,8 @@ def iso(t: datetime) -> str:
 
 class FakeLedger:
     """One ledger, in memory, answering `ikigai -c` command strings the way gonk does for
-    next, items, item:N, claim (sink and delete), comment and close. Thread-safe: the
-    heartbeat calls it from its own thread.
+    next, items, item:N, claim (sink and delete), comment (with its `author`), label and
+    close. Thread-safe: the heartbeat calls it from its own thread.
 
     It models a ledger 0.8.0 or later: `comment handback=true` sets the item's `awaiting` to
     `dispatcher`, `rejects=true` clears it, and the JSON item carries the field — the state,
@@ -54,7 +58,11 @@ class FakeLedger:
         self.tick = 0
 
     # -- the test's own hands on it
-    def file(self, title: str, labels: list[str], body: str = "") -> int:
+    def file(
+        self, title: str, labels: list[str], body: str = "", dispatched_by: str | None = DISPATCHER
+    ) -> int:
+        """File an item and, unless `dispatched_by` is None, dispatch it as that principal: the
+        dispatch comment `gonk.py dispatch` writes, naming every label it was filed with."""
         number = len(self.items) + 1
         self.items[number] = {
             "number": number,
@@ -69,7 +77,18 @@ class FakeLedger:
             "comments": [],
             "awaiting": None,
         }
+        if dispatched_by is not None:
+            self.dispatch(number, dispatched_by)
         return number
+
+    def dispatch(self, number: int, author: str = DISPATCHER, labels: list[str] | None = None):
+        item = self.items[number]
+        text = gonk.dispatch_text(labels or item["labels"], item["title"], item["body"])
+        self.add_comment(number, text, author=author)
+
+    def human_comments(self, number: int) -> list[dict]:
+        """The item's comments less its dispatches: what the worker and others wrote."""
+        return [c for c in self.items[number]["comments"] if gonk.parse_dispatch(c["text"]) is None]
 
     def force_claim(self, number: int, holder: str, expires: datetime | None = None) -> None:
         """What a takeover, or a dispatcher's release and re-claim, leaves behind."""
@@ -77,10 +96,10 @@ class FakeLedger:
             exp = expires or datetime.now(UTC) + timedelta(minutes=30)
             self.items[number]["claim"] = {"holder": holder, "kind": "machine", "expires": iso(exp)}
 
-    def add_comment(self, number: int, text: str) -> None:
+    def add_comment(self, number: int, text: str, author: str = "fake") -> None:
         self.tick += 1
         stamp = iso(datetime.now(UTC) + timedelta(microseconds=self.tick * 1000))
-        self.items[number]["comments"].append({"author": "fake", "time": stamp, "text": text})
+        self.items[number]["comments"].append({"author": author, "time": stamp, "text": text})
 
     def item_json(self, number: int) -> dict:
         """The item as the ledger serves it: without `awaiting` on a pre-0.8.0 ledger."""
@@ -208,7 +227,7 @@ class FakeLedger:
             if self.refuse_comments:
                 self.refuse_comments -= 1
                 return gonk.Answer(1, "", f"error: the store refused the comment on {display}")
-            self.add_comment(item["number"], stdin.strip())
+            self.add_comment(item["number"], stdin.strip(), author=args.get("author", "fake"))
             # The hand-back is the item's state (ledger 0.8.0, ledger item 1199), set or
             # cleared in the same write as the comment. A ledger older than 0.8.0 does not
             # know the argument: it writes the comment and touches no state (the `served`
@@ -219,6 +238,11 @@ class FakeLedger:
                 elif args.get("rejects"):
                     item["awaiting"] = None
             return gonk.Answer(0, f"commented on {display}\n", "")
+        if verb == "sink" and name == "label":
+            label = stdin.strip()
+            if label not in item["labels"]:
+                item["labels"] = sorted([*item["labels"], label])
+            return gonk.Answer(0, f"labeled {display} {label}\n", "")
         if verb == "sink" and name == "close":
             self.closes.append(item["number"])
             item["status"] = "closed"
@@ -273,7 +297,8 @@ class Rig:
     def gh_argv(self) -> list[str]:
         return [sys.executable, str(FAKES / "gh.py"), "--state", str(self.gh_state)]
 
-    def configure(self, **overrides) -> None:
+    def configure(self, file: str = "worker.toml", **overrides) -> Path:
+        """Write `.gonk/<file>`: worker.toml, or one loop's worker-<agent>.toml."""
         settings = {
             "labels": '["worker:w1"]',
             "work_root": '"~/work"',
@@ -283,6 +308,7 @@ class Rig:
             "budget": '"60s"',
             "ci_wait": '"0s"',
             "grace": '"2s"',
+            "routers": json.dumps([DISPATCHER]),
         }
         settings.update({k: v for k, v in overrides.items() if v is not None})
         command = [
@@ -307,11 +333,13 @@ class Rig:
         lines += ["", "[agent]", f"command = {json.dumps(command)}"]
         lines += ["", "[repos.lib]", f'remote = "{self.origin}"', 'github = "acme/lib"']
         lines += ["", "[repos.other]", f'remote = "{self.origin}"', 'github = "acme/other"']
-        (self.checkout / ".gonk" / "worker.toml").write_text("\n".join(lines) + "\n")
+        path = self.checkout / ".gonk" / file
+        path.write_text("\n".join(lines) + "\n")
+        return path
 
-    def worker(self, ikigai) -> worker.Worker:
+    def worker(self, ikigai, config: Path | None = None) -> worker.Worker:
         cfg = gonk.load(self.checkout)
-        wc = worker.load_worker(cfg)
+        wc = worker.load_worker(cfg, config)
         return worker.Worker(cfg, wc, ikigai, home=self.home)
 
     def gh(self) -> dict:

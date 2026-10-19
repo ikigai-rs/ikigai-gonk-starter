@@ -1,14 +1,31 @@
 # A worker's configuration: copy to .gonk/worker.toml in the worker's checkout and edit.
-# Git-ignored there, because it is this machine's. tools/worker.py reads it; how the machine
-# reaches gonk, the ledger, and the holder name are in .gonk/local.toml and .gonk/gonk.toml,
-# written by `python3 tools/gonk.py init` (see worker/README.md, "Running the worker loop").
+# Git-ignored there, because it is this machine's. A machine that runs one loop per agent
+# has .gonk/worker-<agent>.toml instead, one per agent, written from this file (or from its
+# worker.toml) by `python3 tools/worker.py init-agents` (worker/README.md, step 8).
+# tools/worker.py reads it; how the machine reaches gonk, the ledger, and the holder name
+# are in .gonk/local.toml and .gonk/gonk.toml, written by `python3 tools/gonk.py init` (see
+# worker/README.md, "Running the worker loop"). A loop's own `holder` overrides that one.
 
 # Which items this worker takes: `next` narrowed to items carrying ALL of these labels.
 # Required, so a worker never takes work nobody meant for it. The dispatcher marks an item
 # ready for this machine by adding the label.
 labels = ["worker:my-worker"]
+# holder = "my-worker-codex"   # this loop's holder name, over .gonk/local.toml's
 # Items carrying ANY of these are never taken.
 # without = ["needs-person"]
+
+# Who may route work here: the principals whose DISPATCH sends an item to this worker. Required.
+# A label alone says nothing about who set it (the ledger records no setter, and anyone who can
+# write to the ledger can label), so the worker takes an item only when its newest dispatch
+# comment by one of these names this worker's labels and the item's repo:, and pins the title
+# and body it still has. The dispatcher writes it with `python3 tools/gonk.py dispatch N
+# --labels worker:<name>,agent:<kind>`. Each entry is a principal gonk's doors name, never free
+# text (worker/README.md, "Who may route work here"): a person's passkey,
+#   "urn:iki:gonk:passkey:<credential id>"       (gonk's item page shows it on their comments)
+# or a dispatching machine's client certificate,
+#   "urn:iki:host:gonk:client:<sha256 fingerprint>"
+# The placeholder below is refused until you replace it.
+routers = ["urn:iki:gonk:passkey:<the dispatcher's credential id>"]
 
 # Where worktrees go: <work_root>/<repo>/item-<N>. Must be under this account's own home.
 work_root = "~/work"
@@ -21,6 +38,8 @@ poll = "60s"           # between polls of `next` when nothing is ready
 # keep = false         # true keeps every worktree after its hand-back
 # gh = "gh"            # the GitHub CLI, if it is not `gh` on PATH
 # stop_file = ".gonk/state/worker/stop"   # create it to stop the loop between items
+# (The default. A loop of its own, .gonk/worker-<agent>.toml, stops at
+# .gonk/state/worker/<agent>/stop, and .gonk/state/worker/stop stops every loop.)
 
 [agent]
 # One of the presets (each the agent's documented non-interactive form):
@@ -41,6 +60,19 @@ preset = "claude"
 # Codex:
 # command = ["codex", "exec", "--full-auto", "{prompt}"]
 # profile = "coder"
+
+# Usage against the plan's weekly limit, read between items at most once an hour and posted as a
+# comment on a standing status item (tools/worker_usage.py). No agent CLI documents a
+# non-interactive usage output, so there is no default command: without one nothing is read.
+# The command prints one JSON object: {"plan": "…", "used": N, "limit": N, "percent": N,
+# "resets_at": "2026-10-20T09:00:00Z"} (percent, or used and limit). Anything else is
+# "unknown", which never stops the loop. Above `threshold` the loop takes no new item.
+# [usage]
+# command = ["/home/agent/bin/claude-usage"]
+# agent = "claude"        # as the report names it
+# threshold = 85          # percent
+# every = "1h"
+# status_item = 1234      # the item the report is commented on; omit to only log it
 
 # Every repository this worker may work in, by the name its items' `repo:<name>` label uses.
 # An item must carry exactly one `repo:` label naming one of these.

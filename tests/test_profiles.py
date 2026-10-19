@@ -32,7 +32,13 @@ SECTIONS = ROOT / "profiles" / "sections"
 
 # What each profile carries beyond the base, and so what must be ABSENT without it.
 OWN_FILES = {
-    "workers": ["tools/worker.py", "worker/worker.sample.toml", "worker/units/gonk-worker.service"],
+    "workers": [
+        "tools/worker.py",
+        "tools/worker_repos.py",
+        "worker/worker.sample.toml",
+        "worker/units/gonk-worker.service",
+        "worker/units/gonk-worker@.service",
+    ],
     "hub": ["tools/hub.py", ".gonk/templates/brief.md"],
     "review-every-commit": ["hooks/git/post-commit", "hooks/git/review-on-commit.py"],
     "audits": ["tools/audit.py", ".gonk/templates/audit.md"],
@@ -142,6 +148,17 @@ class EachProfile(unittest.TestCase):
                 expected = section.stem in base or section.stem in own
                 self.assertEqual(text in agents, expected, f"{name}: {section.stem}")
             self.assertEqual(agents, new.agents_md([name]), name)
+
+    def test_each_carries_accessibility_md_and_the_agents_rule(self):
+        # Ledger item 1620: whatever the process, a generated repository has an
+        # ACCESSIBILITY.md to grow and the AGENTS.md rule that points agents at it.
+        for name, repo in self.repos.items():
+            self.assertTrue((repo / "ACCESSIBILITY.md").is_file(), name)
+            self.assertIn(
+                "Read `ACCESSIBILITY.md` before any change to a user interface",
+                (repo / "AGENTS.md").read_text(),
+                name,
+            )
 
     def test_its_files_and_hooks_are_present_and_executable_and_others_absent(self):
         for name, repo in self.repos.items():

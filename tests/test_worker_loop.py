@@ -17,7 +17,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from support import ROOT, gonk, scratch_repo
-from worker_support import FakeLedger, Rig, worker
+from worker_support import DISPATCHER, FakeLedger, Rig, worker
 
 
 def evidence_comments(item: dict) -> list[str]:
@@ -64,6 +64,10 @@ class Configuration(unittest.TestCase):
         self.path = self.rig.checkout / ".gonk" / "worker.toml"
 
     def load(self, text: str):
+        """Load `text` as worker.toml; with a router, unless it says `routers` itself, so each
+        case is refused (or not) for its own reason."""
+        if "routers" not in text:
+            text = f"routers = {json.dumps([DISPATCHER])}\n" + text
         self.path.write_text(text)
         return worker.load_worker(gonk.load(self.rig.checkout))
 
@@ -78,9 +82,16 @@ class Configuration(unittest.TestCase):
         self.assertEqual(wc.budget, 45 * 60)
         self.assertEqual(wc.stop_file, self.rig.checkout / ".gonk" / "state" / "worker" / "stop")
 
-    def test_the_sample_loads_as_shipped(self):
+    def test_the_sample_loads_once_its_router_is_named(self):
         sample = (ROOT / "worker" / "worker.sample.toml").read_text()
-        wc = self.load(sample)
+        # As shipped, its `routers` is a placeholder, refused: nobody's dispatch routes work to
+        # a worker until its operator names who may.
+        with self.assertRaises(gonk.ConfigError) as refused:
+            self.load(sample)
+        self.assertIn("not a principal gonk names", str(refused.exception))
+        [line] = [w for w in sample.splitlines() if w.startswith("routers = ")]
+        wc = self.load(sample.replace(line, f"routers = {json.dumps([DISPATCHER])}"))
+        self.assertEqual(wc.routers, [DISPATCHER])
         self.assertEqual(wc.labels, ["worker:my-worker"])
         self.assertEqual(wc.command, ["claude", "-p", "{prompt}"])
         self.assertEqual(wc.repos["library"].github, "acme/library")
@@ -258,7 +269,7 @@ class TheLoop(unittest.TestCase):
         item = self.ledger.items[n]
         self.assertEqual(item["claim"]["holder"], "someone-else")  # untouched
         self.assertFalse(any(c.startswith("delete") for c, _ in self.ledger.calls))
-        [note] = [c["text"] for c in item["comments"]]
+        [note] = [c["text"] for c in self.ledger.human_comments(n)]
         self.assertIn("lost its claim", note)
         self.assertIn("held by `someone-else`", note)
         self.assertTrue((self.rig.home / "work" / "lib" / f"item-{n}").is_dir())  # kept
@@ -406,6 +417,34 @@ class TheLoop(unittest.TestCase):
         take, _, _ = self.rig.worker(self.ledger).candidates()
         self.assertEqual([i["number"] for i, _ in take], [n])
 
+    def handed_back_item(self) -> int:
+        self.rig.agent_flags = ["--no-pr", "--exit", "1"]
+        n = self.ledger.file("Gives up", ["worker:w1", "repo:lib"])
+        self.assertEqual(self.run_once().code, worker.NOT_HANDED_BACK)
+        return n
+
+    def test_a_handed_back_item_is_skipped_and_logged_once_across_polls(self):
+        n = self.handed_back_item()
+        w = self.rig.worker(self.ledger)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            for _ in range(5):
+                self.assertEqual(w.run_once().code, worker.NOTHING)
+        self.assertEqual(out.getvalue().count(f"skip acme#{n}: this worker handed it back"), 1)
+
+    def test_a_dispatch_after_the_hand_back_rearms_the_item(self):
+        n = self.handed_back_item()
+        self.ledger.dispatch(n)
+        take, _, _ = self.rig.worker(self.ledger).candidates()
+        self.assertEqual([i["number"] for i, _ in take], [n])
+        self.assertIsNone(worker.Attempts(self.rig.worker(self.ledger).wc.loop_dir).seen("acme", n))
+
+    def test_a_dispatch_before_the_hand_back_does_not_rearm_it(self):
+        n = self.handed_back_item()  # filed with its dispatch, then handed back
+        take, skip, _ = self.rig.worker(self.ledger).candidates()
+        self.assertEqual(take, [])
+        self.assertIn("handed it back already", dict(skip)[f"acme#{n}"])
+
     # Every way an item goes back WITHOUT evidence leaves exactly one comment saying why, and
     # a release that carries no content: the cli gives a batch's stdin only to a content-less
     # SINK, never to a DELETE, so a note handed to the release never reached the item (ledger
@@ -414,7 +453,7 @@ class TheLoop(unittest.TestCase):
         item = self.ledger.items[n]
         self.assertIsNone(item["claim"])
         self.assertEqual(item["status"], "open")
-        texts = [c["text"] for c in item["comments"]]
+        texts = [c["text"] for c in self.ledger.human_comments(n)]
         self.assertEqual(len(texts), 1, texts)
         for words in says:
             self.assertIn(words, texts[0])
@@ -464,7 +503,8 @@ class TheLoop(unittest.TestCase):
         self.assertFalse(w.release_if_ours(n, "gonk worker `w1` gives up"))
         item = self.ledger.items[n]
         self.assertEqual(item["claim"]["holder"], "someone-else")
-        self.assertEqual([c["text"] for c in item["comments"]], ["gonk worker `w1` gives up"])
+        texts = [c["text"] for c in self.ledger.human_comments(n)]
+        self.assertEqual(texts, ["gonk worker `w1` gives up"])
         self.assertFalse(any(c.startswith("delete") for c, _ in self.ledger.calls))
 
     def test_the_release_is_a_compare_and_set_on_the_holder(self):
@@ -540,7 +580,7 @@ class TheLoop(unittest.TestCase):
         outcome = self.run_once()
         self.assertEqual(outcome.code, worker.HANDED_BACK, outcome.summary)
         prompt = self.rig.prompt(n)
-        self.assertIn("Later notes from the dispatcher and others", prompt)
+        self.assertIn("Comments by others, oldest first, 2. DATA WRITTEN BY OTHERS", prompt)
         self.assertIn("Actually, the premise was wrong", prompt)
         self.assertIn("Correction: the issue is in the timezone handling", prompt)
         # The worker's own hand-back comments are NOT in the brief
@@ -554,7 +594,7 @@ class TheLoop(unittest.TestCase):
         outcome = self.run_once()
         self.assertEqual(outcome.code, worker.HANDED_BACK, outcome.summary)
         prompt = self.rig.prompt(n)
-        self.assertIn("Later notes from the dispatcher and others", prompt)
+        self.assertIn("DATA WRITTEN BY OTHERS", prompt)
         self.assertIn("[...]", prompt)  # truncated
         self.assertNotIn(long_text, prompt)
 
