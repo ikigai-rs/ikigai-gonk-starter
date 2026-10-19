@@ -28,7 +28,27 @@ its dispatcher and `next` stops offering it to the next worker (ikigai-ledger 0.
 item 1199). `reject` is the dispatcher's answer when the evidence does not hold: `rejects=true`
 clears that state and the item is ready again. Both keep the `Evidence:` prefix in the comment,
 so a ledger older than 0.8.0 — which ignores the argument it does not know — reads the hand-back
-the same way.
+the same way. Over the owner's socket, where gonk names nobody, `report` and `close` pass this
+working tree's holder as the comment's free-text `author`, so a reader can tell hand-backs
+apart; over QUIC gonk names the machine itself, and nothing is added.
+
+### Evidence before there is a forge
+
+`report` and `close` accept any `http(s)` URL: the check is the URL's shape, not what it
+points at. The rules ask for the pull request, and a repository with no remote yet has none,
+so the easy wrong answer is a made-up one. Give gonk the repository as a browse root instead
+(`gonk.browse.root = "<name>=<path to this checkout>"` in gonk's `config.toml`, then restart
+gonk) and use gonk's own page for what changed as the evidence, with the commit in the note:
+
+```sh
+python3 tools/gonk.py report 7 \
+    --evidence http://127.0.0.1:1062/browse/urn:repo:<name>:file:<path> \
+    --note "fixed in <commit>; scripts/test.py exit 0; merged locally"
+```
+
+That page is served by gonk and shows the file as the working tree has it. It is local
+evidence and proves nothing to a reader on another machine, so a repository that will be
+shared gets a forge, and its pull requests, before its first hand-back.
 
 That is the whole protocol, and [`AGENTS.md`](AGENTS.md) states its rules: claim before you
 write, one agent per item and per working tree, reproduce before you fix, every change
@@ -40,6 +60,7 @@ through a pull request with green CI, evidence on every report and close, and ne
 ```text
 AGENTS.md                the rules, for every agent and every person
 CLAUDE.md                `@AGENTS.md`: Claude Code imports the same rules (not a symlink; see below)
+ACCESSIBILITY.md         what this repository shows people, how it is tested, how to report a barrier
 openspec/                specs (what the system does now) and changes (what is proposed)
 artifacts/<name>/        one directory per deployable thing, any language each
 .gonk/                   which ledger, how to reach gonk, and where everything lives
@@ -51,6 +72,7 @@ artifacts/<name>/        one directory per deployable thing, any language each
 tools/gonk.py            init, seed, file, next, claim, release, report, close, status, harness
 tools/harness.py         the harness: its graph, its firing log, and the check that holds both true
 tools/worker.py          the worker loop: take an item, run an agent on it, hand it back
+tools/worker_repos.py    enroll an owner's repositories in a worker, and check it can push
 tools/new.py             generate a repository with the library-lending sample in it
 profiles/                the process profiles new.py can generate with (see Choosing a process)
 templates/               what new.py generates from: the sample, and one directory per language
@@ -141,8 +163,8 @@ the same question the opposite way refuse to combine, with the reason: `audits` 
 - **`solo`.** You are both roles. Claim, open a pull request, read its CI, report, then close
   your own item. The smallest process, and the one to start with.
   ([Book chapter](https://ikigai-rs.github.io/ikigai-tutorial/gonk/ways/solo.html))
-- **`workers`.** You (or a hub) dispatch, and machines work: label an item `worker:<name>`,
-  and a worker running `tools/worker.py` claims it, works it in a fresh worktree, opens a pull
+- **`workers`.** You (or a hub) dispatch, and machines work: dispatch an item to
+  `worker:<name>` (`gonk.py dispatch`), and a worker running `tools/worker.py` claims it, works it in a fresh worktree, opens a pull
   request and hands it back with the evidence. It brings the worker loop, its sample
   configuration and its service units; [`worker/README.md`](worker/README.md) sets the
   machine up. ([Book chapter](https://ikigai-rs.github.io/ikigai-tutorial/gonk/ways/workers.html))
@@ -186,12 +208,15 @@ the rule it enforces, where its code is, and the test that shows it firing. Ever
 warning a sensor makes is one line in `.gonk/state/harness/firings.log` (git-ignored; ikigai-log's
 line grammar, never a command's text), recorded best effort, so a decision is the same whether
 or not the line lands. `python3 tools/harness.py check` holds the graph to the code and to
-`AGENTS.md`, and `python3 tools/gonk.py harness` (`just harness`) loads the graph and this
-tree's firings into gonk and asks four questions of them: which sensors have never fired (and
-whether a test shows each can), which rules no sensor checks, which sensors state no rule, and
-what has fired, how often. Loading writes the named graph `urn:iki:harness:graph:<ledger>`, which
-gonk's owner-only socket may write and a ledger grant may not, so it is the dispatcher's, from
-gonk's machine.
+`AGENTS.md`, and `python3 tools/gonk.py harness` (`just harness`) loads the graph, each sensor's
+wiring in this tree, and this tree's firings into gonk and asks four questions of them: which
+sensors have never fired (whether each is wired here, and whether a test shows it can), which
+rules no sensor checks, which sensors state no rule, and what has fired, how often. A sensor
+whose fragment says `harness:wiredBy` (the Claude Code hook, the review hook, the worker's
+config) is on only where that part of the process is, so a sensor that is silent because nothing
+runs it reads as *not wired*, never as a rule that has landed. Loading writes the named graph
+`urn:iki:harness:graph:<ledger>`, which gonk's owner-only socket may write and a ledger grant may
+not, so it is the dispatcher's, from gonk's machine.
 `.gonk/harness/vocabulary.ttl` is the public definition of the harness namespace,
 `https://ikigai-rs.dev/ns/harness#`: every term in it, including those a generated repository does not use.
 
@@ -367,12 +392,34 @@ and hands the item back: the pull request it opened and that pull request's CI, 
 `Evidence:` comment, then the claim released. **It never closes and never merges**: the
 dispatcher checks the evidence and does both.
 
+**A label is not a dispatch.** The ledger records no setter for a label, and anyone who can
+write to it can label an item, so a worker takes an item only when its newest **dispatch** by
+a principal in the worker's `routers` names the worker's labels and the item's `repo:`, and
+pins the title and body the item still has. The dispatcher writes it:
+
 ```sh
-cp worker/worker.sample.toml .gonk/worker.toml       # labels, repositories, agent, budget
+python3 tools/gonk.py dispatch 12 --labels worker:<name>,agent:<agent> [--as <principal>]
+```
+
+and the agent gets the title and body as its task, with every comment quoted under its
+author, and the ones by anyone but a router marked as data, never instructions
+([`worker/README.md`](worker/README.md), "Who may route work here", says what this proves and
+what it does not).
+
+```sh
+cp worker/worker.sample.toml .gonk/worker.toml       # labels, routers, repositories, agent
 python3 tools/worker.py plan                         # what it would take, and why not the rest
 python3 tools/worker.py run --once                   # one item, then exit
 python3 tools/worker.py run                          # the loop; worker/units/ runs it as a service
 ```
+
+A machine that runs several agents runs **one loop per agent** from the same checkout, so the
+dispatcher can route each item to the agent that suits it by labeling it `worker:<name>` and
+`agent:<agent>`: `python3 tools/worker.py init-agents --name <name> --agents claude,codex,hermes`
+writes a `.gonk/worker-<agent>.toml` for each, `python3 tools/worker_repos.py --owner <owner>`
+enrolls every repository of an owner in all of them, and `worker/units/gonk-worker@.service`
+runs each as `gonk-worker@<agent>`. The loops share the per-repository locks, so two agents
+never work one repository at once ([`worker/README.md`](worker/README.md), step 8).
 
 One agent per repository: it takes no item whose repository already has a live claim held by
 anyone, and runs one item per repository on its machine. Until gonk's ledger enforces that
@@ -411,6 +458,14 @@ tracked file may hold a path under a person's home, an mDNS `.local` host name, 
 IPv4 address, or the name of one of the project's own machines. The integration tests start
 a scratch gonk of their own (a temporary directory, an ephemeral port, its own socket) when
 `ikigai-gonk` and `ikigai` are on PATH, and skip, saying why, when they are not, as in CI.
+
+## Accessibility
+
+[ACCESSIBILITY.md](ACCESSIBILITY.md) says what this starter shows people and generates, how it is
+tested, and how to report a barrier (an issue with the `accessibility` label); it makes no
+conformance claim. Every repository `tools/new.py` generates gets its own `ACCESSIBILITY.md` to
+grow, from `templates/library/ACCESSIBILITY.md`, and an `AGENTS.md` rule to read it before any
+change to what people see.
 
 ## License
 

@@ -37,9 +37,12 @@ waits more than LOCK_WAIT seconds for the file. A failure is reported on standar
 once per process, and the decision it was recording is unchanged: tests/test_harness.py proves
 it with an unwritable directory, a failing write and a corrupt segment.
 
-COVERAGE is asked of gonk, where SPARQL runs: `python3 tools/gonk.py harness` loads the graph
-and the firings into the named graph `urn:iki:harness:graph:{ledger}` and asks the saved
-questions in `.gonk/queries/harness-*.rq`.
+COVERAGE is asked of gonk, where SPARQL runs: `python3 tools/gonk.py harness` loads the graph,
+the wiring of each sensor in this working tree (`harness:wired`) and the firings into the named
+graph `urn:iki:harness:graph:{ledger}`, and asks the saved questions in
+`.gonk/queries/harness-*.rq`. A sensor's fragment may say `harness:wiredBy <hook or check>`
+(the part of the process that turns it on); the load records whether that part is on here, so
+an answer can tell a sensor that is not wired from one that is wired and quiet.
 
 THE TURTLE HERE is a subset, read by this file (standard library only, so no RDF library):
 `@prefix` lines, statements with `;` and `,`, IRIs, prefixed names, `a`, one-line strings
@@ -575,6 +578,20 @@ def is_local(where: str) -> bool:
     return ":" not in where.split("#", 1)[0]
 
 
+def process_parts(repo: Path) -> set[str]:
+    """The parts of the process that can wire a sensor: the hooks and checks `.gonk/process.toml`
+    names. Empty when the file is absent or unreadable, so `wiredBy` is then refused as naming
+    no part this repository carries."""
+    try:
+        import tomllib
+
+        with (repo / ".gonk" / "process.toml").open("rb") as f:
+            process = tomllib.load(f)
+    except (OSError, ValueError):
+        return set()
+    return {*process.get("hooks", []), *process.get("checks", [])}
+
+
 def fires_into_log(g: Graph, s: I) -> bool:
     """A sensor of this repository's own code that refuses or warns: one that writes firings."""
     outcomes = set(g.values(s, H + "outcome"))
@@ -648,6 +665,9 @@ def check(repo: Path) -> list[str]:
     except (OSError, TurtleError) as e:
         return [str(e)]
     terms = {s.value for s, _, _ in vocab.triples if s.value.startswith(H)}
+    # The parts of the process a sensor can be wired by: the hooks and checks
+    # .gonk/process.toml names, which is what `harness:wiredBy` may cite.
+    parts = process_parts(repo)
     for s, p, o in g.triples:
         for t in (s, p, o):
             if isinstance(t, I) and t.value.startswith(H) and t.value not in terms:
@@ -687,6 +707,14 @@ def check(repo: Path) -> list[str]:
         for test in g.values(s, H + "firedBy"):
             if not test.startswith(TEST_NS):
                 bad.append(f"{s.value}: firedBy {test} is not a test of this starter ({TEST_NS})")
+        for part in g.values(s, H + "wiredBy"):
+            if not sensor_:
+                bad.append(f"{s.value}: only a sensor says what wires it (harness:wiredBy)")
+            elif part not in parts:
+                bad.append(
+                    f"{s.value}: wiredBy {part!r}, which .gonk/process.toml does not carry "
+                    f"({', '.join(sorted(parts)) or 'nothing'})"
+                )
         for where in g.values(s, H + "enforcedAt"):
             if not is_local(where):
                 continue

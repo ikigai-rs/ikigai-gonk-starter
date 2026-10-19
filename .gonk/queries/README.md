@@ -26,4 +26,9 @@ harness` loads (the README's *Your harness*), and that command asks them through
 `init` does not publish them: gonk runs a script under a ceiling of ledger reads, so a
 published one could only be refused.
 
+The load also says which sensors are turned on in the working tree that loaded it
+(`harness:wired`, from the same checks `init` reports: the hook's settings merged,
+`core.hooksPath` set, a worker configured). `harness-sensors-never-fired` reads it, so a sensor
+that is silent because nothing runs it reads as *not wired*, never as a rule that has landed.
+
 The library-lending sample (`just new <dir> --target python`) adds three queries of its own.

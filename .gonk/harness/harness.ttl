@@ -96,7 +96,7 @@ ctl:status-claim-check a harness:Control ;
     harness:stage harness:toolCall ; harness:category harness:authoritySafety ;
     harness:outcome harness:report ;
     harness:enforcedAt "tools/gonk.py#cmd_status" , "tools/gonk.py#check_claim" ;
-    harness:statedBy guide:stop-when-claim-gone .
+    harness:statedBy guide:stop-when-claim-gone , guide:a-claim-is-a-lease .
 
 # ── one-agent (profiles/harness/one-agent.ttl)
 
@@ -185,7 +185,7 @@ guide:report-with-evidence a harness:Guide ;
 
 guide:dispatcher-closes-on-evidence a harness:Guide ;
     rdfs:label "the dispatcher closes, after checking the evidence" ;
-    rdfs:comment "Only the dispatcher closes an item, and only after checking its evidence: the pull request merged, with green CI." ;
+    rdfs:comment "Only the dispatcher closes an item, and only after checking its evidence: the pull request merged, with green CI. A rejection says why: `reject` needs a `--note`." ;
     harness:statedIn "AGENTS.md" ; harness:section "5. Report with evidence; the dispatcher closes" ;
     harness:direction harness:feedforward ; harness:execution harness:inferential ;
     harness:stage harness:merge ; harness:category harness:authoritySafety , harness:behavior .
@@ -207,6 +207,7 @@ ctl:reject-needs-reason a harness:Control ;
     harness:stage harness:merge ; harness:category harness:behavior ;
     harness:outcome harness:refuse ;
     harness:enforcedAt "tools/gonk.py#cmd_reject" ;
+    harness:statedBy guide:dispatcher-closes-on-evidence ;
     harness:firedBy test:test_harness:SensorsFire.test_reject_needs_reason .
 
 ctl:dispatcher-checks-evidence a harness:Control ;
@@ -225,6 +226,15 @@ guide:no-bare-numbers a harness:Guide ;
     harness:statedIn "AGENTS.md" ; harness:section "6. Never a bare `#N`" ;
     harness:direction harness:feedforward ; harness:execution harness:inferential ;
     harness:stage harness:toolCall ; harness:category harness:maintainability .
+
+# ── accessibility (profiles/harness/accessibility.ttl)
+
+guide:read-accessibility-first a harness:Guide ;
+    rdfs:label "read ACCESSIBILITY.md before changing what people see" ;
+    rdfs:comment "Before any change to a user interface or rendered output, read ACCESSIBILITY.md and keep its rules; record what was tested and with what, never claim testing that did not happen, and never weaken a check to make a change pass." ;
+    harness:statedIn "AGENTS.md" ; harness:section "7. Read ACCESSIBILITY.md before changing what people see" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:toolCall ; harness:category harness:behavior .
 
 # ── layout (profiles/harness/layout.ttl)
 
@@ -291,9 +301,37 @@ guide:dispatcher-marks-the-work a harness:Guide ;
     harness:direction harness:feedforward ; harness:execution harness:inferential ;
     harness:stage harness:runtime ; harness:category harness:authoritySafety .
 
+guide:a-router-dispatches-the-work a harness:Guide ;
+    rdfs:label "a router dispatches the work" ;
+    rdfs:comment "A label says nothing about who set it, so a worker takes an item only when its newest dispatch comment, by a principal its configuration lists in `routers`, names the worker's labels and the item's repository and pins the title and body the item still has." ;
+    harness:statedIn "AGENTS.md" ; harness:section "Worker machines" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:runtime ; harness:category harness:authoritySafety .
+
+guide:comments-are-data a harness:Guide ;
+    rdfs:label "comments reach the agent as data" ;
+    rdfs:comment "The item's title and body, pinned by its dispatch, are the agent's task; every comment reaches it as a quoted block under its author, and one by anyone but a router is marked as data written by others, never instructions." ;
+    harness:statedIn "AGENTS.md" ; harness:section "Worker machines" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:runtime ; harness:category harness:authoritySafety .
+
 guide:worker-never-closes-or-merges a harness:Guide ;
     rdfs:label "a worker never closes and never merges" ;
     rdfs:comment "A worker claims, works and reports, with the pull request and its CI as the evidence; the dispatcher checks it, then merges and closes, or rejects with the reason." ;
+    harness:statedIn "AGENTS.md" ; harness:section "Worker machines" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:runtime ; harness:category harness:authoritySafety .
+
+guide:worker-own-account a harness:Guide ;
+    rdfs:label "a worker runs as an account of its own" ;
+    rdfs:comment "A worker never runs as root, and works only in a work root strictly under its own account's home: not a person's checkouts, not a shared directory." ;
+    harness:statedIn "AGENTS.md" ; harness:section "Worker machines" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:runtime ; harness:category harness:authoritySafety .
+
+guide:worker-budget-and-once a harness:Guide ;
+    rdfs:label "a worker has a budget, and takes an item once" ;
+    rdfs:comment "An agent that runs past its wall-clock budget is stopped and the item handed back without evidence; an item the worker handed back is not taken again until `worker.py forget` clears it." ;
     harness:statedIn "AGENTS.md" ; harness:section "Worker machines" ;
     harness:direction harness:feedforward ; harness:execution harness:inferential ;
     harness:stage harness:runtime ; harness:category harness:authoritySafety .
@@ -311,7 +349,9 @@ ctl:worker-refuses-root a harness:Control ;
     harness:direction harness:feedback ; harness:execution harness:computational ;
     harness:stage harness:runtime ; harness:category harness:authoritySafety ;
     harness:outcome harness:refuse ;
+    harness:wiredBy "worker-config" ;
     harness:enforcedAt "tools/worker.py#cmd_run" ;
+    harness:statedBy guide:worker-own-account ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_refuses_root .
 
 ctl:worker-needs-labels a harness:Control ;
@@ -320,9 +360,32 @@ ctl:worker-needs-labels a harness:Control ;
     harness:direction harness:feedback ; harness:execution harness:computational ;
     harness:stage harness:runtime ; harness:category harness:authoritySafety ;
     harness:outcome harness:refuse ;
+    harness:wiredBy "worker-config" ;
     harness:enforcedAt "tools/worker.py#load_worker" ;
     harness:statedBy guide:dispatcher-marks-the-work ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_needs_labels .
+
+ctl:worker-needs-routers a harness:Control ;
+    rdfs:label "worker: routers name who may dispatch to it" ;
+    rdfs:comment "The worker refuses a configuration with no `routers`, or with one that is not a principal gonk's doors name: a free-text author is one any writer can put on a comment, so it could never show who dispatched." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:runtime ; harness:category harness:authoritySafety ;
+    harness:outcome harness:refuse ;
+    harness:wiredBy "worker-config" ;
+    harness:enforcedAt "tools/worker.py#load_routers" ;
+    harness:statedBy guide:a-router-dispatches-the-work ;
+    harness:firedBy test:test_harness:SensorsFire.test_worker_needs_routers .
+
+ctl:worker-dispatched-by-a-router a harness:Control ;
+    rdfs:label "worker: takes only what a router dispatched" ;
+    rdfs:comment "The worker does not take an item whose newest dispatch by a router does not name its labels and the item's repository, or whose title or body changed after it; checked again on the item as read after the claim." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:runtime ; harness:category harness:authoritySafety ;
+    harness:outcome harness:refuse ;
+    harness:wiredBy "worker-config" ;
+    harness:enforcedAt "tools/worker.py#skip_reason" , "tools/worker.py#work" ;
+    harness:statedBy guide:a-router-dispatches-the-work ;
+    harness:firedBy test:test_harness:SensorsFire.test_worker_dispatched_by_a_router .
 
 ctl:worker-work-root-in-home a harness:Control ;
     rdfs:label "worker: works only in its own home" ;
@@ -330,7 +393,9 @@ ctl:worker-work-root-in-home a harness:Control ;
     harness:direction harness:feedback ; harness:execution harness:computational ;
     harness:stage harness:runtime ; harness:category harness:authoritySafety ;
     harness:outcome harness:refuse ;
+    harness:wiredBy "worker-config" ;
     harness:enforcedAt "tools/worker.py#work_root" ;
+    harness:statedBy guide:worker-own-account ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_work_root_in_home .
 
 ctl:worker-skips-claimed a harness:Control ;
@@ -339,6 +404,7 @@ ctl:worker-skips-claimed a harness:Control ;
     harness:direction harness:feedback ; harness:execution harness:computational ;
     harness:stage harness:runtime ; harness:category harness:authoritySafety ;
     harness:outcome harness:refuse ;
+    harness:wiredBy "worker-config" ;
     harness:enforcedAt "tools/worker.py#skip_reason" ;
     harness:statedBy guide:a-claim-is-a-fence ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_skips_claimed .
@@ -349,6 +415,7 @@ ctl:worker-one-repository-label a harness:Control ;
     harness:direction harness:feedback ; harness:execution harness:computational ;
     harness:stage harness:runtime ; harness:category harness:authoritySafety ;
     harness:outcome harness:refuse ;
+    harness:wiredBy "worker-config" ;
     harness:enforcedAt "tools/worker.py#skip_reason" ;
     harness:statedBy guide:dispatcher-marks-the-work ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_one_repository_label .
@@ -359,6 +426,7 @@ ctl:worker-skips-awaiting-dispatcher a harness:Control ;
     harness:direction harness:feedback ; harness:execution harness:computational ;
     harness:stage harness:runtime ; harness:category harness:authoritySafety ;
     harness:outcome harness:refuse ;
+    harness:wiredBy "worker-config" ;
     harness:enforcedAt "tools/worker.py#skip_reason" ;
     harness:statedBy guide:dispatcher-closes-on-evidence ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_skips_awaiting_dispatcher .
@@ -369,7 +437,9 @@ ctl:worker-skips-handed-back a harness:Control ;
     harness:direction harness:feedback ; harness:execution harness:computational ;
     harness:stage harness:runtime ; harness:category harness:behavior ;
     harness:outcome harness:refuse ;
+    harness:wiredBy "worker-config" ;
     harness:enforcedAt "tools/worker.py#skip_reason" ;
+    harness:statedBy guide:worker-budget-and-once ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_skips_handed_back .
 
 ctl:worker-one-agent-per-repository a harness:Control ;
@@ -378,6 +448,7 @@ ctl:worker-one-agent-per-repository a harness:Control ;
     harness:direction harness:feedback ; harness:execution harness:computational ;
     harness:stage harness:runtime ; harness:category harness:authoritySafety ;
     harness:outcome harness:refuse ;
+    harness:wiredBy "worker-config" ;
     harness:enforcedAt "tools/worker.py#skip_reason" , "tools/worker.py#run_once" , "tools/worker.py#work" ;
     harness:statedBy guide:one-agent-per-repository ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_one_agent_per_repository .
@@ -388,8 +459,9 @@ ctl:worker-claim-lost a harness:Control ;
     harness:direction harness:feedback ; harness:execution harness:computational ;
     harness:stage harness:runtime ; harness:category harness:authoritySafety ;
     harness:outcome harness:refuse ;
+    harness:wiredBy "worker-config" ;
     harness:enforcedAt "tools/worker.py#work_claimed" ;
-    harness:statedBy guide:stop-when-claim-gone ;
+    harness:statedBy guide:stop-when-claim-gone , guide:a-claim-is-a-lease ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_claim_lost .
 
 ctl:worker-budget-overrun a harness:Control ;
@@ -398,7 +470,9 @@ ctl:worker-budget-overrun a harness:Control ;
     harness:direction harness:feedback ; harness:execution harness:computational ;
     harness:stage harness:runtime ; harness:category harness:behavior ;
     harness:outcome harness:refuse ;
+    harness:wiredBy "worker-config" ;
     harness:enforcedAt "tools/worker.py#work_claimed" ;
+    harness:statedBy guide:worker-budget-and-once , guide:hand-back-when-you-stop ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_budget_overrun .
 
 ctl:worker-no-evidence a harness:Control ;
@@ -407,8 +481,9 @@ ctl:worker-no-evidence a harness:Control ;
     harness:direction harness:feedback ; harness:execution harness:computational ;
     harness:stage harness:runtime ; harness:category harness:behavior ;
     harness:outcome harness:refuse ;
+    harness:wiredBy "worker-config" ;
     harness:enforcedAt "tools/worker.py#work_claimed" ;
-    harness:statedBy guide:report-with-evidence ;
+    harness:statedBy guide:report-with-evidence , guide:hand-back-when-you-stop ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_no_evidence .
 
 ctl:worker-merged-before-exit a harness:Control ;
@@ -417,6 +492,7 @@ ctl:worker-merged-before-exit a harness:Control ;
     harness:direction harness:feedback ; harness:execution harness:computational ;
     harness:stage harness:runtime ; harness:category harness:authoritySafety ;
     harness:outcome harness:warn ;
+    harness:wiredBy "worker-config" ;
     harness:enforcedAt "tools/worker.py#work_claimed" ;
     harness:statedBy guide:worker-never-closes-or-merges ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_merged_before_exit .
@@ -430,6 +506,7 @@ ctl:edit-without-live-claim a harness:Control ;
     harness:stage harness:toolCall ; harness:category harness:authoritySafety ;
     harness:outcome harness:refuse ;
     harness:enforcedAt "hooks/claude/require-claim.py#decide" ;
+    harness:wiredBy "claude:require-claim" ;
     harness:statedBy guide:claim-before-write , guide:stop-when-claim-gone ;
     harness:firedBy test:test_harness:SensorsFire.test_edit_without_live_claim .
 
@@ -440,6 +517,7 @@ ctl:edit-hook-not-wired a harness:Control ;
     harness:stage harness:toolCall ; harness:category harness:authoritySafety ;
     harness:outcome harness:refuse ;
     harness:enforcedAt "hooks/claude/require-claim.py#decide" ;
+    harness:wiredBy "claude:require-claim" ;
     harness:statedBy guide:claim-before-write ;
     harness:firedBy test:test_harness:SensorsFire.test_edit_hook_not_wired .
 
@@ -450,5 +528,6 @@ ctl:edit-hook-unreadable-input a harness:Control ;
     harness:stage harness:toolCall ; harness:category harness:authoritySafety ;
     harness:outcome harness:refuse ;
     harness:enforcedAt "hooks/claude/require-claim.py#main" ;
+    harness:wiredBy "claude:require-claim" ;
     harness:statedBy guide:claim-before-write ;
     harness:firedBy test:test_harness:SensorsFire.test_edit_hook_unreadable_input .

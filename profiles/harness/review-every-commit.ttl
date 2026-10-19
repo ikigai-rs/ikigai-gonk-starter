@@ -26,6 +26,7 @@ ctl:review-not-queued a harness:Control ;
     harness:stage harness:postCommit ; harness:category harness:behavior ;
     harness:outcome harness:warn ;
     harness:enforcedAt "hooks/git/review-on-commit.py#requests" , "hooks/git/review-on-commit.py#main" ;
+    harness:wiredBy "git:post-commit" ;
     harness:statedBy guide:every-commit-is-reviewed ;
     harness:firedBy test:test_harness:SensorsFire.test_review_not_queued .
 

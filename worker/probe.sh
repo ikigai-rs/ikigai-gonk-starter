@@ -230,10 +230,16 @@ if want closed; then
         else pass leak "none of $(echo $GUESSES | wc -w | tr -d ' ') guessable names in $d opens"; fi
     done
     if [ "$candidates" = 1 ]; then
-        n=0 opened=0 all=""
+        n=0 opened=0 all="" last=$SECONDS
         while IFS= read -r f; do
             [ -n "$f" ] || continue
             n=$((n + 1))
+            # Progress, on STDERR only (stdout is what the hub parses and must not change): one
+            # fixed line, "probe-progress: tried N", every PROBE_PROGRESS_SECS (default 5) seconds.
+            if [ $((SECONDS - last)) -ge "${PROBE_PROGRESS_SECS:-5}" ]; then
+                last=$SECONDS
+                echo "probe-progress: tried $n" >&2
+            fi
             if can_read "$f"; then
                 opened=$((opened + 1))
                 all="$all$f

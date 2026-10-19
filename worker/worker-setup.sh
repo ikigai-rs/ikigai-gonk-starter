@@ -116,13 +116,15 @@ case "$os" in Linux|Darwin) ;; *) die "unsupported OS $os (Linux with systemd, o
 # Documents, Desktop, Downloads and the person's own trees; and the probe's fixed list of
 # guessable names, none of which is under ~/Library, is tried by name either way. Linux homes have
 # no ~/Library; there the walk is unchanged.
+# ~/Pictures too on macOS (ledger item 1463), on the same argument: 0700 by default, and its Photos
+# library (Photos Library.photoslibrary) can hold hundreds of thousands of files.
 enumerate() {
-    local h lib
+    local h lib pics
     for h in "$@"; do
         [ -d "$h" ] || continue
-        if [ "$os" = Darwin ]; then lib="$h/Library"; else lib="$h/Library/Caches"; fi
+        if [ "$os" = Darwin ]; then lib="$h/Library" pics="$h/Pictures"; else lib="$h/Library/Caches" pics="$h/.no-pictures-prune"; fi
         find "$h" \( -name target -o -name node_modules -o -path "$h/.rustup/toolchains" \
-                     -o -path "$h/.cargo/registry" -o -path "$h/.cache" -o -path "$lib" \) -prune \
+                     -o -path "$h/.cargo/registry" -o -path "$h/.cache" -o -path "$lib" -o -path "$pics" \) -prune \
              -o -type f -print 2>/dev/null
     done
 }
@@ -392,7 +394,7 @@ EOF
     fi
 
     echo "── as $hubdiag: the hub's view of this machine"
-    echo "   (enumerating $admin_home and $agent_home as root$( [ "$os" = Darwin ] && echo ', not their ~/Library'); the list goes to the probe on stdin)"
+    echo "   (enumerating $admin_home and $agent_home as root$( [ "$os" = Darwin ] && echo ', not their ~/Library or ~/Pictures'); the list goes to the probe on stdin)"
     enumerate_into "$tmp/cands" "$admin_home" "$agent_home" 2>&1
     probe_as "$hubdiag" --sections "identity,closed,view,nowrite,journal$hsec" \
         --closed "$admin_home" --closed "$agent_home" "${vdirs[@]}" "${srcs[@]}" \

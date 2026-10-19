@@ -82,10 +82,12 @@ class ScratchGonk:
         self.socket = self.dir / "g.sock"
         self.proc = None
 
-    def add_client(self, name: str, ledger: str) -> str:
-        """Enroll a QUIC client; answer the principal gonk printed for it."""
+    def add_client(self, name: str, ledger: str, worker: bool = False) -> str:
+        """Enroll a QUIC client, a writer of `ledger` or (`worker`) under the narrower worker
+        grant; answer the principal gonk printed for it."""
+        grant = ["--worker", ledger] if worker else ["--ledger", f"{ledger}=write"]
         out = subprocess.run(
-            [GONK, "client", "add", name, "--ledger", f"{ledger}=write"]
+            [GONK, "client", "add", name, *grant]
             + ["--port", str(self.quic_port), "--config-home", str(self.config_home)],
             capture_output=True,
             text=True,
@@ -533,15 +535,18 @@ class AgainstARealGonk(unittest.TestCase):
         ]:
             self.assertRegex(by_control, rf"ctl:{control}\s.*\sRefusal\s+1\s", control)
         never = section(again, "harness-sensors-never-fired")
-        self.assertRegex(never, r"ctl:worker-claim-lost\s.*fired by a test")
+        # This tree runs no worker (.gonk/worker.toml is absent), so its sensors are honestly
+        # named not wired rather than read as quiet: the graph tells the two apart now.
+        self.assertRegex(never, r"ctl:worker-claim-lost\s.*\sno\s+not wired")
+        self.assertRegex(never, r"ctl:edit-without-live-claim\s.*\sno\s+not wired")
         self.assertNotIn("ctl:evidence-required", never)
         self.assertNotIn("NO TEST", never)
         unchecked = section(again, "harness-guides-without-sensor")
         self.assertIn("guide:reproduce-before-fix", unchecked)
         self.assertNotIn("guide:a-claim-is-a-fence", unchecked)
         unstated = section(again, "harness-sensors-without-guide")
-        self.assertIn("ctl:reject-needs-reason", unstated)
-        self.assertNotIn("ctl:evidence-required", unstated)
+        # Every sensor cites a rule of AGENTS.md (ledger item 1474), so none is unstated.
+        self.assertNotIn("ctl:", unstated)
 
         # Why the questions are not published: gonk holds every script run to a ceiling of
         # ledger reads, the owner's too. Published by hand, one is refused naming the graph.
