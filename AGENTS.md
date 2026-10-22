@@ -106,6 +106,15 @@ a view, terminal text, generated markup or a picture. Keep the rules it states, 
 what you tested, with what, and what you did not. Never claim testing that did not happen, by
 a person or a tool, and never weaken a check to make a change pass.
 
+## Follow the UI conventions
+
+- **Read `docs/ui-conventions.md` before building or changing a user interface**: how a view
+  is made, escaped, served, themed, tested and given a URL, decided once for every app.
+- **`ACCESSIBILITY.md` is the floor.** The conventions build on it and never lower it.
+- **The record is decided, but its shared pieces are not built yet**: the one rendering path,
+  the components and the reference app. Follow the decisions, not any one app's current code,
+  which migrates to them over time.
+
 ## Specs, artifacts, queries and scripts
 
 - **Specs** are in `openspec/`: `specs/` is what the system does now, `changes/` what is

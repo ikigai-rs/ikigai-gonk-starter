@@ -81,6 +81,7 @@ hooks/claude/            an OPTIONAL Claude Code hook that refuses edits without
 worker/                  set up a machine that does agentic work for a hub, check it, run the loop
 docs/windows.md          Windows: WSL2, and what each agent does there
 docs/resource-design.md  how to design a feature resource-first: names first, code last
+docs/ui-conventions.md   the UI decision record: how a view is made, served, themed and tested
 .gitattributes           LF in every checkout, whatever core.autocrlf says
 ```
 

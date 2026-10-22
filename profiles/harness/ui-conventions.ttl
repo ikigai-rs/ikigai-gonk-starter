@@ -1,0 +1,6 @@
+guide:ui-conventions a harness:Guide ;
+    rdfs:label "follow the UI conventions" ;
+    rdfs:comment "Before building or changing a user interface, read `docs/ui-conventions.md` and write to its decisions, not to any one app's current code; `ACCESSIBILITY.md` is the floor beneath them." ;
+    harness:statedIn "AGENTS.md" ; harness:section "Follow the UI conventions" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:toolCall ; harness:category harness:behavior .

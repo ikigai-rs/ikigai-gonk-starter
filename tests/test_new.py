@@ -600,5 +600,41 @@ class ResourceFirst(unittest.TestCase):
         self.assertIn("docs/resource-design.md", text)
 
 
+UI_CONVENTIONS_RULE = "Read `docs/ui-conventions.md` before building or changing a user interface"
+
+
+class UiConventions(unittest.TestCase):
+    """Every generated repository, whatever its process, carries the UI decision record and the
+    AGENTS.md section that points every agent at it, right after the accessibility rule."""
+
+    def test_every_process_carries_the_record_and_the_rule(self):
+        doc = (ROOT / "docs" / "ui-conventions.md").read_text(encoding="utf-8")
+        for process in [None, ["solo"], ["hub"], ["workers"], ["audits"]]:
+            repo = scratch(self)
+            new.generate(repo, "python", process)
+            label = ",".join(process or ["default"])
+            self.assertEqual((repo / "docs" / "ui-conventions.md").read_text(), doc, label)
+            agents = (repo / "AGENTS.md").read_text()
+            self.assertIn("## Follow the UI conventions", agents, label)
+            self.assertIn(UI_CONVENTIONS_RULE, agents, label)
+            self.assertIn("`ACCESSIBILITY.md` is the floor", agents, label)
+            self.assertIn("not built yet", agents, label)
+            self.assertLess(
+                agents.index("Read ACCESSIBILITY.md before changing what people see"),
+                agents.index("## Follow the UI conventions"),
+                label,
+            )
+            harness = (repo / ".gonk" / "harness" / "harness.ttl").read_text()
+            self.assertIn("guide:ui-conventions", harness, label)
+
+    def test_the_record_is_the_public_copy(self):
+        doc = (ROOT / "docs" / "ui-conventions.md").read_text(encoding="utf-8")
+        self.assertIn("**a view is a resource**", doc)
+        for n in range(1, 20):
+            self.assertIn(f"| D{n} |", doc, f"D{n}")
+        for private in ["localhost", "devtools", "git-personal", "ledger #"]:
+            self.assertNotIn(private, doc, private)
+
+
 if __name__ == "__main__":
     unittest.main()

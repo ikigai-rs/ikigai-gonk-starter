@@ -61,6 +61,7 @@ STARTER_FILES = [
     ".gitattributes",
     "docs/windows.md",
     "docs/resource-design.md",
+    "docs/ui-conventions.md",
     "tools/gonk.py",
     "tools/harness.py",
     "hooks/claude/README.md",
