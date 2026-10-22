@@ -5,6 +5,8 @@
     python3 tools/worker.py run             a loop: poll, take, run, hand back, until the stop file
     python3 tools/worker.py plan            what it would take now, and why it skips the rest
     python3 tools/worker.py forget 12       let this worker take item 12 again
+    python3 tools/worker.py onboard …       enroll this machine with a pairing code, then
+                                            write its configuration (tools/worker_onboard.py)
 
 Standard library only (Python 3.11 or later), beside tools/gonk.py, whose transport and
 configuration it shares: `.gonk/gonk.toml` names the ledger, `.gonk/local.toml` says how this
@@ -74,6 +76,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import gonk  # noqa: E402  (beside this file; the path above makes it importable)
+import worker_onboard  # noqa: E402
 import worker_usage  # noqa: E402
 
 # --------------------------------------------------------------------------- durations
@@ -1739,6 +1742,16 @@ def agent_config_text(base: str, name: str, agent: str, source: str, from_sample
     return "\n".join(header + lines) + "\n"
 
 
+def agent_config(base: str, name: str, agent: str, source: str, from_sample: bool) -> str:
+    """`agent_config_text`, checked: what init-agents (and onboard) writes for one loop."""
+    text = agent_config_text(base, name, agent, source, from_sample)
+    t = tomllib.loads(text)  # a configuration this wrote that does not parse is a bug here
+    expected = [f"worker:{name}", f"agent:{agent}"]
+    if t.get("labels") != expected or t.get("holder") != f"{name}-{agent}":
+        raise gonk.ConfigError(f"worker-{agent}.toml: what it would write does not say {expected}")
+    return text
+
+
 def write_new(path: Path, text: str) -> bool:
     """Write `text` to `path` only if nothing is there, atomically: a temporary file in the same
     directory, then a hard link, which fails rather than replace a file that appeared meanwhile.
@@ -1799,11 +1812,8 @@ def cmd_init_agents(args, make_ikigai, home) -> int:
             break
     for agent in agents:
         path = repo / ".gonk" / f"worker-{agent}.toml"
-        text = agent_config_text(base, args.name, agent, source, from_sample)
-        t = tomllib.loads(text)  # a configuration this wrote that does not parse is a bug here
+        text = agent_config(base, args.name, agent, source, from_sample)
         expected = [label, f"agent:{agent}"]
-        if t.get("labels") != expected or t.get("holder") != f"{args.name}-{agent}":
-            raise gonk.ConfigError(f"{path}: the configuration written would not say {expected}")
         if path.exists():
             print(f"kept     {path.relative_to(repo)} (it exists; init-agents never overwrites)")
         elif write_new(path, text):
@@ -1863,6 +1873,11 @@ def cmd_plist(args, make_ikigai, home) -> int:
     return 0
 
 
+def cmd_onboard(args, make_ikigai, home) -> int:
+    """A node enrolls itself with a pairing code (tools/worker_onboard.py, ledger item 2009)."""
+    return worker_onboard.run(args, make_ikigai, home, sys.modules[__name__], gonk)
+
+
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="worker.py", description=__doc__.splitlines()[0])
     p.add_argument(
@@ -1901,6 +1916,8 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--agents", required=True, help="comma-separated, e.g. claude,codex,hermes")
     s.add_argument("--out", help="write <label>.plist files here (default: standard output)")
     s.set_defaults(run=cmd_plist)
+
+    worker_onboard.add_parser(sub, cmd_onboard)
 
     # `--config` after the command too (`run --config .gonk/worker-codex.toml`, as the
     # templated unit says it), as well as before it.
