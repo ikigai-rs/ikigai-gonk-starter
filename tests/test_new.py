@@ -559,30 +559,40 @@ class Accessibility(unittest.TestCase):
         self.assertNotEqual(own, (ROOT / "templates" / "library" / "ACCESSIBILITY.md").read_text())
 
 
-RESOURCE_FIRST_RULE = "do the resource-first pass"
+IKIGAI_STYLE_HEADING = "## Building in the ikigai style (optional)"
+IKIGAI_STYLE_INVITATION = "Neither is required"
 
 
 class ResourceFirst(unittest.TestCase):
     """Every generated repository, whatever its process, carries the resource-first method
-    and the AGENTS.md section that points every agent at it, before `Spec first`."""
+    and an optional AGENTS.md pointer before `Spec first`."""
 
-    def test_every_process_carries_the_method_and_the_rule(self):
-        doc = (ROOT / "docs" / "resource-design.md").read_text(encoding="utf-8")
+    def test_every_process_carries_the_method_and_optional_pointer(self):
         for process in [None, ["solo"], ["hub"], ["workers"], ["audits"]]:
             repo = scratch(self)
             new.generate(repo, "python", process)
             label = ",".join(process or ["default"])
-            self.assertEqual((repo / "docs" / "resource-design.md").read_text(), doc, label)
+            self.assertEqual(
+                (repo / "docs" / "resource-design.md").read_bytes(),
+                (ROOT / "docs" / "resource-design.md").read_bytes(),
+                label,
+            )
             agents = (repo / "AGENTS.md").read_text()
-            self.assertIn("## Design resource-first", agents, label)
-            self.assertIn(RESOURCE_FIRST_RULE, agents, label)
+            self.assertIn(IKIGAI_STYLE_HEADING, agents, label)
+            self.assertIn(IKIGAI_STYLE_INVITATION, agents, label)
+            self.assertEqual(agents.count(IKIGAI_STYLE_HEADING), 1, label)
+            self.assertNotIn("## Design resource-first", agents, label)
+            self.assertNotIn("## Follow the UI conventions", agents, label)
             self.assertIn("docs/resource-design.md", agents, label)
             if "## Spec first" in agents:
                 self.assertLess(
-                    agents.index("## Design resource-first"), agents.index("## Spec first"), label
+                    agents.index(IKIGAI_STYLE_HEADING), agents.index("## Spec first"), label
                 )
             harness = (repo / ".gonk" / "harness" / "harness.ttl").read_text()
-            self.assertIn("guide:design-resource-first", harness, label)
+            self.assertIn("guide:building-ikigai-style", harness, label)
+            self.assertNotIn("guide:design-resource-first", harness, label)
+            self.assertNotIn("guide:ui-conventions", harness, label)
+            self.assertIn("Neither is required", harness, label)
 
     def test_the_method_names_its_steps_and_its_sources(self):
         doc = (ROOT / "docs" / "resource-design.md").read_text(encoding="utf-8")
@@ -598,34 +608,41 @@ class ResourceFirst(unittest.TestCase):
         text = (ROOT / "openspec" / "changes" / "README.md").read_text(encoding="utf-8")
         self.assertIn("## Resource map", text)
         self.assertIn("docs/resource-design.md", text)
-
-
-UI_CONVENTIONS_RULE = "Read `docs/ui-conventions.md` before building or changing a user interface"
+        self.assertIn("if you design resource-first", text)
 
 
 class UiConventions(unittest.TestCase):
     """Every generated repository, whatever its process, carries the UI decision record and the
-    AGENTS.md section that points every agent at it, right after the accessibility rule."""
+    optional AGENTS.md pointer after the accessibility rule."""
 
-    def test_every_process_carries_the_record_and_the_rule(self):
-        doc = (ROOT / "docs" / "ui-conventions.md").read_text(encoding="utf-8")
+    def test_every_process_carries_the_record_and_optional_pointer(self):
         for process in [None, ["solo"], ["hub"], ["workers"], ["audits"]]:
             repo = scratch(self)
             new.generate(repo, "python", process)
             label = ",".join(process or ["default"])
-            self.assertEqual((repo / "docs" / "ui-conventions.md").read_text(), doc, label)
+            self.assertEqual(
+                (repo / "docs" / "ui-conventions.md").read_bytes(),
+                (ROOT / "docs" / "ui-conventions.md").read_bytes(),
+                label,
+            )
             agents = (repo / "AGENTS.md").read_text()
-            self.assertIn("## Follow the UI conventions", agents, label)
-            self.assertIn(UI_CONVENTIONS_RULE, agents, label)
-            self.assertIn("`ACCESSIBILITY.md` is the floor", agents, label)
+            self.assertIn(IKIGAI_STYLE_HEADING, agents, label)
+            self.assertIn(IKIGAI_STYLE_INVITATION, agents, label)
+            self.assertEqual(agents.count(IKIGAI_STYLE_HEADING), 1, label)
+            self.assertNotIn("## Design resource-first", agents, label)
+            self.assertNotIn("## Follow the UI conventions", agents, label)
+            self.assertIn("`ACCESSIBILITY.md` stays the floor", agents, label)
             self.assertIn("not built yet", agents, label)
             self.assertLess(
                 agents.index("Read ACCESSIBILITY.md before changing what people see"),
-                agents.index("## Follow the UI conventions"),
+                agents.index(IKIGAI_STYLE_HEADING),
                 label,
             )
             harness = (repo / ".gonk" / "harness" / "harness.ttl").read_text()
-            self.assertIn("guide:ui-conventions", harness, label)
+            self.assertIn("guide:building-ikigai-style", harness, label)
+            self.assertNotIn("guide:design-resource-first", harness, label)
+            self.assertNotIn("guide:ui-conventions", harness, label)
+            self.assertIn("Neither is required", harness, label)
 
     def test_the_record_is_the_public_copy(self):
         doc = (ROOT / "docs" / "ui-conventions.md").read_text(encoding="utf-8")

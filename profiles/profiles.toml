@@ -28,9 +28,8 @@ sections = [
     "report",
     "bare-numbers",
     "accessibility",
-    "ui-conventions",
     "layout",
-    "design-resource-first",
+    "building-ikigai-style",
     "spec-first",
     "workers",
     "hub",
@@ -51,9 +50,8 @@ sections = [
     "report",
     "bare-numbers",
     "accessibility",
-    "ui-conventions",
     "layout",
-    "design-resource-first",
+    "building-ikigai-style",
     "claude-hook",
 ]
 # The optional Claude Code hook that refuses an edit without a claim (hooks/claude/). Every

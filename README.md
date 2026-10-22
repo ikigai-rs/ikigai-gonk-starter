@@ -53,8 +53,8 @@ shared gets a forge, and its pull requests, before its first hand-back.
 That is the whole protocol, and [`AGENTS.md`](AGENTS.md) states its rules: claim before you
 write, one agent per item and per working tree, reproduce before you fix, every change
 through a pull request with green CI, evidence on every report and close, and never a bare
-`#N`. Every agent reads that one file. New features are designed resource-first, names first
-and code last, by the method in [`docs/resource-design.md`](docs/resource-design.md).
+`#N`. Every agent reads that one file. For building in the ikigai style, optional guides cover
+[resource-first design](docs/resource-design.md) and [UI conventions](docs/ui-conventions.md).
 
 ## What is in it
 

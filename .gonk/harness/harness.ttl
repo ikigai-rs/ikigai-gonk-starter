@@ -236,15 +236,6 @@ guide:read-accessibility-first a harness:Guide ;
     harness:direction harness:feedforward ; harness:execution harness:inferential ;
     harness:stage harness:toolCall ; harness:category harness:behavior .
 
-# ── ui-conventions (profiles/harness/ui-conventions.ttl)
-
-guide:ui-conventions a harness:Guide ;
-    rdfs:label "follow the UI conventions" ;
-    rdfs:comment "Before building or changing a user interface, read `docs/ui-conventions.md` and write to its decisions, not to any one app's current code; `ACCESSIBILITY.md` is the floor beneath them." ;
-    harness:statedIn "AGENTS.md" ; harness:section "Follow the UI conventions" ;
-    harness:direction harness:feedforward ; harness:execution harness:inferential ;
-    harness:stage harness:toolCall ; harness:category harness:behavior .
-
 # ── layout (profiles/harness/layout.ttl)
 
 guide:artifacts-line-true a harness:Guide ;
@@ -270,12 +261,12 @@ ctl:init-report a harness:Control ;
     harness:enforcedAt "tools/gonk.py#cmd_init" ;
     harness:statedBy guide:artifacts-line-true , guide:publish-through-init .
 
-# ── design-resource-first (profiles/harness/design-resource-first.ttl)
+# ── building-ikigai-style (profiles/harness/building-ikigai-style.ttl)
 
-guide:design-resource-first a harness:Guide ;
-    rdfs:label "design resource-first" ;
-    rdfs:comment "Before designing a new feature, endpoint family or app, do the resource-first pass (names first, code last) and put a `## Resource map` in the spec change, or the pull request when there is no spec; `docs/resource-design.md` is the method." ;
-    harness:statedIn "AGENTS.md" ; harness:section "Design resource-first" ;
+guide:building-ikigai-style a harness:Guide ;
+    rdfs:label "building in the ikigai style (optional)" ;
+    rdfs:comment "If you build in the ikigai style, consider `docs/resource-design.md` for resource-first design and `docs/ui-conventions.md` for views. Neither is required; a project that is not resource-oriented can ignore both. If you design resource-first, a `## Resource map` in the proposal or pull request can show the result. Whatever you build, `ACCESSIBILITY.md` stays the floor." ;
+    harness:statedIn "AGENTS.md" ; harness:section "Building in the ikigai style (optional)" ;
     harness:direction harness:feedforward ; harness:execution harness:inferential ;
     harness:stage harness:toolCall ; harness:category harness:architectureFitness .
 

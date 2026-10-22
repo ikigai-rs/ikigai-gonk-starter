@@ -106,15 +106,6 @@ a view, terminal text, generated markup or a picture. Keep the rules it states, 
 what you tested, with what, and what you did not. Never claim testing that did not happen, by
 a person or a tool, and never weaken a check to make a change pass.
 
-## Follow the UI conventions
-
-- **Read `docs/ui-conventions.md` before building or changing a user interface**: how a view
-  is made, escaped, served, themed, tested and given a URL, decided once for every app.
-- **`ACCESSIBILITY.md` is the floor.** The conventions build on it and never lower it.
-- **The record is decided, but its shared pieces are not built yet**: the one rendering path,
-  the components and the reference app. Follow the decisions, not any one app's current code,
-  which migrates to them over time.
-
 ## Specs, artifacts, queries and scripts
 
 - **Specs** are in `openspec/`: `specs/` is what the system does now, `changes/` what is
@@ -127,15 +118,17 @@ a person or a tool, and never weaken a check to make a change pass.
   publishes them when gonk offers `urn:script:`, and until then says they are ready but
   unpublished; do not publish them any other way.
 
-## Design resource-first
+## Building in the ikigai style (optional)
 
-- **Before designing a new feature, endpoint family or app, do the resource-first pass** and
-  put its result, a `## Resource map`, in the spec change's `proposal.md`, or in the pull
-  request when there is no spec.
-- **Names first, code last.** The sets and their names, then the few atoms that hold state,
-  then how everything else is composed from other names. Code that only assembles other
-  resources must say why a composition cannot do it.
-- The full method, with a worked example, is in `docs/resource-design.md`.
+If this repository builds on ikigai, two guides describe how we design and present it.
+Neither is required, and a project that is not resource-oriented can ignore both:
+
+- **Resource-first design**, `docs/resource-design.md`: names first and code last, with a
+  worked example. If you use it, a `## Resource map` in the change's `proposal.md` (or the pull
+  request) is the place to show the result.
+- **UI conventions**, `docs/ui-conventions.md`: how an ikigai view is made, escaped, served,
+  themed and tested. The record is decided; its shared pieces are not built yet. Whatever
+  you build, `ACCESSIBILITY.md` stays the floor.
 
 ## Spec first
 

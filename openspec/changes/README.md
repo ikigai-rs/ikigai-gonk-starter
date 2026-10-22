@@ -11,8 +11,8 @@ changes/<change-id>/
 ```
 
 A `proposal.md` for a new feature, endpoint family or app may also carry an optional
-`## Resource map` heading: the sets, atoms and compositions it is designed as, names before
-code (see `docs/resource-design.md`).
+`## Resource map` heading if you design resource-first: the sets, atoms and compositions it
+is designed as, names before code (see `docs/resource-design.md`).
 
 When a change is done it is archived: its deltas merge into `specs/`, and its folder moves
 to `changes/archive/<date>-<id>/`. So at any moment this directory is exactly the work in
