@@ -24,9 +24,17 @@ from worker_support import worker
 
 onboard = worker.worker_onboard  # tools/worker_onboard.py, as worker.py imports it
 
+# JSON-LD transcription of tests/onboard.rs's entitlement_body / TASKS and
+# the_node_reads_its_entitlement_with_its_new_certificate; the context is copied
+# verbatim from onboard/layers/grants.context.jsonld. Fingerprint and entry IDs
+# are fixed for this hermetic test (no certificate/signature verification here).
+# Source: ikigai-rs/ikigai-layers at 3afdeb0e3336438876ee60de67c0b62f08040d2b.
+ENTITLEMENT_FIXTURE = Path(__file__).parent / "fixtures" / "onboard-entitlement.jsonld"
+
+
 # The request's shape, copied from the contract the three arcs of ledger item 2009 share:
 # ikigai-devtools claude/research/node-onboarding-2009-2026-10-22.md, "The request". The arc
-# that owns the closed SHACL shape is ikigai-layers'; until it lands, this is the shape.
+# that owns the closed SHACL shape is ikigai-layers'.
 CONTRACT_REQUEST = """\
 <urn:iki:onboard:request:{fingerprint}> a onb:EnrollmentRequest ;
     onb:invite <urn:iki:onboard:invite:{id}> ;
@@ -62,16 +70,16 @@ def entitlement(n: int, kind: str, gonk_grant=None, layer=None, supersedes=None,
         "expires": {"@value": "2999-01-01T00:00:00Z"},
         "router": ROUTER,
     }
-    extra = []
+    node["request"] = {"@id": "urn:layer:enroll:entry:1"}
     if gonk_grant:
         node["gonkGrant"] = gonk_grant
     if layer:
-        grant = f"urn:iki:onboard:entitlement:{fp}:{n}:grant:{layer}"
-        node["layerGrant"] = {"@id": grant}
-        extra.append({"@id": grant, "layer": layer, "verb": ["read", "out", "take"]})
+        node["layerGrant"] = [
+            {"@id": f"urn:cap:layer:{verb}:{layer}"} for verb in ("read", "out", "take")
+        ]
     if supersedes:
-        node["supersedes"] = {"@id": supersedes}
-    return [node, *extra]
+        node["ik:supersedes"] = {"@id": supersedes}
+    return [node]
 
 
 class FakeDoor:
@@ -98,7 +106,8 @@ class FakeDoor:
             self.reads += 1
             if self.grants is None:
                 return gonk.Answer(1, "", "denied: urn:cap:layer:read:grants")
-            doc = {"@context": {}, "@graph": self.grants}
+            doc = json.loads(ENTITLEMENT_FIXTURE.read_text())
+            doc["@graph"] = self.grants
             return gonk.Answer(0, json.dumps(doc), "")
         return gonk.Answer(1, "", f"the fake door does not know {command!r}")
 
@@ -351,12 +360,64 @@ class Onboarding(unittest.TestCase):
         self.assertIn("revoked", out)
         self.assertFalse(list((self.repo / ".gonk").glob("worker-*.toml")))
 
+    def test_the_upstream_entitlement_fixture(self):
+        doc = json.loads(ENTITLEMENT_FIXTURE.read_text())
+        e = onboard.entitlements(doc, NODE_FP)[0]
+        self.assertEqual(e.layer_grants, [("tasks", ["read", "out", "take"])])
+        self.assertEqual(e.request, "urn:layer:enroll:entry:1")
+        self.door.grants = doc["@graph"]
+        code, out = self.onboard()
+        self.assertEqual(code, onboard.ENROLLED, out)
+        self.assertIn("layers: tasks", out)
+        self.assertTrue((self.home / ".ikigai" / "layers-client" / "mini").is_symlink())
+
+    def test_supersession_uses_the_ik_namespace(self):
+        for key in ("supersedes", "ik:supersedes", "https://ikigai-rs.dev/ns#supersedes"):
+            with self.subTest(key=key):
+                first = entitlement(1, "worker", gonk_grant="default=worker")
+                revoke = entitlement(2, "worker")[0]
+                revoke[key] = {"@id": first[0]["@id"]}
+                live = onboard.current(
+                    onboard.entitlements(first + [revoke], NODE_FP), onboard.NOW()
+                )
+                self.assertEqual([e.iri for e in live], [revoke["@id"]])
+        revoke = entitlement(2, "worker")[0]
+        revoke["onb:supersedes"] = {"@id": first[0]["@id"]}
+        self.assertEqual(onboard.entitlements([revoke], NODE_FP)[0].supersedes, [])
+
+    def test_capability_iris_are_grouped_by_layer(self):
+        doc = entitlement(1, "task-member", layer="tasks")[0]
+        doc["layerGrant"].append({"@id": "urn:cap:layer:read:grants"})
+        e = onboard.entitlements([doc], NODE_FP)[0]
+        self.assertEqual(e.layer_grants, [("tasks", ["read", "out", "take"]), ("grants", ["read"])])
+        self.assertEqual(e.request, "urn:layer:enroll:entry:1")
+
+    def test_malformed_layer_capabilities_are_refused(self):
+        for value in (
+            "urn:cap:other:read:tasks",
+            "urn:cap:layer:read:",
+            "urn:cap:layer:read:tasks:extra",
+            "urn:cap:layer:unknown:tasks",
+            "urn:cap:layer:read:tasks\n",
+            {"layer": "tasks", "verb": "read"},
+            {"@value": "urn:cap:layer:read:tasks"},
+        ):
+            with self.subTest(value=value):
+                self.door.grants = entitlement(1, "task-member", layer="tasks")
+                self.door.grants[0]["layerGrant"] = [value]
+                code, out = self.onboard()
+                self.assertEqual(code, onboard.CONFIG, out)
+                self.assertIn("onb:layerGrant", out)
+                self.assertFalse((self.identity / "config-home.toml").exists())
+
     def test_the_entitlement_terms_may_be_compacted_any_way(self):
-        doc = entitlement(1, "worker", gonk_grant="default=worker")[0]
+        doc = entitlement(1, "worker", gonk_grant="default=worker", layer="tasks")[0]
         full = {(k if k.startswith("@") else onboard.ONB + k): v for k, v in doc.items()}
         full["@type"] = onboard.ONB + "Entitlement"
         found = onboard.entitlements({"@graph": [full]}, NODE_FP)
         self.assertEqual([e.gonk_grants for e in found], [["default=worker"]])
+        self.assertEqual(found[0].request, "urn:layer:enroll:entry:1")
+        self.assertEqual(found[0].layer_grants, [("tasks", ["read", "out", "take"])])
 
     # -- the identity
 

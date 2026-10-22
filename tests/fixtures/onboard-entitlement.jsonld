@@ -1,0 +1,77 @@
+{
+  "@context": {
+    "onb": "https://ikigai-rs.dev/ns/onboard#",
+    "ik": "https://ikigai-rs.dev/ns#",
+    "dcterms": "http://purl.org/dc/terms/",
+    "prov": "http://www.w3.org/ns/prov#",
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+    "Entitlement": "onb:Entitlement",
+    "fingerprint": "onb:fingerprint",
+    "principal": {
+      "@id": "onb:principal",
+      "@type": "@id"
+    },
+    "kind": {
+      "@id": "onb:kind",
+      "@type": "@id"
+    },
+    "request": {
+      "@id": "onb:request",
+      "@type": "@id"
+    },
+    "layerGrant": {
+      "@id": "onb:layerGrant",
+      "@type": "@id",
+      "@container": "@set"
+    },
+    "gonkGrant": {
+      "@id": "onb:gonkGrant",
+      "@container": "@set"
+    },
+    "router": {
+      "@id": "onb:router",
+      "@container": "@set"
+    },
+    "gonkDoor": "onb:gonkDoor",
+    "gonkServerCert": "onb:gonkServerCert",
+    "expires": {
+      "@id": "onb:expires",
+      "@type": "xsd:dateTime"
+    },
+    "supersedes": {
+      "@id": "ik:supersedes",
+      "@type": "@id"
+    },
+    "signature": "onb:signature",
+    "attributedTo": {
+      "@id": "prov:wasAttributedTo",
+      "@type": "@id"
+    },
+    "created": {
+      "@id": "dcterms:created",
+      "@type": "xsd:dateTime"
+    },
+    "seq": {
+      "@id": "ik:seq",
+      "@type": "xsd:integer"
+    }
+  },
+  "@graph": [
+    {
+      "@id": "urn:layer:grants:entry:1",
+      "@type": "Entitlement",
+      "fingerprint": "479c747f47c1416884256554a26f0338fc24fc27832139d475f648915135c4f7",
+      "principal": "urn:collab:participant:mini",
+      "kind": "urn:iki:onboard:kind:task-member",
+      "request": "urn:layer:enroll:entry:1",
+      "gonkGrant": [
+        "default=worker"
+      ],
+      "layerGrant": [
+        "urn:cap:layer:read:tasks",
+        "urn:cap:layer:out:tasks",
+        "urn:cap:layer:take:tasks"
+      ]
+    }
+  ]
+}

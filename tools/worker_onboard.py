@@ -59,6 +59,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 ONB = "https://ikigai-rs.dev/ns/onboard#"
+IK = "https://ikigai-rs.dev/ns#"
 ENROLLED, ERROR, CONFIG, NOT_YET = 0, 1, 2, 3
 
 # One resource family for both halves: the layer door hosts `enroll`, `grants` and the task
@@ -249,10 +250,10 @@ def write_state(identity: Path, state: dict) -> None:
 # --------------------------------------------------------------------------- entitlements
 
 
-def _values(node: dict, local: str) -> list:
+def _values(node: dict, local: str, namespace: str = ONB, prefix: str = "onb") -> list:
     """A property's values, whatever the egress context compacted its name to: the bare term,
     `onb:` + term, or the full IRI."""
-    for key in (local, f"onb:{local}", ONB + local):
+    for key in (local, f"{prefix}:{local}", namespace + local):
         if key in node:
             v = node[key]
             return v if isinstance(v, list) else [v]
@@ -284,6 +285,7 @@ class Entitlement:
     routers: list[str]
     supersedes: list[str]
     expires: str | None
+    request: str | None = None
 
     @property
     def revocation(self) -> bool:
@@ -297,29 +299,39 @@ def entitlements(doc, fingerprint: str) -> list[Entitlement]:
     else:
         nodes = doc if isinstance(doc, list) else []
     nodes = [n for n in nodes if isinstance(n, dict)]
-    by_id = {n["@id"]: n for n in nodes if isinstance(n.get("@id"), str)}
     found = []
     for n in nodes:
         if not _is(n, "Entitlement"):
             continue
         if fingerprint not in [(_text(v) or "").lower() for v in _values(n, "fingerprint")]:
             continue
-        layer_grants = []
+        layer_grants: dict[str, list[str]] = {}
         for g in _values(n, "layerGrant"):
-            grant = by_id.get(g.get("@id"), g) if isinstance(g, dict) else by_id.get(g, {})
-            layer = next((_text(v) for v in _values(grant, "layer")), None)
-            verbs = [t for t in map(_text, _values(grant, "verb")) if t]
-            if layer:
-                layer_grants.append((layer, verbs))
+            cap = g.get("@id") if isinstance(g, dict) else g
+            match = (
+                re.fullmatch(
+                    r"urn:cap:layer:(read|feed|say|out|take):([a-z0-9](?:[a-z0-9-]{0,22}[a-z0-9])?)",
+                    cap,
+                )
+                if isinstance(cap, str)
+                else None
+            )
+            if not match:
+                raise Refused(f"onb:layerGrant {g!r} is not urn:cap:layer:{{verb}}:{{layer}}")
+            verb, layer = match.groups()
+            verbs = layer_grants.setdefault(layer, [])
+            if verb not in verbs:
+                verbs.append(verb)
         found.append(
             Entitlement(
                 iri=n.get("@id", ""),
                 kind=next((_text(v) for v in _values(n, "kind")), None),
                 principal=next((_text(v) for v in _values(n, "principal")), None),
                 gonk_grants=[t for t in map(_text, _values(n, "gonkGrant")) if t],
-                layer_grants=layer_grants,
+                layer_grants=list(layer_grants.items()),
                 routers=[t for t in map(_text, _values(n, "router")) if t],
-                supersedes=[t for t in map(_text, _values(n, "supersedes")) if t],
+                supersedes=[t for t in map(_text, _values(n, "supersedes", IK, "ik")) if t],
+                request=next((_text(v) for v in _values(n, "request")), None),
                 expires=next((_text(v) for v in _values(n, "expires")), None),
             )
         )
