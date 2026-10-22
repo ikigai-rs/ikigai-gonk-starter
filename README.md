@@ -53,7 +53,8 @@ shared gets a forge, and its pull requests, before its first hand-back.
 That is the whole protocol, and [`AGENTS.md`](AGENTS.md) states its rules: claim before you
 write, one agent per item and per working tree, reproduce before you fix, every change
 through a pull request with green CI, evidence on every report and close, and never a bare
-`#N`. Every agent reads that one file.
+`#N`. Every agent reads that one file. New features are designed resource-first, names first
+and code last, by the method in [`docs/resource-design.md`](docs/resource-design.md).
 
 ## What is in it
 
@@ -79,6 +80,7 @@ templates/               what new.py generates from: the sample, and one directo
 hooks/claude/            an OPTIONAL Claude Code hook that refuses edits without a claim
 worker/                  set up a machine that does agentic work for a hub, check it, run the loop
 docs/windows.md          Windows: WSL2, and what each agent does there
+docs/resource-design.md  how to design a feature resource-first: names first, code last
 .gitattributes           LF in every checkout, whatever core.autocrlf says
 ```
 

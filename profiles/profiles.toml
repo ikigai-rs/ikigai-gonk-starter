@@ -29,6 +29,7 @@ sections = [
     "bare-numbers",
     "accessibility",
     "layout",
+    "design-resource-first",
     "spec-first",
     "workers",
     "hub",
@@ -50,6 +51,7 @@ sections = [
     "bare-numbers",
     "accessibility",
     "layout",
+    "design-resource-first",
     "claude-hook",
 ]
 # The optional Claude Code hook that refuses an edit without a claim (hooks/claude/). Every

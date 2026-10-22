@@ -1,0 +1,6 @@
+guide:design-resource-first a harness:Guide ;
+    rdfs:label "design resource-first" ;
+    rdfs:comment "Before designing a new feature, endpoint family or app, do the resource-first pass (names first, code last) and put a `## Resource map` in the spec change, or the pull request when there is no spec; `docs/resource-design.md` is the method." ;
+    harness:statedIn "AGENTS.md" ; harness:section "Design resource-first" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:toolCall ; harness:category harness:architectureFitness .

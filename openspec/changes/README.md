@@ -10,6 +10,10 @@ changes/<change-id>/
 └── tasks.md             the checklist that implements it
 ```
 
+A `proposal.md` for a new feature, endpoint family or app may also carry an optional
+`## Resource map` heading: the sets, atoms and compositions it is designed as, names before
+code (see `docs/resource-design.md`).
+
 When a change is done it is archived: its deltas merge into `specs/`, and its folder moves
 to `changes/archive/<date>-<id>/`. So at any moment this directory is exactly the work in
 flight, which is what the ledger's items are filed from.

@@ -60,6 +60,7 @@ STARTER_FILES = [
     ".gitignore",
     ".gitattributes",
     "docs/windows.md",
+    "docs/resource-design.md",
     "tools/gonk.py",
     "tools/harness.py",
     "hooks/claude/README.md",

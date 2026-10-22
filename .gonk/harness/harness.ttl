@@ -261,6 +261,15 @@ ctl:init-report a harness:Control ;
     harness:enforcedAt "tools/gonk.py#cmd_init" ;
     harness:statedBy guide:artifacts-line-true , guide:publish-through-init .
 
+# ── design-resource-first (profiles/harness/design-resource-first.ttl)
+
+guide:design-resource-first a harness:Guide ;
+    rdfs:label "design resource-first" ;
+    rdfs:comment "Before designing a new feature, endpoint family or app, do the resource-first pass (names first, code last) and put a `## Resource map` in the spec change, or the pull request when there is no spec; `docs/resource-design.md` is the method." ;
+    harness:statedIn "AGENTS.md" ; harness:section "Design resource-first" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:toolCall ; harness:category harness:architectureFitness .
+
 # ── spec-first (profiles/harness/spec-first.ttl)
 
 guide:change-starts-as-a-folder a harness:Guide ;

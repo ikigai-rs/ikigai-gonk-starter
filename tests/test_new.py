@@ -559,5 +559,46 @@ class Accessibility(unittest.TestCase):
         self.assertNotEqual(own, (ROOT / "templates" / "library" / "ACCESSIBILITY.md").read_text())
 
 
+RESOURCE_FIRST_RULE = "do the resource-first pass"
+
+
+class ResourceFirst(unittest.TestCase):
+    """Every generated repository, whatever its process, carries the resource-first method
+    and the AGENTS.md section that points every agent at it, before `Spec first`."""
+
+    def test_every_process_carries_the_method_and_the_rule(self):
+        doc = (ROOT / "docs" / "resource-design.md").read_text(encoding="utf-8")
+        for process in [None, ["solo"], ["hub"], ["workers"], ["audits"]]:
+            repo = scratch(self)
+            new.generate(repo, "python", process)
+            label = ",".join(process or ["default"])
+            self.assertEqual((repo / "docs" / "resource-design.md").read_text(), doc, label)
+            agents = (repo / "AGENTS.md").read_text()
+            self.assertIn("## Design resource-first", agents, label)
+            self.assertIn(RESOURCE_FIRST_RULE, agents, label)
+            self.assertIn("docs/resource-design.md", agents, label)
+            if "## Spec first" in agents:
+                self.assertLess(
+                    agents.index("## Design resource-first"), agents.index("## Spec first"), label
+                )
+            harness = (repo / ".gonk" / "harness" / "harness.ttl").read_text()
+            self.assertIn("guide:design-resource-first", harness, label)
+
+    def test_the_method_names_its_steps_and_its_sources(self):
+        doc = (ROOT / "docs" / "resource-design.md").read_text(encoding="utf-8")
+        for step in ["Sets.", "Atoms.", "Compositions.", "Spaces:", "Views."]:
+            self.assertIn(f"**{step}", doc, step)
+        self.assertIn("names first, code last", doc)
+        self.assertIn("## Resource map", doc)
+        self.assertIn("Peter Rodgers", doc)
+        self.assertIn("Tony Butterfield", doc)
+        self.assertIn("https://ikigai-rs.github.io/ikigai-tutorial/", doc)
+
+    def test_the_change_folder_skeleton_offers_a_resource_map(self):
+        text = (ROOT / "openspec" / "changes" / "README.md").read_text(encoding="utf-8")
+        self.assertIn("## Resource map", text)
+        self.assertIn("docs/resource-design.md", text)
+
+
 if __name__ == "__main__":
     unittest.main()
