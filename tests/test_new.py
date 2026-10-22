@@ -162,6 +162,21 @@ class Generate(unittest.TestCase):
         self.assertIn("this starter has deno, go, python, rust", str(refused.exception))
 
 
+class OutsideTheStarter(unittest.TestCase):
+    def test_a_copy_outside_the_starter_refuses_in_one_sentence(self):
+        """A hand copy of new.py in a generated repository has no profiles/ to read."""
+        repo = scratch(self)
+        (repo / "tools").mkdir(parents=True)
+        shutil.copy(ROOT / "tools" / "new.py", repo / "tools" / "new.py")
+        done = subprocess.run(
+            [sys.executable, "tools/new.py", "--help"], cwd=repo, capture_output=True, text=True
+        )
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        self.assertIn("new.py: runs only in ikigai-gonk-starter", done.stderr)
+        self.assertIn("no profiles/profiles.toml here", done.stderr)
+        self.assertNotIn("Traceback", done.stderr)
+
+
 class GenerateRust(unittest.TestCase):
     """`--target rust`: the same sample, the same vectors, in one cargo workspace.
 
