@@ -439,7 +439,12 @@ agent's home: it refuses a work root anywhere else, and refuses to run as root.
     python3 tools/worker.py run --once                            # one item, then exit
 
 `init` and the enrollment are the top-level README's "gonk on another machine"; the claims
-then carry this machine's identity and are stamped a machine's. That is one loop running one
+then carry this machine's identity and are stamped a machine's. The loop uses the regular
+`ikigai` client, not `ikigai mcp`. If you also configure an agent with the MCP command
+that `init` prints, first create the local `agent` grant using the
+[top-level README's MCP setup](../README.md#one-transport-and-mcp-for-agents), with
+its unattended worker scopes; the certificate enrollment alone does not create that
+client-side grant. That is one loop running one
 agent. A machine with several agents runs a loop per agent instead (next), from this same
 checkout; the configuration and everything after it below hold for each loop. ⚠ The ssh tunnel in step 7
 forwards **TCP**, which carries gonk's HTTP door. gonk's machine door is **QUIC, which is

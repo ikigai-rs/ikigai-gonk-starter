@@ -78,11 +78,16 @@ class Targets(unittest.TestCase):
             quic.mount_args(), ["--mount", "urn:gk:=quic://box:1062", "--cert-dir", "/c"]
         )
 
-    def test_mcp_uses_the_ledgers_own_names(self):
+    def test_mcp_uses_the_ledgers_own_names_under_an_explicit_grant(self):
+        sock = gonk.Target(socket="/s/gonk.sock")
+        self.assertEqual(
+            sock.mcp_command(),
+            "ikigai mcp --grant agent --override urn:iki:ledger:=/s/gonk.sock",
+        )
         quic = gonk.Target(quic="quic://box:1062", cert_dir="/c")
         self.assertEqual(
             quic.mcp_command(),
-            "ikigai mcp --override urn:iki:ledger:=quic://box:1062 --cert-dir /c",
+            "ikigai mcp --grant agent --override urn:iki:ledger:=quic://box:1062 --cert-dir /c",
         )
 
     def test_a_transport_without_its_details_is_refused(self):
@@ -269,7 +274,7 @@ class Init(unittest.TestCase):
             out,
         )
         self.assertNotIn("stay files in this repository; nothing", out.split("absent   nl")[1])
-        self.assertIn("ikigai mcp --override urn:iki:ledger:=", out)
+        self.assertIn("ikigai mcp --grant agent --override urn:iki:ledger:=", out)
 
     def test_a_ledger_with_nothing_filed_is_a_note_not_a_failure(self):
         repo = scratch_repo(self)

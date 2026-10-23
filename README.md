@@ -302,8 +302,32 @@ resolve against something bound in the local `ikigai` by accident. The `ikigai` 
 fetches each resource's contract from gonk before it sends, so arguments are routed by the
 ledger's own declarations rather than by this script's guesses.
 
+Before configuring MCP, create a local grant named `agent` on the machine running the
+MCP server. Add this entry to `~/.config/ikigai/grants.json` (or
+`$XDG_CONFIG_HOME/ikigai/grants.json`), preserving any existing entries. This example
+allows a person's agent to work on ledger `acme`; replace `acme` in every scope with
+your ledger's name:
+
+```json
+{
+  "agent": [
+    "urn:cap:ledger:read:acme",
+    "urn:cap:store:read:graph:urn:iki:ledger:graph:acme",
+    "urn:cap:ledger:write:acme",
+    "urn:cap:store:write:graph:urn:iki:ledger:graph:acme"
+  ]
+}
+```
+
+For an unattended worker's MCP session, replace `urn:cap:ledger:write:acme` with
+`urn:cap:ledger:claim:acme` and `urn:cap:ledger:comment:acme`, keeping the other three
+scopes. That permits claims, renewals, releases and comments without filing, closing
+or relabeling items. This **local client ceiling** is separate from the grant gonk's
+operator creates for the machine certificate: over QUIC both ceilings apply. `init`
+prints the MCP command but does not create or modify this local grants file.
+
 An agent that speaks MCP is configured with `ikigai mcp`, which `init` prints for your
-transport, for example `ikigai mcp --override urn:iki:ledger:=quic://gonk-host:1062
+transport, for example `ikigai mcp --grant agent --override urn:iki:ledger:=quic://gonk-host:1062
 --cert-dir ~/gonk-cert`. Its tools are the ledger's own actions (`ledger-next__source`,
 `ledger-claim__sink`, …) filtered by the capability the session holds, so an agent is never
 offered what it may not do. The [gonk Book's MCP chapter](https://ikigai-rs.github.io/ikigai-tutorial/gonk/agent/mcp.html)

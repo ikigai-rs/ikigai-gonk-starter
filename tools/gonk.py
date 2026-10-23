@@ -187,10 +187,14 @@ class Target:
 
     def mcp_command(self) -> str:
         """The command an MCP client is configured with: the ledger's own names, over
-        `--override`, so every `urn:iki:ledger:*` goes to gonk and nowhere else."""
+        `--override`, under the local `agent` grant described in README.md, so every
+        `urn:iki:ledger:*` goes to gonk and nowhere else."""
         if self.socket:
-            return f"ikigai mcp --override urn:iki:ledger:={self.socket}"
-        return f"ikigai mcp --override urn:iki:ledger:={self.quic} --cert-dir {self.cert_dir}"
+            return f"ikigai mcp --grant agent --override urn:iki:ledger:={self.socket}"
+        return (
+            f"ikigai mcp --grant agent --override urn:iki:ledger:={self.quic}"
+            f" --cert-dir {self.cert_dir}"
+        )
 
 
 @dataclass
