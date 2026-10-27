@@ -588,6 +588,20 @@ and the item's one `repo:` label. Over QUIC, gonk names the dispatching machine 
 (`--as` may name only that machine). Over the owner's socket nothing names anyone, so `--as`
 is required there: the principal the dispatch is from, as the workers' `routers` list it.
 
+Before it writes anything it checks the item (ledger item 2394), because a dispatch no worker
+will act on sits unexplained:
+
+- It **refuses** an item that is not open, and one handed back and awaiting its dispatcher:
+  that is a review (check the evidence, then close it or `reject` it), not a dispatch.
+- It **refuses** an item an open item blocks, naming the blockers, as `next` reports them
+  (`why: blocked`, `blocked_by`): `next` never offers a blocked item, so no worker would take
+  it. `--allow-blocked --note "<why>"` dispatches it anyway, and the dispatch comment carries
+  `Dispatched while blocked by <ledger>#N: <why>` after its two routing lines.
+- It **warns**, and still dispatches, when no worker whose labels the item will carry lists
+  the item's repository in the newest `Worker:` line on its status item (below). The status
+  items are `--status-item N` (repeatable), else `status_items = [N, …]` in `.gonk/gonk.toml`;
+  with none, or no line for a worker with those labels, it says the check could not run.
+
 The worker takes an item only when the **newest** dispatch whose author is one of its
 `routers` names every label in its `labels` and the item's `repo:` label, and its digest
 matches the item's title and body as they are now. It checks that when it chooses, and again on

@@ -536,21 +536,8 @@ def active_claim(item: dict, now: datetime) -> str | None:
     return holder
 
 
-def awaiting_dispatcher(item: dict) -> bool:
-    """The item waits for its dispatcher to check the evidence and close it.
-
-    The ledger's own state first: an item the worker handed back with `handback=true` carries
-    `awaiting: dispatcher` in its JSON (ledger 0.8.0, ledger item 1199), which no later
-    comment of the worker's clears and only the dispatcher can. A ledger older than 0.8.0 has
-    no such field — the key is absent, not null — so the prefix in the newest comment is the
-    fallback: an `Evidence:` hand-back, and any later comment (the dispatcher saying why the
-    evidence did not hold) makes the item ready again. `awaiting` is `null` on a 0.8.0 ledger
-    whose state was cleared, which the prefix must NOT override: the dispatcher has spoken.
-    """
-    if "awaiting" in item:
-        return item.get("awaiting") == "dispatcher"
-    comments = sorted(item.get("comments") or [], key=lambda c: c.get("time") or "")
-    return bool(comments) and (comments[-1].get("text") or "").startswith("Evidence:")
+# The hand-back state, read the same by the worker and by `gonk.py dispatch` (ledger item 2394).
+awaiting_dispatcher = gonk.awaiting_dispatcher
 
 
 def repo_labels(item: dict) -> list[str]:

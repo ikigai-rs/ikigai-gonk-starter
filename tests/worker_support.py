@@ -76,6 +76,7 @@ class FakeLedger:
             "claim": None,
             "comments": [],
             "awaiting": None,
+            "links": [],
         }
         if dispatched_by is not None:
             self.dispatch(number, dispatched_by)
@@ -85,6 +86,24 @@ class FakeLedger:
         item = self.items[number]
         text = gonk.dispatch_text(labels or item["labels"], item["title"], item["body"])
         self.add_comment(number, text, author=author)
+
+    def block(self, blocker: int, blocked: int) -> None:
+        """`blocker` blocks `blocked`: the outbound link on the blocker, as the ledger keeps it."""
+        target = self.items[blocked]
+        self.items[blocker]["links"].append(
+            {"type": "blocks", "target": {"number": blocked, "iri": target["iri"]}}
+        )
+
+    def open_blockers(self, number: int) -> list[int]:
+        return [
+            n
+            for n, it in sorted(self.items.items())
+            if it["status"] == "open"
+            and any(
+                link["type"] == "blocks" and link["target"]["number"] == number
+                for link in it["links"]
+            )
+        ]
 
     def human_comments(self, number: int) -> list[dict]:
         """The item's comments less its dispatches: what the worker and others wrote."""
@@ -160,6 +179,17 @@ class FakeLedger:
                         {
                             "why": "awaiting-dispatcher",
                             "reason": "handed back, awaiting the dispatcher",
+                            "item": served(item),
+                        }
+                    )
+                elif self.open_blockers(n):
+                    # Blocked is a fact about the whole ledger, whatever the filter (0.2.1).
+                    by = self.open_blockers(n)
+                    excluded.append(
+                        {
+                            "why": "blocked",
+                            "reason": "blocked by " + ", ".join(f"#{b}" for b in by),
+                            "blocked_by": by,
                             "item": served(item),
                         }
                     )

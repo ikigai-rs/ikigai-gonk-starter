@@ -314,9 +314,13 @@ def brief_digest(title: str | None, body: str | None) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def dispatch_text(labels: list[str], title: str | None, body: str | None) -> str:
-    """The dispatch comment for these routing labels and this brief."""
-    return f"{DISPATCH_PREFIX} {' '.join(labels)}\nbrief: sha256:{brief_digest(title, body)}"
+def dispatch_text(
+    labels: list[str], title: str | None, body: str | None, note: str | None = None
+) -> str:
+    """The dispatch comment for these routing labels and this brief, and the dispatcher's note
+    after a blank line when there is one (a worker reads only the first two lines)."""
+    text = f"{DISPATCH_PREFIX} {' '.join(labels)}\nbrief: sha256:{brief_digest(title, body)}"
+    return text + (f"\n\n{note}" if note else "")
 
 
 def parse_dispatch(text: str) -> tuple[list[str], str | None] | None:
@@ -364,6 +368,33 @@ def parse_worker_status(text: str) -> dict | None:
             continue
         status[key] = [v for v in value.split(",") if v] if key in WORKER_STATUS_LISTS else value
     return status if "holder" in status else None
+
+
+def worker_statuses(comments: list[dict]) -> list[dict]:
+    """The newest status line of each worker loop (holder and loop) among these comments."""
+    newest: dict[tuple, dict] = {}
+    for c in sorted(comments, key=lambda c: c.get("time") or ""):
+        status = parse_worker_status(c.get("text") or "")
+        if status:
+            newest[(status["holder"], status.get("loop"))] = status
+    return list(newest.values())
+
+
+def awaiting_dispatcher(item: dict) -> bool:
+    """The item waits for its dispatcher to check the evidence and close it.
+
+    The ledger's own state first: an item the worker handed back with `handback=true` carries
+    `awaiting: dispatcher` in its JSON (ledger 0.8.0, ledger item 1199), which no later
+    comment of the worker's clears and only the dispatcher can. A ledger older than 0.8.0 has
+    no such field — the key is absent, not null — so the prefix in the newest comment is the
+    fallback: an `Evidence:` hand-back, and any later comment (the dispatcher saying why the
+    evidence did not hold) makes the item ready again. `awaiting` is `null` on a 0.8.0 ledger
+    whose state was cleared, which the prefix must NOT override: the dispatcher has spoken.
+    """
+    if "awaiting" in item:
+        return item.get("awaiting") == "dispatcher"
+    comments = sorted(item.get("comments") or [], key=lambda c: c.get("time") or "")
+    return bool(comments) and (comments[-1].get("text") or "").startswith("Evidence:")
 
 
 PEM_CERT = re.compile(r"-----BEGIN CERTIFICATE-----\s*(.+?)\s*-----END CERTIFICATE-----", re.DOTALL)
@@ -1762,16 +1793,48 @@ def cmd_dispatch(args, cfg: Config, make_ikigai) -> int:
             "and no worker would take it: pass --as <your principal> (your passkey's or your "
             "machine's IRI, as the workers' `routers` list it)"
         )
+    note = (args.note or "").strip()
+    if args.allow_blocked and not note:
+        raise ConfigError(
+            "--allow-blocked needs --note: why this item is dispatched although the ledger says "
+            "it is blocked, recorded in the dispatch for whoever reads it next"
+        )
     ikigai = make_ikigai(cfg.target)
     item, err = item_json(cfg, ikigai, args.item)
     if item is None:
         raise ConfigError(f"could not read item {args.item}: {err}")
+    display = item.get("display") or f"{cfg.ledger}#{args.item}"
+    if item.get("status", "open") != "open":
+        raise ConfigError(f"{display} is {item.get('status')}: only an open item is dispatched")
+    if awaiting_dispatcher(item):
+        raise ConfigError(
+            f"{display} is awaiting its dispatcher (handed back with evidence): that is a "
+            "review, not a dispatch. Check the evidence, then close it, or `reject` it with a "
+            "--note and dispatch it again"
+        )
     repos = [w for w in item.get("labels") or [] if w.startswith("repo:")]
     if len(repos) != 1:
         raise ConfigError(
             f"item {args.item} has {len(repos)} `repo:` labels; a worker works in exactly one "
             "repository, so label it with one first"
         )
+    blockers, err = open_blockers(cfg, ikigai, args.item, repos[0])
+    if err:
+        raise ConfigError(
+            f"could not ask `next` whether {display} is blocked ({err}); a blocked item is "
+            "never offered to a worker, so this does not dispatch without knowing"
+        )
+    named_blockers = ", ".join(f"{cfg.ledger}#{n}" for n in blockers)
+    if blockers and not args.allow_blocked:
+        raise ConfigError(
+            f"{display} is blocked by {named_blockers}: `next` never offers a blocked item, so "
+            "no worker would take it. Close the blocker first, or dispatch it anyway with "
+            '--allow-blocked --note "<why>"'
+        )
+    if blockers:
+        note = f"Dispatched while blocked by {named_blockers}: {note}"
+    for line in worker_coverage(cfg, ikigai, args, labels, repos[0]):
+        print(line, file=sys.stderr)
     for label in labels:
         if label in (item.get("labels") or []):
             continue
@@ -1779,11 +1842,79 @@ def cmd_dispatch(args, cfg: Config, make_ikigai) -> int:
         if not answer.ok:
             return show(answer)
     named = [w for w in labels if not w.startswith("repo:")] + repos
-    text = dispatch_text(named, item.get("title"), item.get("body"))
+    text = dispatch_text(named, item.get("title"), item.get("body"), note or None)
     words = [f"sink {cfg.resource('comment')} item={args.item}"]
     if author:
         words.append(f"author={author}")
     return show(ikigai.run(" ".join(words), stdin=text))
+
+
+def open_blockers(
+    cfg: Config, ikigai: Ikigai, number: int, repo: str
+) -> tuple[list[int], str | None]:
+    """The numbers of the open items that block this one, as `next` says when it excludes it
+    (`why: blocked`, `blocked_by`). The ledger computes blocked over the whole ledger before a
+    filter narrows it (ikigai-ledger 0.2.1), so asking about the item's repository alone still
+    sees a blocker of another repository; and an item `next` excludes for another reason
+    first (claimed, deferred) shows no blockers here."""
+    answer = ikigai.run(f"source {cfg.resource('next')} labels={repo} limit=1 as=application/json")
+    if not answer.ok:
+        return [], answer.text() or f"exit {answer.code}"
+    try:
+        excluded = json.loads(answer.out).get("excluded") or []
+    except (ValueError, AttributeError) as e:
+        return [], f"its JSON face did not parse: {e}"
+    for entry in excluded:
+        if (entry.get("item") or {}).get("number") == number and entry.get("why") == "blocked":
+            return [int(n) for n in entry.get("blocked_by") or []], None
+    return [], None
+
+
+def worker_coverage(cfg: Config, ikigai: Ikigai, args, labels: list[str], repo: str) -> list[str]:
+    """Warnings, never refusals: whether a worker that takes these labels lists the item's
+    repository on its status item (`Worker:` lines, ledger item 2393). A worker takes only items
+    carrying every label it names, so a worker matches when its labels are among the item's
+    labels once dispatched. The status items are `--status-item`, else `status_items` in
+    .gonk/gonk.toml; with none, or no line for a matching worker, the check cannot run, and
+    that is said too."""
+    name = repo[len("repo:") :]
+    items = args.status_item or read_toml(cfg.gonk_toml).get("status_items") or []
+    if not isinstance(items, list) or not all(
+        isinstance(n, int) and not isinstance(n, bool) for n in items
+    ):
+        raise ConfigError(f"{cfg.gonk_toml}: `status_items` is a list of item numbers")
+    if not items:
+        return [
+            f"warning: could not check that a worker lists repository `{name}`: no status item "
+            "named (--status-item N, or `status_items = [N]` in .gonk/gonk.toml)"
+        ]
+    lines, statuses = [], []
+    for n in items:
+        status_item, err = item_json(cfg, ikigai, n)
+        if status_item is None:
+            lines.append(f"warning: could not read status item {cfg.ledger}#{n}: {err}")
+            continue
+        statuses += worker_statuses(status_item.get("comments") or [])
+    carried = set(labels) | {repo}
+    matching = [s for s in statuses if set(s.get("labels") or []) <= carried]
+    where = ", ".join(f"{cfg.ledger}#{n}" for n in items)
+    if not matching:
+        return lines + [
+            f"warning: could not check that a worker lists repository `{name}`: no `Worker:` "
+            f"line for a worker with labels {','.join(labels)} on {where}"
+        ]
+    if any(name in (s.get("repos") or []) for s in matching):
+        return lines
+    listed = "; ".join(
+        f"{s['holder']}{'/' + s['loop'] if s.get('loop') else ''} lists "
+        f"{', '.join(sorted(s.get('repos') or [])) or 'none'}"
+        for s in matching
+    )
+    return lines + [
+        f"warning: no worker with labels {','.join(labels)} lists repository `{name}` on "
+        f"{where} ({listed}): it will skip the item until one does. Add a [repos.{name}] "
+        "block to that worker's .gonk/worker.toml"
+    ]
 
 
 def cmd_close(args, cfg: Config, make_ikigai) -> int:
@@ -2107,6 +2238,19 @@ def parser() -> argparse.ArgumentParser:
         "--as",
         dest="as_principal",
         help="the principal the dispatch is from; required over the socket, which names nobody",
+    )
+    s.add_argument(
+        "--allow-blocked",
+        action="store_true",
+        help="dispatch although an open item blocks it (needs --note)",
+    )
+    s.add_argument("--note", help="why, recorded in the dispatch comment")
+    s.add_argument(
+        "--status-item",
+        type=int,
+        action="append",
+        help="a worker status item to check the repository against (repeatable; default: "
+        "`status_items` in .gonk/gonk.toml)",
     )
     s.set_defaults(run=cmd_dispatch)
 
