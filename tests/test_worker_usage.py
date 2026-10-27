@@ -128,7 +128,9 @@ class InTheLoop(unittest.TestCase):
         self.assertIn("agent=claude", comment["text"])
         self.assertIn("percent=90", comment["text"])
         self.assertIsNone(self.ledger.items[self.item]["claim"])
-        self.assertEqual(self.ledger.human_comments(self.item), [])
+        # The item dispatched here is told why it waits, once (ledger item 2393).
+        [note] = self.ledger.human_comments(self.item)
+        self.assertIn("90% of its weekly limit", note["text"])
 
     def test_under_the_threshold_works_the_item(self):
         w, outcome = self.run_with('{"percent": 10}')
