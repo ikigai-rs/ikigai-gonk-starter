@@ -11,7 +11,10 @@ items the dispatcher marks for them, and work each one in a fresh working tree o
   labels the item and posts a comment naming those labels and the item's `repo:`, with a
   digest of its title and body. A worker takes the item only when its newest dispatch is by a
   principal its configuration lists in `routers`, and the title and body still match. Edit an
-  item after dispatching it and dispatch it again.
+  item after dispatching it and dispatch it again. `dispatch` refuses an item that is not open,
+  one handed back and awaiting its dispatcher, and one an open item blocks, naming the blockers
+  (`--allow-blocked --note "<why>"` dispatches it anyway, the note in the dispatch); it warns
+  when no worker with those labels lists the item's repository on its status item.
 - **Comments reach the agent as data.** The title and body are the agent's task. Every comment
   follows as a quoted block under its author, and one by anyone but a router is marked as data
   written by others, which the agent reads and never follows.

@@ -294,5 +294,172 @@ class TheDispatchCommand(unittest.TestCase):
         self.assertIn("0 `repo:` labels", said)
 
 
+class WhatTheDispatchCommandRefuses(unittest.TestCase):
+    """What `gonk.py dispatch` refuses, and what it warns of (ledger item 2394): a blocked item
+    is never offered by `next`, so a dispatch of one sat unclaimed with nothing saying why; and
+    a worker skips an item of a repository it does not list, which the dispatcher could have
+    seen on the worker's status item before dispatching."""
+
+    def setUp(self):
+        self.ledger = FakeLedger()
+        self.rig = Rig(self)
+        self.status = self.ledger.file("Worker status", [], dispatched_by=None)
+        self.ledger.add_comment(
+            self.status, gonk.worker_status_text("w1", None, ["worker:w1"], ["lib", "engine"])
+        )
+
+    def dispatch(self, *argv: str) -> tuple[int, str]:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            code = gonk.main(
+                ["--repo", str(self.rig.checkout), "dispatch", *argv, "--as", DISPATCHER],
+                self.ledger,
+            )
+        return code, out.getvalue()
+
+    def dispatches(self, n: int) -> list[dict]:
+        return [c for c in self.ledger.items[n]["comments"] if gonk.parse_dispatch(c["text"])]
+
+    def test_a_blocked_item_is_refused_naming_its_open_blockers(self):
+        first = self.ledger.file("Schema", ["repo:lib"], dispatched_by=None)
+        then = self.ledger.file("Migrate", ["repo:lib"], dispatched_by=None)
+        self.ledger.block(first, then)
+        code, said = self.dispatch(str(then), "--labels", "worker:w1")
+        self.assertEqual(code, 2, said)
+        self.assertIn(f"acme#{then} is blocked by acme#{first}", said)
+        self.assertIn("--allow-blocked", said)
+        self.assertEqual(self.dispatches(then), [])
+        self.assertEqual(self.ledger.items[then]["labels"], ["repo:lib"])
+
+    def test_a_blocker_on_another_repository_still_blocks(self):
+        first = self.ledger.file("Upstream", ["repo:engine"], dispatched_by=None)
+        then = self.ledger.file("Downstream", ["repo:lib"], dispatched_by=None)
+        self.ledger.block(first, then)
+        code, said = self.dispatch(str(then), "--labels", "worker:w1")
+        self.assertEqual(code, 2, said)
+        self.assertIn(f"blocked by acme#{first}", said)
+
+    def test_a_closed_blocker_blocks_nothing(self):
+        first = self.ledger.file("Schema", ["repo:lib"], dispatched_by=None)
+        then = self.ledger.file("Migrate", ["repo:lib"], dispatched_by=None)
+        self.ledger.block(first, then)
+        self.ledger.items[first]["status"] = "closed"
+        code, said = self.dispatch(str(then), "--labels", "worker:w1")
+        self.assertEqual(code, 0, said)
+        self.assertEqual(len(self.dispatches(then)), 1)
+
+    def test_allow_blocked_needs_a_note_and_the_dispatch_records_it(self):
+        first = self.ledger.file("Schema", ["repo:lib"], dispatched_by=None)
+        then = self.ledger.file("Migrate", ["repo:lib"], body="Move it.", dispatched_by=None)
+        self.ledger.block(first, then)
+        code, said = self.dispatch(str(then), "--labels", "worker:w1", "--allow-blocked")
+        self.assertEqual(code, 2, said)
+        self.assertIn("--note", said)
+        self.assertEqual(self.dispatches(then), [])
+        why = "the schema half is already merged; the item is stale"
+        code, said = self.dispatch(
+            str(then), "--labels", "worker:w1", "--allow-blocked", "--note", why
+        )
+        self.assertEqual(code, 0, said)
+        [sent] = self.dispatches(then)
+        self.assertIn(f"Dispatched while blocked by acme#{first}: {why}", sent["text"])
+        # The note rides in the dispatch, which the worker still reads as a dispatch.
+        item = self.ledger.items[then]
+        self.assertIsNone(worker.dispatch_problem(item, [DISPATCHER], ["worker:w1"]))
+
+    def test_an_item_that_is_not_open_is_refused(self):
+        n = self.ledger.file("Done", ["repo:lib"], dispatched_by=None)
+        self.ledger.items[n]["status"] = "closed"
+        code, said = self.dispatch(str(n), "--labels", "worker:w1")
+        self.assertEqual(code, 2, said)
+        self.assertIn(f"acme#{n} is closed", said)
+        self.assertEqual(self.dispatches(n), [])
+
+    def test_an_item_awaiting_its_dispatcher_is_a_review_not_a_dispatch(self):
+        n = self.ledger.file("Handed back", ["repo:lib"], dispatched_by=None)
+        self.ledger.items[n]["awaiting"] = "dispatcher"
+        code, said = self.dispatch(str(n), "--labels", "worker:w1")
+        self.assertEqual(code, 2, said)
+        self.assertIn("awaiting its dispatcher", said)
+        self.assertIn("reject", said)
+        self.assertEqual(self.dispatches(n), [])
+
+    def test_on_an_older_ledger_an_evidence_comment_is_the_hand_back(self):
+        self.ledger.older_comment = True
+        n = self.ledger.file("Handed back", ["repo:lib"], dispatched_by=None)
+        self.ledger.add_comment(n, "Evidence: https://example.com/pull/1")
+        code, said = self.dispatch(str(n), "--labels", "worker:w1")
+        self.assertEqual(code, 2, said)
+        self.assertIn("awaiting its dispatcher", said)
+
+    def test_it_warns_when_no_worker_with_the_labels_lists_the_repository(self):
+        n = self.ledger.file("Elsewhere", ["repo:docs"], dispatched_by=None)
+        code, said = self.dispatch(
+            str(n), "--labels", "worker:w1", "--status-item", str(self.status)
+        )
+        self.assertEqual(code, 0, said)  # a warning, not a refusal
+        self.assertIn("warning:", said)
+        self.assertIn("no worker with labels worker:w1 lists repository `docs`", said)
+        self.assertIn("w1 lists engine, lib", said)
+        self.assertIn("[repos.docs]", said)
+        self.assertEqual(len(self.dispatches(n)), 1)
+
+    def test_a_worker_that_lists_the_repository_draws_no_warning(self):
+        n = self.ledger.file("Here", ["repo:lib"], dispatched_by=None)
+        code, said = self.dispatch(
+            str(n), "--labels", "worker:w1", "--status-item", str(self.status)
+        )
+        self.assertEqual(code, 0, said)
+        self.assertNotIn("warning:", said)
+
+    def test_only_the_newest_status_line_of_a_worker_counts(self):
+        self.ledger.add_comment(
+            self.status, gonk.worker_status_text("w1", None, ["worker:w1"], ["engine"])
+        )
+        n = self.ledger.file("Here once", ["repo:lib"], dispatched_by=None)
+        code, said = self.dispatch(
+            str(n), "--labels", "worker:w1", "--status-item", str(self.status)
+        )
+        self.assertEqual(code, 0, said)
+        self.assertIn("lists repository `lib`", said)
+        self.assertIn("w1 lists engine", said)
+
+    def test_a_worker_with_other_labels_is_no_match(self):
+        self.ledger.add_comment(
+            self.status, gonk.worker_status_text("w2", None, ["worker:w2"], ["docs"])
+        )
+        n = self.ledger.file("Elsewhere", ["repo:docs"], dispatched_by=None)
+        code, said = self.dispatch(
+            str(n), "--labels", "worker:w1", "--status-item", str(self.status)
+        )
+        self.assertEqual(code, 0, said)
+        self.assertIn("no worker with labels worker:w1 lists repository `docs`", said)
+
+    def test_the_status_items_can_be_named_in_gonk_toml(self):
+        gonk_toml = self.rig.checkout / ".gonk" / "gonk.toml"
+        gonk_toml.write_text(gonk_toml.read_text() + f"status_items = [{self.status}]\n")
+        n = self.ledger.file("Elsewhere", ["repo:docs"], dispatched_by=None)
+        code, said = self.dispatch(str(n), "--labels", "worker:w1")
+        self.assertEqual(code, 0, said)
+        self.assertIn("lists repository `docs`", said)
+
+    def test_with_no_status_item_it_says_the_check_could_not_run(self):
+        n = self.ledger.file("Anywhere", ["repo:lib"], dispatched_by=None)
+        code, said = self.dispatch(str(n), "--labels", "worker:w1")
+        self.assertEqual(code, 0, said)
+        self.assertIn("could not check", said)
+        self.assertIn("--status-item", said)
+        self.assertEqual(len(self.dispatches(n)), 1)
+
+    def test_a_status_item_with_no_line_for_the_labels_says_the_check_could_not_run(self):
+        n = self.ledger.file("Anywhere", ["repo:lib"], dispatched_by=None)
+        code, said = self.dispatch(
+            str(n), "--labels", "worker:w9", "--status-item", str(self.status)
+        )
+        self.assertEqual(code, 0, said)
+        self.assertIn("could not check", said)
+        self.assertIn("no `Worker:` line for a worker with labels worker:w9", said)
+
+
 if __name__ == "__main__":
     unittest.main()
