@@ -515,6 +515,7 @@ Every loop runs from the one checkout, `~/gonk-worker`, under the one account.
   | the per-repository locks (`locks/`) | ✓ two agents never work one repository at once, nor share its clone under the work root | |
   | the items it handed back (`attempts.json`) | | ✓ an item one agent handed back can be routed to another; `--config … forget <N>` clears one loop's |
   | the stop file | `stop` stops every loop between items | `<agent>/stop` stops that loop alone |
+  | what it has said on the ledger (`notices.json`) | | ✓ the skips it explained on an item, and the status line it last posted |
 
   A machine's single `worker.toml` loop keeps `attempts.json` and `stop` where they always were,
   directly under `.gonk/state/worker/`.
@@ -639,6 +640,33 @@ The dispatches themselves and the worker's own hand-backs are left out. This low
 planted comment steering the agent; it cannot make a model immune to text it reads, which is why
 rule 1 decides what the agent works on, and why its account, token and the repository's branch
 protection stay the boundary.
+
+#### What a worker says on the ledger
+
+A dispatched item the worker skips must not wait unexplained (ledger item 2349 sat nine hours
+behind a reason only its worker's journal held; ledger item 2393 is the fix). Two things go on
+the ledger, each as a comment by the worker's own principal, with no token, account id or path:
+
+- **A skip the dispatcher can fix, on the item.** When the newest dispatch by a router names
+  every one of this loop's `labels` (the item was sent HERE), and the loop skips it because its
+  `repo:` label names a repository this loop is not configured for (or it has none, or two), its
+  dispatch no longer matches its title and body, or the loop holds for usage, the loop comments
+  which worker and loop, the reason and the remedy: for a missing repository, the
+  `[repos.<name>]` block to add (an https remote; an ssh one works as well). It says each reason
+  once per item, remembered in the loop's `notices.json`, so neither the next poll nor a
+  restart repeats it; a new reason (a new dispatch that still does not match, say) is said
+  again. The other skips (claimed, awaiting the dispatcher, handed back already, one agent per
+  repository) are not the dispatcher's to fix, and stay in the journal; an item claimed or
+  awaiting its dispatcher is never commented on.
+- **What the loop takes, on its status item.** At start, with a `[usage] status_item`, the loop
+  posts one line, when it differs from the one it last posted there:
+
+      Worker: holder=<holder> loop=<loop> labels=<label>,… repos=<name>,…
+
+  (`loop=` only for one of several loops; `gonk.parse_worker_status` reads it back), so a
+  dispatcher can check that a worker carries an item's labels and repository before sending it
+  there. A running loop keeps the configuration it started with, so a changed one is posted
+  when the loop restarts.
 
 #### Enrolling every repository
 

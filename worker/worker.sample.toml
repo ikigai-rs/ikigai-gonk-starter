@@ -73,6 +73,7 @@ preset = "claude"
 # threshold = 85          # percent
 # every = "1h"
 # status_item = 1234      # the item the report is commented on; omit to only log it
+#                         # (the loop also posts its `Worker:` line there: labels, repos)
 
 # Every repository this worker may work in, by the name its items' `repo:<name>` label uses.
 # An item must carry exactly one `repo:` label naming one of these.

@@ -330,6 +330,42 @@ def parse_dispatch(text: str) -> tuple[list[str], str | None] | None:
     return labels, digest
 
 
+# A worker's standing status item carries what it takes (ledger item 2393): at start, and when
+# its configuration changed since it last said, the loop comments one line
+#
+#     Worker: holder=<holder> loop=<loop> labels=<label>,… repos=<name>,…
+#
+# (`loop=` only for one of several loops on a machine), so a dispatcher can check that a worker
+# carries an item's labels and works in its repository before dispatching it there.
+WORKER_STATUS_PREFIX = "Worker:"
+WORKER_STATUS_LISTS = ("labels", "repos")
+
+
+def worker_status_text(holder: str, loop: str | None, labels: list[str], repos: list[str]) -> str:
+    """The status line for a worker with these labels and repositories."""
+    words = [f"holder={holder}", *([f"loop={loop}"] if loop else [])]
+    words += [f"labels={','.join(labels)}", f"repos={','.join(repos)}"]
+    return f"{WORKER_STATUS_PREFIX} {' '.join(words)}"
+
+
+def parse_worker_status(text: str) -> dict | None:
+    """The holder, loop, labels and repos a status line states, or None when `text` is none.
+
+    >>> parse_worker_status("Worker: holder=w1 labels=worker:w1 repos=lib,engine")
+    {'holder': 'w1', 'labels': ['worker:w1'], 'repos': ['lib', 'engine']}
+    """
+    lines = (text or "").strip().splitlines()
+    if not lines or not lines[0].startswith(WORKER_STATUS_PREFIX + " "):
+        return None
+    status: dict = {}
+    for word in lines[0][len(WORKER_STATUS_PREFIX) :].split():
+        key, eq, value = word.partition("=")
+        if not eq:
+            continue
+        status[key] = [v for v in value.split(",") if v] if key in WORKER_STATUS_LISTS else value
+    return status if "holder" in status else None
+
+
 PEM_CERT = re.compile(r"-----BEGIN CERTIFICATE-----\s*(.+?)\s*-----END CERTIFICATE-----", re.DOTALL)
 
 

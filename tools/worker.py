@@ -47,6 +47,14 @@ evidence, a merge while the agent ran, a refused configuration) is a sensor of t
 is recorded in this checkout's firing log (tools/harness.py), best effort: recording never
 changes what the worker does. A skip is recorded once per item per process, not at every poll.
 
+A skip the DISPATCHER can act on, of an item whose newest dispatch by a router names this
+worker's labels, is also said on the item, once per item per reason, remembered across restarts
+in the loop's `notices.json` (ledger item 2393): its repository is not configured here (with the
+`[repos.<name>]` block to add), its dispatch no longer matches it, or the loop holds for usage.
+The other skips stay in the journal. At start, the loop posts its holder, labels and
+repositories on its `[usage] status_item` as one `Worker:` line (`gonk.worker_status_text`),
+when that line differs from the one it last posted there.
+
 The one-agent-per-repository rule here is BEST-EFFORT until the ledger enforces it (ledger
 item 1140 on ikigai's own ledger): two workers can read "free" at the same moment. Each
 re-reads after claiming and backs off if it sees another claim, which narrows the window and
@@ -58,6 +66,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import fcntl
+import hashlib
 import json
 import os
 import plistlib
@@ -138,6 +147,14 @@ REPO_SHAPE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 GITHUB_SLUG = re.compile(r"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$")
 GITHUB_REMOTE = re.compile(r"github\.com[:/]([A-Za-z0-9-]+/[A-Za-z0-9._-]+?)(?:\.git)?/?$")
 LABEL_SHAPE = re.compile(r"^[A-Za-z0-9._:-]+$")
+
+# The skips a dispatcher can act on, which the loop says on the item once (`Worker.explain`),
+# with a usage hold: the repository is not configured here (or the item names none, or two),
+# and the dispatch no longer matches the item. The rest (claimed, awaiting its dispatcher,
+# handed back already, one agent per repository) are not the dispatcher's to fix, and stay in
+# the journal.
+# (Plain ids, not `gonk.sensor`: these name sensors fired elsewhere, and fire nothing here.)
+EXPLAINED = ("worker-one-repository-label", "worker-dispatched-by-a-router")
 
 
 @dataclass
@@ -585,6 +602,24 @@ def dispatch_problem(item: dict, routers: list[str], labels: list[str]) -> str |
     return None
 
 
+def dispatched_to(item: dict, routers: list[str], labels: list[str]) -> bool:
+    """Whether the newest dispatch by a router names every label this worker selects on: the
+    item was sent HERE, whatever else is wrong with it, so a skip is news for its dispatcher."""
+    dispatches = [
+        c
+        for c in item.get("comments") or []
+        if gonk.parse_dispatch(c.get("text") or "") is not None and by_router(c, routers)
+    ]
+    if not dispatches:
+        return False
+    newest = max(dispatches, key=lambda c: c.get("time") or "")
+    named, _ = gonk.parse_dispatch(newest.get("text") or "")
+    return all(w in named for w in labels)
+
+
+PRINCIPAL = re.compile("(?:" + "|".join(map(re.escape, gonk.PRINCIPAL_PREFIXES)) + r")\S+")
+
+
 def redispatched_since(item: dict, routers: list[str], at: str | None) -> bool:
     """Whether a router dispatched the item after the instant `at` (a hand-back)."""
     try:
@@ -638,6 +673,46 @@ class Attempts:
             return False
         self.path.write_text(json.dumps(table, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         return True
+
+
+class Notices:
+    """What this loop has said on the ledger, so a poll every minute, or a restart, never says it
+    again: each skip explained on an item (by a key per reason), and the last status line posted
+    on the status item. A file in the loop's own state directory, beside its attempts."""
+
+    def __init__(self, state_dir: Path) -> None:
+        self.path = state_dir / "notices.json"
+
+    def read(self) -> dict:
+        try:
+            doc = json.loads(self.path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {}
+        except ValueError as e:
+            raise gonk.ConfigError(f"{self.path}: {e}") from e
+        return doc if isinstance(doc, dict) else {}
+
+    def write(self, doc: dict) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    def said(self, ledger: str, number: int, key: str) -> bool:
+        return key in self.read().get("items", {}).get(f"{ledger}#{number}", [])
+
+    def record(self, ledger: str, number: int, key: str) -> None:
+        doc = self.read()
+        keys = doc.setdefault("items", {}).setdefault(f"{ledger}#{number}", [])
+        if key not in keys:
+            keys.append(key)
+        self.write(doc)
+
+    def status(self) -> str | None:
+        return self.read().get("status")
+
+    def record_status(self, text: str) -> None:
+        doc = self.read()
+        doc["status"] = text
+        self.write(doc)
 
 
 class RepoLock:
@@ -1110,11 +1185,14 @@ class Worker:
         self.ledger = Ledger(cfg, ikigai)
         self.root = work_root(wc.work_root, home or Path.home(), cfg.repo)
         self.attempts = Attempts(wc.loop_dir)
+        self.notices = Notices(wc.loop_dir)
         self.shutdown = threading.Event()
         # The skips recorded as firings so far, (control, item): once each per process, since
         # the loop asks again at every poll and a skip that has not changed is not news.
         self.skips_fired: set[tuple[str, int]] = set()
         self.skipped: list[tuple[str, int]] = []
+        # This poll's skips as (control, item, why), for `explain`.
+        self.skipped_items: list[tuple[str, dict, str]] = []
         self.skip_logged: dict[str, str] = {}
         u = wc.usage
         self.usage = worker_usage.UsageWatch(
@@ -1138,7 +1216,7 @@ class Worker:
         now = gonk.iso_now()
         take, skip = [], []
         busy: dict[str, str | None] = {}
-        self.skipped = []
+        self.skipped, self.skipped_items = [], []
         for ranked in doc.get("ranking", []):
             item = ranked["item"]
             display = item.get("display", f"#{item.get('number')}")
@@ -1146,6 +1224,7 @@ class Worker:
             if reason:
                 skip.append((display, reason[1]))
                 self.skipped.append((reason[0], item.get("number")))
+                self.skipped_items.append((reason[0], item, reason[1]))
             else:
                 take.append((item, self.wc.repos[repo_labels(item)[0]]))
         return take, skip, None
@@ -1203,6 +1282,110 @@ class Worker:
         self.skips_fired.add((control, number))
         gonk.fire(control, "refusal", self.cfg.repo)
 
+    # ----------------------------------------------------------------- saying why, on the ledger
+
+    def config_file(self) -> str:
+        """This loop's configuration file, as a path in the checkout (never an absolute one)."""
+        return str(
+            WORKER_TOML.with_name(f"worker-{self.wc.loop}.toml" if self.wc.loop else "worker.toml")
+        )
+
+    def explain(self, item: dict, key: str, why: str) -> None:
+        """Say on the item why this loop skips it, once per item per reason, when its newest
+        dispatch sent it HERE and the reason is the dispatcher's to fix (ledger item 2393). An
+        item claimed, or awaiting its dispatcher, is never commented on: on a ledger older than
+        0.8.0 a comment after the hand-back would make the item ready again."""
+        number = item.get("number")
+        if (
+            not isinstance(number, int)
+            or item.get("claim")
+            or awaiting_dispatcher(item)
+            or not dispatched_to(item, self.wc.routers, self.wc.labels)
+        ):
+            return
+        why = PRINCIPAL.sub("a router", why)
+        said = f"{key}:{hashlib.sha256(why.encode('utf-8')).hexdigest()[:16]}"
+        if key == "usage":
+            said = key  # the percent moves at every reading; the reason does not
+        if self.notices.said(self.cfg.ledger, number, said):
+            return
+        loop = f" (loop `{self.wc.loop}`)" if self.wc.loop else ""
+        text = "\n".join(
+            [
+                f"gonk worker `{self.cfg.holder}`{loop} skips {item.get('display')}: {why}.",
+                "",
+                self.remedy(item, key),
+                "",
+                "It says this once for this reason; its journal has every poll.",
+            ]
+        )
+        posted = self.ledger.comment(number, text)
+        if not posted.ok:
+            log(f"could not explain the skip on {item.get('display')}: {posted.text()}")
+            return
+        self.notices.record(self.cfg.ledger, number, said)
+
+    def remedy(self, item: dict, key: str) -> str:
+        """What the dispatcher can do about the skip."""
+        number, repos = item.get("number"), repo_labels(item)
+        dispatch = f"`python3 tools/gonk.py dispatch {number} --labels {','.join(self.wc.labels)}`"
+        if key == "usage":
+            return (
+                f"Remedy: it takes the item once a reading is at or under "
+                f"{self.wc.usage.get('threshold', worker_usage.DEFAULT_THRESHOLD):g}% or the limit "
+                "resets; to have it done sooner, dispatch it to another worker."
+            )
+        if key == EXPLAINED[0]:
+            if len(repos) != 1 or not REPO_SHAPE.match(repos[0]):
+                return (
+                    "Remedy: give it exactly one `repo:<name>` label, naming a repository this "
+                    f"worker works in ({', '.join(self.wc.repos)}), then dispatch it again: "
+                    f"{dispatch}."
+                )
+            name = repos[0]
+            owners = {r.github.split("/")[0] for r in self.wc.repos.values()}
+            owner = owners.pop() if len(owners) == 1 else "<owner>"
+            return "\n".join(
+                [
+                    f"Remedy: add this repository to the worker's {self.config_file()} and "
+                    "restart the loop, or dispatch the item to a worker that has it:",
+                    "",
+                    f"    [repos.{name}]",
+                    f'    remote = "https://github.com/{owner}/{name}.git"',
+                    f'    github = "{owner}/{name}"',
+                ]
+            )
+        return f"Remedy: a router dispatches it again, naming this worker's labels: {dispatch}."
+
+    def explain_hold(self, held: str) -> None:
+        """A usage hold, said on each item dispatched here that it holds back."""
+        take, _, err = self.candidates()
+        if err:
+            return
+        for item, _repo in take:
+            self.explain(item, "usage", held)
+        for control, item, why in self.skipped_items:
+            if control in EXPLAINED:
+                self.explain(item, control, why)
+
+    def announce(self) -> None:
+        """Post what this loop takes on its status item, when it differs from what it last
+        posted there: at start, so a changed configuration is said once (ledger item 2393)."""
+        item = self.wc.usage.get("status_item")
+        if item is None:
+            return
+        text = gonk.worker_status_text(
+            self.cfg.holder, self.wc.loop, self.wc.labels, list(self.wc.repos)
+        )
+        if self.notices.status() == text:
+            return
+        posted = self.ledger.comment(item, text)
+        if not posted.ok:
+            log(f"could not post the worker's status on item {item}: {posted.text()}")
+            return
+        log(f"posted on item {item}: {text}")
+        self.notices.record_status(text)
+
     def repo_holder(self, repo: str, now: datetime, exclude: int | None) -> str | None:
         """Who holds an ACTIVE claim on an open item of this repository, if anyone."""
         items, err = self.ledger.items(f"repo:{repo}")
@@ -1221,10 +1404,14 @@ class Worker:
     def run_once(self) -> Outcome:
         held = self.usage.check()
         if held:
+            self.explain_hold(held)
             return Outcome(NOTHING, held)
         take, skip, err = self.candidates()
         if err:
             return Outcome(ERROR, f"gonk did not answer next: {err}")
+        for control, item, why in self.skipped_items:
+            if control in EXPLAINED:
+                self.explain(item, control, why)
         for display, why in skip:
             # Once per item per reason: the loop asks again at every poll.
             if self.skip_logged.get(display) != why:
@@ -1581,6 +1768,7 @@ def cmd_run(args, make_ikigai, home) -> int:
             "refusing to run as root: a worker runs as an account of its own",
         )
     worker = build(args, make_ikigai, home)
+    worker.announce()
     if args.once:
         outcome = worker.run_once()
         if outcome.code == NOTHING:

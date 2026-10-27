@@ -179,6 +179,11 @@ items the dispatcher marks for them, and work each one in a fresh working tree o
   `status_item`, with no token or account id. Above `threshold` percent (default 85) the loop
   takes no NEW item for that agent, and says so, until a reading is under it or its reset time
   has passed; an item already running is not stopped.
+- **A skip the dispatcher can fix is said on the item.** An item dispatched to a worker that
+  skips it because its repository is not configured there, its dispatch no longer matches it,
+  or the loop holds for usage, gets one comment per reason saying why and what to do (for a
+  missing repository, the `[repos.<name>]` block). At start the loop posts a `Worker:` line on
+  its `status_item` naming its holder, labels and repositories.
 - **One agent per repository.** A worker takes no item whose repository already has a live
   claim held by anyone, and runs one item per repository on its machine.
 
