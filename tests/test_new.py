@@ -703,6 +703,20 @@ class SkimmableText(unittest.TestCase):
         for heading in ["## The five principles", "## Write mode", "## Review mode"]:
             self.assertIn(heading, skill, heading)
 
+    def test_the_skill_fixes_one_label_per_principle(self):
+        # Reports are compared and counted by these labels, so they must not drift.
+        skill = (ROOT / "skills" / "skimmable-text" / "SKILL.md").read_text(encoding="utf-8")
+        labels = {
+            "P1": "expected order",
+            "P2": "distinguishing first",
+            "P3": "one vocabulary",
+            "P4": "meaningful variation",
+            "P5": "matching tone",
+        }
+        for number, label in labels.items():
+            self.assertIn(f"| {number} | {label} |", skill, number)
+        self.assertIn("P<n> <label>", skill)
+
 
 if __name__ == "__main__":
     unittest.main()
