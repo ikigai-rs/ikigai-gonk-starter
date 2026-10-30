@@ -58,6 +58,17 @@ sentence and its terms. A set of one item has nothing to be consistent with.
    - Avoid neutral openings ("X is a popular new …") that leave the reader unsure whether an item
      is good or bad news.
 
+**Labels.** A report names each principle by its number and this label, exactly, so reports from
+different agents and repositories read alike and can be counted together:
+
+| | label |
+|---|---|
+| P1 | expected order |
+| P2 | distinguishing first |
+| P3 | one vocabulary |
+| P4 | meaningful variation |
+| P5 | matching tone |
+
 ## Write mode
 
 Use it when you generate several items that will be read together.
@@ -88,9 +99,9 @@ READMEs, changelogs, issue or ledger titles, generated pages.
 2. **Read each set** for the five principles in order. Read from top to bottom, as a reader would.
 3. **Report findings in one format**, so the report is itself skimmable:
 
-       <file>:<line>  P<n> <principle in two words>  "<item as written>"  ->  "<suggested rewrite>"
+       <file>:<line>  P<n> <label>  "<item as written>"  ->  "<suggested rewrite>"
 
-   Group findings by set, and open each group with the set's location and its purpose in one
+   `<label>` is the principle's label from the table above, never one of your own. Group findings by set, and open each group with the set's location and its purpose in one
    line. When a whole set breaks one principle, report it once, with the template you suggest
    and two or three rewritten items, rather than once per item.
 4. **Do not report:**
@@ -99,5 +110,14 @@ READMEs, changelogs, issue or ledger titles, generated pages.
    - wording that is merely different from what you would write.
 5. **Do not edit unless asked.** A review reports. When fixes are asked for, make them, and
    follow the repository's own rules for changes (a changelog or What's new entry, its checks).
+   Three things a skimmability fix must not break:
+   - **A heading is a link target.** Renaming one changes its anchor. Keep the old anchor (an
+     explicit `<a id="old-anchor"></a>` beside the heading) or leave the heading alone, and say
+     which in the report.
+   - **A past changelog or What's new entry is a record.** Leave it as written; fix only the
+     entries the change itself adds.
+   - **A rewrite keeps the subject and the claim.** Shortening "A process running as another
+     account is bounded" to "Another account is bounded" drops what is bounded. If the shorter
+     item says something different, or less, keep the longer one.
 
-End the report with one line per principle: how many findings, in which sets.
+End the report with one line per principle, by its number and label: how many findings, in which sets.
