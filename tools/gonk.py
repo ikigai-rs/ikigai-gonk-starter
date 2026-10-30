@@ -342,14 +342,64 @@ def parse_dispatch(text: str) -> tuple[list[str], str | None] | None:
 # (`loop=` only for one of several loops on a machine), so a dispatcher can check that a worker
 # carries an item's labels and works in its repository before dispatching it there.
 WORKER_STATUS_PREFIX = "Worker:"
-WORKER_STATUS_LISTS = ("labels", "repos")
+WORKER_STATUS_LISTS = ("labels", "repos", "repos_from", "except")
 
 
-def worker_status_text(holder: str, loop: str | None, labels: list[str], repos: list[str]) -> str:
+def worker_status_text(
+    holder: str,
+    loop: str | None,
+    labels: list[str],
+    repos: list[str],
+    repos_from: str | None = None,
+    excluded: list[str] | None = None,
+) -> str:
     """The status line for a worker with these labels and repositories."""
     words = [f"holder={holder}", *([f"loop={loop}"] if loop else [])]
     words += [f"labels={','.join(labels)}", f"repos={','.join(repos)}"]
+    if repos_from:
+        words += [f"repos_from={repos_from}", f"except={','.join(excluded or [])}"]
     return f"{WORKER_STATUS_PREFIX} {' '.join(words)}"
+
+
+def repository_admission_problem(
+    name: str, explicit: list[str], org: str | None, excluded: list[str]
+) -> str | None:
+    """The worker's config fence, also used to explain dispatch coverage."""
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}", name) or name in (".", ".."):
+        return f"repo:{name} is not a safe repository name in the allowed GitHub organization"
+    if name in explicit:
+        return None
+    if not org:
+        return f"repo:{name} is not one of this worker's repositories"
+    if name.casefold() in {n.casefold() for n in excluded}:
+        return f"repo:{name} is excluded by [repos_from] except for GitHub organization {org}"
+    return None
+
+
+def worker_status_labels(labels: list[str]) -> list[str]:
+    return [
+        "worker-status:" + label[len("worker:") :]
+        for label in labels
+        if label.startswith("worker:")
+    ]
+
+
+def discover_worker_status_items(
+    cfg: Config, ikigai: Ikigai, labels: list[str]
+) -> tuple[list[int], list[str]]:
+    numbers, errors = set(), []
+    for label in worker_status_labels(labels):
+        answer = ikigai.run(
+            f"source {cfg.resource('items')} labels={label} limit=0 as=application/json"
+        )
+        if not answer.ok:
+            errors.append(f"could not discover {label}: {answer.text()}")
+            continue
+        try:
+            numbers.update(int(item["number"]) for item in json.loads(answer.out)["items"])
+        except (ValueError, KeyError, TypeError):
+            errors.append(f"could not discover {label}: invalid items JSON")
+    return sorted(numbers), errors
 
 
 def parse_worker_status(text: str) -> dict | None:
@@ -1841,12 +1891,56 @@ def cmd_dispatch(args, cfg: Config, make_ikigai) -> int:
         answer = ikigai.run(f"sink {cfg.resource('label')} item={args.item}", stdin=label)
         if not answer.ok:
             return show(answer)
+    if item.get("priority") is None:
+        if args.keep_unprioritized:
+            print(
+                f"warning: {display} remains unprioritized; prioritized work ranks ahead of it",
+                file=sys.stderr,
+            )
+        else:
+            answer = ikigai.run(
+                f"sink {cfg.resource(f'item:{args.item}')} priority={args.priority}"
+            )
+            if not answer.ok:
+                return show(answer)
+            print(f"{display}: set priority {args.priority} (was unprioritized)")
     named = [w for w in labels if not w.startswith("repo:")] + repos
     text = dispatch_text(named, item.get("title"), item.get("body"), note or None)
     words = [f"sink {cfg.resource('comment')} item={args.item}"]
     if author:
         words.append(f"author={author}")
-    return show(ikigai.run(" ".join(words), stdin=text))
+    answer = ikigai.run(" ".join(words), stdin=text)
+    code = show(answer)
+    if answer.ok:
+        print_dispatch_rank(cfg, ikigai, args.item, labels)
+    return code
+
+
+def print_dispatch_rank(cfg: Config, ikigai: Ikigai, number: int, labels: list[str]) -> None:
+    filtered = ",".join(labels)
+    answer = ikigai.run(
+        f"source {cfg.resource('next')} labels={filtered} limit=0 as=application/json"
+    )
+    prefix = f"{cfg.ledger}#{number}: next ({filtered})"
+    if not answer.ok:
+        print(f"warning: {prefix}: could not read rank: {answer.text()}", file=sys.stderr)
+        return
+    try:
+        doc = json.loads(answer.out)
+        for rank, entry in enumerate(doc.get("ranking", []), 1):
+            if entry["item"]["number"] == number:
+                total = doc.get("ready", len(doc["ranking"]))
+                print(f"{prefix}: rank {entry.get('rank', rank)} of {total}")
+                return
+        for entry in doc.get("excluded", []):
+            if entry["item"]["number"] == number:
+                print(
+                    f"{prefix}: excluded: {entry.get('why', 'unknown')} ({entry.get('reason', '')})"
+                )
+                return
+        print(f"warning: {prefix}: item not returned; rank unavailable", file=sys.stderr)
+    except (ValueError, KeyError, TypeError, AttributeError) as error:
+        print(f"warning: {prefix}: could not parse rank: {error}", file=sys.stderr)
 
 
 def open_blockers(
@@ -1874,27 +1968,31 @@ def worker_coverage(cfg: Config, ikigai: Ikigai, args, labels: list[str], repo: 
     """Warnings, never refusals: whether a worker that takes these labels lists the item's
     repository on its status item (`Worker:` lines, ledger item 2393). A worker takes only items
     carrying every label it names, so a worker matches when its labels are among the item's
-    labels once dispatched. The status items are `--status-item`, else `status_items` in
-    .gonk/gonk.toml; with none, or no line for a matching worker, the check cannot run, and
-    that is said too."""
+    labels once dispatched. Discover status items by worker-status:<name>, also accepting
+    legacy --status-item and status_items configuration. Admission includes explicit repos,
+    the configured organization and exclusions; unavailable coverage is said too."""
     name = repo[len("repo:") :]
     items = args.status_item or read_toml(cfg.gonk_toml).get("status_items") or []
     if not isinstance(items, list) or not all(
         isinstance(n, int) and not isinstance(n, bool) for n in items
     ):
         raise ConfigError(f"{cfg.gonk_toml}: `status_items` is a list of item numbers")
+    discovered, errors = discover_worker_status_items(cfg, ikigai, labels)
+    items = sorted(set(items) | set(discovered))
+    lines = [f"warning: {error}" for error in errors]
     if not items:
-        return [
+        return lines + [
             f"warning: could not check that a worker lists repository `{name}`: no status item "
-            "named (--status-item N, or `status_items = [N]` in .gonk/gonk.toml)"
+            "found with worker-status:<name> (or --status-item N for legacy workers)"
         ]
-    lines, statuses = [], []
+    comments = []
     for n in items:
         status_item, err = item_json(cfg, ikigai, n)
         if status_item is None:
             lines.append(f"warning: could not read status item {cfg.ledger}#{n}: {err}")
             continue
-        statuses += worker_statuses(status_item.get("comments") or [])
+        comments += status_item.get("comments") or []
+    statuses = worker_statuses(comments)
     carried = set(labels) | {repo}
     matching = [s for s in statuses if set(s.get("labels") or []) <= carried]
     where = ", ".join(f"{cfg.ledger}#{n}" for n in items)
@@ -1903,11 +2001,21 @@ def worker_coverage(cfg: Config, ikigai: Ikigai, args, labels: list[str], repo: 
             f"warning: could not check that a worker lists repository `{name}`: no `Worker:` "
             f"line for a worker with labels {','.join(labels)} on {where}"
         ]
-    if any(name in (s.get("repos") or []) for s in matching):
+
+    def problem(status):
+        orgs = status.get("repos_from") or []
+        return repository_admission_problem(
+            name,
+            status.get("repos") or [],
+            orgs[0] if orgs else None,
+            status.get("except") or [],
+        )
+
+    if any(problem(s) is None for s in matching):
         return lines
     listed = "; ".join(
         f"{s['holder']}{'/' + s['loop'] if s.get('loop') else ''} lists "
-        f"{', '.join(sorted(s.get('repos') or [])) or 'none'}"
+        f"{', '.join(sorted(s.get('repos') or [])) or 'none'}; {problem(s)}"
         for s in matching
     )
     return lines + [
@@ -2244,13 +2352,22 @@ def parser() -> argparse.ArgumentParser:
         action="store_true",
         help="dispatch although an open item blocks it (needs --note)",
     )
+    priorities = s.add_mutually_exclusive_group()
+    priorities.add_argument(
+        "--priority", type=int, default=3, help="priority assigned only if absent (default: 3)"
+    )
+    priorities.add_argument(
+        "--keep-unprioritized",
+        action="store_true",
+        help="leave missing priority unchanged, with a warning",
+    )
     s.add_argument("--note", help="why, recorded in the dispatch comment")
     s.add_argument(
         "--status-item",
         type=int,
         action="append",
         help="a worker status item to check the repository against (repeatable; default: "
-        "`status_items` in .gonk/gonk.toml)",
+        "discovered through worker-status:<name>; also accepts `status_items` in .gonk/gonk.toml)",
     )
     s.set_defaults(run=cmd_dispatch)
 

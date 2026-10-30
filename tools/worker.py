@@ -52,8 +52,9 @@ worker's labels, is also said on the item, once per item per reason, remembered 
 in the loop's `notices.json` (ledger item 2393): its repository is not configured here (with the
 `[repos.<name>]` block to add), its dispatch no longer matches it, or the loop holds for usage.
 The other skips stay in the journal. At start, the loop posts its holder, labels and
-repositories on its `[usage] status_item` as one `Worker:` line (`gonk.worker_status_text`),
-when that line differs from the one it last posted there.
+repository admission on its status item as one `Worker:` line (`gonk.worker_status_text`),
+when that line differs from the one it last posted there. The loop labels an existing
+`[usage] status_item` with `worker-status:<name>`, or discovers it through that label.
 
 The one-agent-per-repository rule here is BEST-EFFORT until the ledger enforces it (ledger
 item 1140 on ikigai's own ledger): two workers can read "free" at the same moment. Each
@@ -189,11 +190,24 @@ class WorkerConfig:
     global_stop: Path = field(default=None)  # stops EVERY loop of this checkout
     usage: dict = field(default_factory=dict)  # the [usage] table: see tools/worker_usage.py
     loop: str | None = None  # from `worker-<loop>.toml`; None for worker.toml, the one loop
+    repos_from: str | None = None  # the GitHub organization admitted by configuration
+    repos_except: list[str] = field(default_factory=list)
     holder: str | None = None  # overrides .gonk/local.toml's holder for this loop's claims
 
     def __post_init__(self) -> None:
         self.loop_dir = self.loop_dir or self.state_dir
         self.global_stop = self.global_stop or self.state_dir / "stop"
+
+    def repository(self, name: str) -> tuple[Repo | None, str | None]:
+        problem = gonk.repository_admission_problem(
+            name, list(self.repos), self.repos_from, self.repos_except
+        )
+        if problem:
+            return None, problem
+        if name in self.repos:
+            return self.repos[name], None
+        slug = f"{self.repos_from}/{name}"
+        return Repo(name, f"https://github.com/{slug}.git", slug), None
 
     def stop_files(self) -> list[Path]:
         """The files that stop this loop between items: its own, and the one for every loop."""
@@ -348,10 +362,21 @@ def load_worker(cfg: gonk.Config, path: Path | None = None) -> WorkerConfig:
         if not GITHUB_SLUG.match(slug):
             raise gonk.ConfigError(f"{where}: [repos.{name}] github = {slug!r} is not owner/name")
         repos[name] = Repo(name, remote, slug, r.get("base", "main"))
-    if not repos:
+    admission = t.get("repos_from", {})
+    if not isinstance(admission, dict) or set(admission) - {"github", "except"}:
+        raise gonk.ConfigError(f"{where}: [repos_from] accepts github and except only")
+    org = admission.get("github")
+    excluded = admission.get("except", [])
+    if admission and (not isinstance(org, str) or not re.fullmatch(r"[A-Za-z0-9-]+", org)):
+        raise gonk.ConfigError(f"{where}: [repos_from] github must be one GitHub organization")
+    if not isinstance(excluded, list) or not all(
+        isinstance(n, str) and REPO_SHAPE.fullmatch(n) and n not in (".", "..") for n in excluded
+    ):
+        raise gonk.ConfigError(f"{where}: [repos_from] except must be a list of repository names")
+    if not repos and not org:
         raise gonk.ConfigError(
-            f"{where}: no [repos.<name>]: name each repository this worker may work in, as its "
-            "items' `repo:<name>` label names it"
+            f"{where}: configure [repos_from] github for an allowed organization, or "
+            "[repos.<name>] for each repository this worker may work in"
         )
 
     holder = t.get("holder")
@@ -381,6 +406,8 @@ def load_worker(cfg: gonk.Config, path: Path | None = None) -> WorkerConfig:
         command=command,
         profile=profile,
         repos=repos,
+        repos_from=org,
+        repos_except=excluded,
         stop_file=Path(gonk.expand(stop, cfg.repo)) if stop else loop_dir / "stop",
         state_dir=state_dir,
         loop_dir=loop_dir,
@@ -893,6 +920,31 @@ class GitHub:
         except subprocess.TimeoutExpired:
             return subprocess.CompletedProcess(argv, 124, "", "gh did not answer within 120s")
 
+    def admission_problem(self) -> str | None:
+        """Never follow a moved repository outside the config fence, or infer push access."""
+        done = self.run("api", f"repos/{self.slug}")
+        if done.returncode:
+            error = (done.stderr or done.stdout).strip() or f"gh exit {done.returncode}"
+            return f"cannot verify derived repository {self.slug}: {error}"
+        try:
+            doc = json.loads(done.stdout)
+            if doc.get("full_name", "").casefold() != self.slug.casefold():
+                return (
+                    f"derived repository {self.slug} resolved outside its configured identity: "
+                    f"{doc.get('full_name')!r}"
+                )
+            if (doc.get("permissions") or {}).get("push") is not True:
+                return (
+                    "worker token has no confirmed push permission for derived repository "
+                    f"{self.slug}"
+                )
+        except (ValueError, AttributeError):
+            return (
+                f"cannot verify derived repository {self.slug}: "
+                "gh api did not return repository JSON"
+            )
+        return None
+
     def pull_requests(self, branch: str) -> tuple[list[PullRequest], str | None]:
         done = self.run(
             "pr", "list", "-R", self.slug, "--head", branch, "--state", "all",
@@ -1224,7 +1276,7 @@ class Worker:
                 self.skipped.append((reason[0], item.get("number")))
                 self.skipped_items.append((reason[0], item, reason[1]))
             else:
-                take.append((item, self.wc.repos[repo_labels(item)[0]]))
+                take.append((item, self.wc.repository(repo_labels(item)[0])[0]))
         return take, skip, None
 
     def why_not(self, item: dict, now: datetime, busy: dict) -> str | None:
@@ -1244,10 +1296,9 @@ class Worker:
                 f"a worker works in exactly one repository, and its repo: labels are {named}"
             )
         repo = repos[0]
-        if repo not in self.wc.repos:
-            return gonk.sensor("worker-one-repository-label"), (
-                f"repo:{repo} is not one of this worker's repositories"
-            )
+        configured, problem = self.wc.repository(repo)
+        if problem:
+            return gonk.sensor("worker-one-repository-label"), problem
         problem = dispatch_problem(item, self.wc.routers, self.wc.labels)
         if problem:
             return gonk.sensor("worker-dispatched-by-a-router"), problem
@@ -1265,6 +1316,10 @@ class Worker:
                 f"this worker handed it back already ({seen['outcome']}, {seen['at']}); "
                 f"`worker.py forget {item['number']}` to allow it again"
             )
+        if repo not in self.wc.repos:
+            problem = GitHub(self.wc.gh, configured.github).admission_problem()
+            if problem:
+                return gonk.sensor("worker-one-repository-label"), problem
         if repo not in busy:
             busy[repo] = self.repo_holder(repo, now, exclude=None)
         if busy[repo]:
@@ -1341,6 +1396,12 @@ class Worker:
                     f"{dispatch}."
                 )
             name = repos[0]
+            if self.wc.repos_from:
+                return (
+                    f"Remedy: check [repos_from] github = {self.wc.repos_from!r} and its except "
+                    f"list in {self.config_file()}, and that the worker token can push to "
+                    f"{self.wc.repos_from}/{name}. An explicit [repos.{name}] overrides admission."
+                )
             owners = {r.github.split("/")[0] for r in self.wc.repos.values()}
             owner = owners.pop() if len(owners) == 1 else "<owner>"
             return "\n".join(
@@ -1371,9 +1432,35 @@ class Worker:
         posted there: at start, so a changed configuration is said once (ledger item 2393)."""
         item = self.wc.usage.get("status_item")
         if item is None:
-            return
+            items, errors = gonk.discover_worker_status_items(
+                self.cfg, self.ledger.ikigai, self.wc.labels
+            )
+            for error in errors:
+                log(error)
+            if len(items) != 1:
+                log(
+                    "could not choose worker status item: expected one open item labelled "
+                    f"{','.join(gonk.worker_status_labels(self.wc.labels))}, found {len(items)}"
+                )
+                return
+            item = items[0]
+        self.usage.status_item = item
+        for label in gonk.worker_status_labels(self.wc.labels):
+            answer = self.ledger.ikigai.run(
+                f"sink {self.cfg.resource('label')} item={item}", stdin=label
+            )
+            if not answer.ok:
+                log(
+                    f"could not label worker status item {item}: {answer.text()}; "
+                    f"ask the dispatcher to add {label}. Status publication continues"
+                )
         text = gonk.worker_status_text(
-            self.cfg.holder, self.wc.loop, self.wc.labels, list(self.wc.repos)
+            self.cfg.holder,
+            self.wc.loop,
+            self.wc.labels,
+            list(self.wc.repos),
+            self.wc.repos_from,
+            self.wc.repos_except,
         )
         if self.notices.status() == text:
             return
@@ -1914,9 +2001,8 @@ def agent_config_text(base: str, name: str, agent: str, source: str, from_sample
     if from_sample:
         lines += [
             "",
-            "# Every repository this loop may work in, by the name its items' `repo:<name>`",
-            "# label uses: `python3 tools/worker_repos.py --owner <owner>` adds a [repos.<name>]",
-            "# block for each of an owner's repositories to every .gonk/worker*.toml.",
+            "# [repos_from] admits new repositories in the configured organization per item.",
+            "# Add [repos.<name>] only for an override (remote, GitHub owner or base).",
         ]
     header = [
         f"# The `{agent}` loop of worker `{name}`, written by `tools/worker.py init-agents` from",
@@ -2009,7 +2095,7 @@ def cmd_init_agents(args, make_ikigai, home) -> int:
     if not any((repo / ".gonk").glob("worker-*.toml")):
         return ERROR
     print(
-        "next: `python3 tools/worker_repos.py --owner <owner>` adds the repositories to each, "
+        "next: review [repos_from] github (the allowed organization) in each configuration, "
         "then `python3 tools/worker.py --config .gonk/worker-<agent>.toml plan` checks one"
     )
     return 0
@@ -2087,7 +2173,9 @@ def parser() -> argparse.ArgumentParser:
     s.set_defaults(run=cmd_forget)
 
     s = sub.add_parser(
-        "init-agents", help="write .gonk/worker-<agent>.toml for each agent; never overwrites"
+        "init-agents",
+        aliases=["setup"],
+        help="write .gonk/worker-<agent>.toml for each agent; never overwrites",
     )
     s.add_argument("--name", required=True, help="the worker's name, as in its worker:<name>")
     s.add_argument("--agents", required=True, help="comma-separated, e.g. claude,codex,hermes")
