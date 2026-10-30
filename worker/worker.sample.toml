@@ -75,9 +75,15 @@ preset = "claude"
 # status_item = 1234      # the item the report is commented on; omit to only log it
 #                         # (the loop also posts its `Worker:` line there: labels, repos)
 
-# Every repository this worker may work in, by the name its items' `repo:<name>` label uses.
-# An item must carry exactly one `repo:` label naming one of these.
-[repos.library]
-remote = "https://github.com/acme/library.git"
-# github = "acme/library"   # owner/name for gh; read from a github.com remote when omitted
-# base = "main"             # the branch each worktree starts from (origin/<base>)
+# The worker's own fence: derive repo:<name> as this GitHub organization's repository.
+# Edit this organization before running. New repositories need no stanza and no restart.
+# The token must have push permission; the worker checks GitHub before taking derived work.
+[repos_from]
+github = "ikigai-rs"
+# except = ["sensitive-repo"]
+
+# Explicit overrides still win, including over except (another org, mirror or base branch).
+# [repos.library]
+# remote = "https://github.com/acme/library.git"
+# github = "acme/library"
+# base = "main"

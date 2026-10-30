@@ -220,9 +220,9 @@ class InitAgents(unittest.TestCase):
             self.assertNotIn("repos", t, "the sample's example repository is nobody's")
             commands[agent] = t["agent"]
             self.assertEqual(t["budget"], "45m")  # the sample's settings come along
-            # It loads once a repository is enrolled, as worker_repos.py appends one, and its
-            # operator names who may route work to it: the sample's router is a placeholder,
-            # refused until then.
+            self.assertEqual(t["repos_from"], {"github": "ikigai-rs"})
+            # Admission is already configured; the operator must still name its routers.
+            # Explicit repositories may still be added as overrides.
             path = self.gonk_dir / f"worker-{agent}.toml"
             with path.open("a") as f:
                 f.write('\n[repos.lib]\nremote = "https://github.com/acme/lib.git"\n')

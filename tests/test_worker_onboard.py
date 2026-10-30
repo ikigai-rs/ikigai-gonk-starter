@@ -285,7 +285,8 @@ class Onboarding(unittest.TestCase):
             self.assertEqual(cfg["labels"], ["worker:mini", f"agent:{agent}"])
             self.assertEqual(cfg["holder"], f"mini-{agent}")
             self.assertEqual(cfg["routers"], [ROUTER])
-            # What the loop itself accepts (its repositories are worker_repos.py's to add).
+            self.assertEqual(cfg["repos_from"], {"github": "ikigai-rs"})
+            # Router authorization remains required beside organization admission.
             self.assertEqual(worker.load_routers(cfg["routers"], agent, self.repo), [ROUTER])
         # gonk over QUIC, with gonk's pinned server.crt and LINKS to the one client pair.
         local = worker.tomllib.loads((self.repo / ".gonk" / "local.toml").read_text())

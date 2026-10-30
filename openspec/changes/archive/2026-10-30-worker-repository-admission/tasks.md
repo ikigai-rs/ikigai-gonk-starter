@@ -1,0 +1,3 @@
+- [x] 1. Reproduce admission, priority and coverage gaps with regression tests.
+- [x] 2. Implement admission, permission checks, discoverable coverage and dispatch rank.
+- [x] 3. Update worker documentation and generated files, and validate repository gates.

@@ -486,13 +486,13 @@ agent**, so the dispatcher can route each item to the agent that suits it. It la
 Every loop runs from the one checkout, `~/gonk-worker`, under the one account.
 
     python3 tools/worker.py init-agents --name <worker name> --agents claude,codex,hermes
-    python3 tools/worker_repos.py --owner <owner> --dry-run          # what it would enroll
-    python3 tools/worker_repos.py --owner <owner> --check-push       # enroll; can it push?
+    # Review [repos_from] github in each configuration: the sample admits ikigai-rs.
+    # Set except = ["name"] for exclusions; explicit [repos.<name>] overrides still work.
     python3 tools/worker.py --config .gonk/worker-codex.toml plan    # each loop, checked
     python3 tools/worker.py --config .gonk/worker-codex.toml run --once
 
-- **`init-agents`** writes `.gonk/worker-<agent>.toml` for each agent (git-ignored, like
-  `worker.toml`), from the machine's `.gonk/worker.toml` when it has one, so its settings and
+- **`init-agents`** (`setup` is an alias) writes `.gonk/worker-<agent>.toml` for each agent
+  (git-ignored, like `worker.toml`), from the machine's `.gonk/worker.toml` when it has one, so its settings and
   repositories come along, and from [`worker.sample.toml`](worker.sample.toml) otherwise. Each
   gets `labels = ["worker:<name>", "agent:<agent>"]`, `holder = "<name>-<agent>"`, and the
   `[agent]` table that has run an item end to end here: Claude Code with
@@ -599,8 +599,14 @@ will act on sits unexplained:
   `Dispatched while blocked by <ledger>#N: <why>` after its two routing lines.
 - It **warns**, and still dispatches, when no worker whose labels the item will carry lists
   the item's repository in the newest `Worker:` line on its status item (below). The status
-  items are `--status-item N` (repeatable), else `status_items = [N, …]` in `.gonk/gonk.toml`;
-  with none, or no line for a worker with those labels, it says the check could not run.
+  items are discovered from open ledger items labelled `worker-status:<name>`. Coverage
+  includes the worker's allowed organization and exclusions, with explicit repositories
+  taking precedence. Legacy `--status-item N` and `status_items = [N, …]` still work.
+  With no status or matching announcement, it says the check could not run.
+- It assigns priority 3 only when the item has no priority (`--priority N` chooses the value).
+  `--keep-unprioritized` leaves it unset and warns that prioritized work ranks ahead of it.
+  The priority-only item sink changes neither title nor body, so the dispatch digest holds.
+  After dispatch it prints rank in `next` for the routing labels, or the exclusion reason.
 
 The worker takes an item only when the **newest** dispatch whose author is one of its
 `routers` names every label in its `labels` and the item's `repo:` label, and its digest
@@ -672,20 +678,46 @@ the ledger, each as a comment by the worker's own principal, with no token, acco
   again. The other skips (claimed, awaiting the dispatcher, handed back already, one agent per
   repository) are not the dispatcher's to fix, and stay in the journal; an item claimed or
   awaiting its dispatcher is never commented on.
-- **What the loop takes, on its status item.** At start, with a `[usage] status_item`, the loop
-  posts one line, when it differs from the one it last posted there:
+- **What the loop takes, on its status item.** At start the loop labels its existing
+  `[usage] status_item` with `worker-status:<name>` (from its `worker:<name>` routing label).
+  With no configured number it discovers a single open item with that label; the dispatcher
+  can label an existing standing item once. If a restricted worker grant refuses the label,
+  the loop asks the dispatcher to add it and still publishes its status. It posts one line
+  when its admission changes:
 
-      Worker: holder=<holder> loop=<loop> labels=<label>,… repos=<name>,…
+      Worker: holder=<holder> loop=<loop> labels=<label>,… repos=<name>,… repos_from=<org> except=<name>,…
 
   (`loop=` only for one of several loops; `gonk.parse_worker_status` reads it back), so a
   dispatcher can check that a worker carries an item's labels and repository before sending it
   there. A running loop keeps the configuration it started with, so a changed one is posted
-  when the loop restarts.
+  when the loop restarts. New repositories under the admitted organization are derived per
+  item and need no configuration edit or restart. Coverage describes configuration admission;
+  GitHub access is checked by the worker before taking an item.
 
 #### Enrolling every repository
 
-A worker takes an item only for a repository its configuration names (`[repos.<name>]`).
-[`tools/worker_repos.py`](../tools/worker_repos.py) adds them from GitHub:
+A worker admits repositories through an organization allowance or explicit stanzas. New
+configurations use this allowance by default; review the organization before running:
+
+```toml
+[repos_from]
+github = "ikigai-rs"
+except = ["sensitive-repo"]  # optional names, compared without case
+```
+
+An unlisted `repo:<name>` becomes `https://github.com/<org>/<name>.git`, GitHub `<org>/<name>`,
+base `main`. Each candidate is checked with `gh api repos/<org>/<name>` for existence, matching
+identity (a redirect outside the configured repository is refused) and `permissions.push`.
+Failures are skipped with the reason, said once on the dispatched item. Router authorization
+and this configuration fence both apply. An explicit `[repos.<name>]` always wins, including
+remote, owner, base and exclusions. Names cannot include an owner or path.
+
+Existing explicit configurations require no migration. To opt in, add `[repos_from]` to each
+loop and restart once. Every new repository in the organization then needs neither an edit
+nor a restart. Fine-grained tokens still need access to each new repository on GitHub.
+
+For operators who prefer explicit lists,
+[`tools/worker_repos.py`](../tools/worker_repos.py) still adds them from GitHub:
 
     python3 tools/worker_repos.py --owner <owner> --dry-run     # the diff it would make
     python3 tools/worker_repos.py --owner <owner>               # make it
@@ -725,7 +757,8 @@ account that could push with another credential. The first push is the final wor
 | `routers` | (required) | the principals whose dispatch routes an item here, e.g. `["urn:iki:gonk:passkey:<credential id>"]`; never free text ("Who may route work here") |
 | `holder` | `.gonk/local.toml`'s | the holder name this loop claims under, e.g. `<name>-<agent>`; a label, never a new identity |
 | `without` | none | items carrying ANY of these are never taken |
-| `[repos.<name>]` | (at least one) | `remote` (what `git clone` takes), `github` (`owner/name`, read from a github.com remote when omitted), `base` (default `main`) |
+| `[repos_from]` | none; sample uses `ikigai-rs` | `github` is one allowed organization; optional `except` excludes names; requires this table or an explicit repository |
+| `[repos.<name>]` | none | `remote` (what `git clone` takes), `github` (`owner/name`, read from a github.com remote when omitted), `base` (default `main`) |
 | `[agent]` | (required) | `preset` (`claude`, `codex`, `hermes`, `hermes-profile` with `profile`) or `command`, a list with placeholders `{prompt}` `{prompt_file}` `{workdir}` `{branch}` `{item}` `{repo}` `{report_file}` `{profile}` |
 | `work_root` | `~/work` | worktrees go to `<work_root>/<repo>/item-<N>`; must be under agent's home |
 | `lease`, `renew_every` | `30m`, a third of the lease | the claim's lease, and the heartbeat that renews it |

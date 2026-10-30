@@ -39,7 +39,13 @@ def main() -> int:
     code, out, err = 0, "", ""
     slug = flag(argv, "-R", state.get("slug", "acme/lib"))
 
-    if argv[:2] == ["pr", "create"]:
+    if argv[:1] == ["api"] and len(argv) == 2 and argv[1].startswith("repos/"):
+        repository = state.get("repositories", {}).get(argv[1][len("repos/") :])
+        if repository is None:
+            code, err = 1, "HTTP 404: Not Found"
+        else:
+            out = json.dumps(repository)
+    elif argv[:2] == ["pr", "create"]:
         head = flag(argv, "--head")
         sha = subprocess.run(
             ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True

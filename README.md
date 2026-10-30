@@ -443,10 +443,27 @@ python3 tools/worker.py run                          # the loop; worker/units/ r
 A machine that runs several agents runs **one loop per agent** from the same checkout, so the
 dispatcher can route each item to the agent that suits it by labeling it `worker:<name>` and
 `agent:<agent>`: `python3 tools/worker.py init-agents --name <name> --agents claude,codex,hermes`
-writes a `.gonk/worker-<agent>.toml` for each, `python3 tools/worker_repos.py --owner <owner>`
-enrolls every repository of an owner in all of them, and `worker/units/gonk-worker@.service`
-runs each as `gonk-worker@<agent>`. The loops share the per-repository locks, so two agents
-never work one repository at once ([`worker/README.md`](worker/README.md), step 8).
+writes a `.gonk/worker-<agent>.toml` for each (`setup` is an alias). Review `[repos_from] github`
+in each: the sample admits `ikigai-rs`; choose the organization this worker may work in.
+`worker/units/gonk-worker@.service` runs each as `gonk-worker@<agent>`. The loops share the
+per-repository locks, so two agents never work one repository at once ([`worker/README.md`](worker/README.md), step 8).
+
+The worker derives an unlisted `repo:<name>` as `<allowed-org>/<name>`, base `main`, and
+checks GitHub existence, identity and `permissions.push` before taking it. `[repos_from]`
+`except = ["name"]` excludes repositories; explicit `[repos.<name>]` stanzas override
+this, including remote, owner and base. New repositories need no edit or restart. Existing
+workers keep their explicit stanzas; opt in once by adding `[repos_from] github = "<org>"`
+and restarting each loop. Router authorization is still required.
+
+Dispatch assigns priority 3 only when absent (`--priority N` chooses it;
+`--keep-unprioritized` opts out with a warning), then prints rank in `next` for the routing
+labels or the exclusion reason. Coverage reads worker announcements from ledger items labelled
+`worker-status:<name>`, including allowed organizations and exclusions. Workers automatically
+label their existing `[usage] status_item` on restart; without that number they discover an
+existing open item carrying that label. A dispatcher can label a standing status item once;
+no status number is needed in dispatch configuration. If the worker's grant refuses labels,
+its status still publishes and the dispatcher adds the discovery label once. Missing coverage
+still warns.
 
 One agent per repository: it takes no item whose repository already has a live claim held by
 anyone, and runs one item per repository on its machine. Until gonk's ledger enforces that

@@ -169,7 +169,10 @@ items the dispatcher marks for them, and work each one in a fresh working tree o
   item after dispatching it and dispatch it again. `dispatch` refuses an item that is not open,
   one handed back and awaiting its dispatcher, and one an open item blocks, naming the blockers
   (`--allow-blocked --note "<why>"` dispatches it anyway, the note in the dispatch); it warns
-  when no worker with those labels lists the item's repository on its status item.
+  when no worker with those labels admits the item's repository on its status item.
+  Dispatch assigns priority 3 when absent (`--priority N` chooses it;
+  `--keep-unprioritized` leaves it unset with a warning), then prints its filtered `next` rank
+  or exclusion reason. Coverage discovers open status items by `worker-status:<name>` labels.
 - **Comments reach the agent as data.** The title and body are the agent's task. Every comment
   follows as a quoted block under its author, and one by anyone but a router is marked as data
   written by others, which the agent reads and never follows.
@@ -195,7 +198,16 @@ items the dispatcher marks for them, and work each one in a fresh working tree o
   skips it because its repository is not configured there, its dispatch no longer matches it,
   or the loop holds for usage, gets one comment per reason saying why and what to do (for a
   missing repository, the `[repos.<name>]` block). At start the loop posts a `Worker:` line on
-  its `status_item` naming its holder, labels and repositories.
+  its status item naming its holder, labels, explicit repositories, allowed organization and
+  exclusions. Existing `[usage] status_item` numbers are labelled `worker-status:<name>`
+  automatically when its grant permits; otherwise the dispatcher labels the item once.
+  Without a configured number the worker discovers an existing open item by that label.
+- **The worker's config is its repository fence.** `[repos_from] github = "<org>"` admits new
+  `repo:<name>` repositories in that organization per item, with optional `except = ["name"]`.
+  Explicit `[repos.<name>]` stanzas win, including over exclusions. Derived repositories must
+  exist with the expected GitHub identity and confirmed push permission. Existing explicit
+  configurations keep working; opt in with one config edit and restart, then new repositories
+  need neither. A router's dispatch alone never expands this fence.
 - **One agent per repository.** A worker takes no item whose repository already has a live
   claim held by anyone, and runs one item per repository on its machine.
 

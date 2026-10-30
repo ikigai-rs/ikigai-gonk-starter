@@ -196,7 +196,10 @@ class FakeLedger:
                 else:
                     ready.append(item)
             limit = int(args.get("limit", 3))
-            ranking = [{"rank": i + 1, "item": served(it)} for i, it in enumerate(ready[:limit])]
+            ranking = [
+                {"rank": i + 1, "item": served(it)}
+                for i, it in enumerate(ready if limit == 0 else ready[:limit])
+            ]
             doc = {"schema": 1, "ledger": self.name, "ready": len(ready), "ranking": ranking}
             return gonk.Answer(0, json.dumps({**doc, "excluded": excluded}), "")
         if verb == "source" and name == "items":
@@ -211,6 +214,13 @@ class FakeLedger:
             if item is None:
                 return gonk.Answer(1, "", f"no item {name[5:]}")
             return gonk.Answer(0, json.dumps({"schema": 1, "item": served(item)}), "")
+
+        if verb == "sink" and name.startswith("item:"):
+            item = self.items.get(int(name[5:]))
+            if item is None:
+                return gonk.Answer(1, "", "no such item")
+            item["priority"] = int(args["priority"])
+            return gonk.Answer(0, "updated priority\n", "")
 
         item = self.items.get(int(args.get("item", 0)))
         if item is None:

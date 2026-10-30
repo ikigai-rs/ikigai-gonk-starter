@@ -94,7 +94,8 @@ class Configuration(unittest.TestCase):
         self.assertEqual(wc.routers, [DISPATCHER])
         self.assertEqual(wc.labels, ["worker:my-worker"])
         self.assertEqual(wc.command, ["claude", "-p", "{prompt}"])
-        self.assertEqual(wc.repos["library"].github, "acme/library")
+        self.assertEqual(wc.repos_from, "ikigai-rs")
+        self.assertEqual(wc.repository("library")[0].github, "ikigai-rs/library")
 
     def test_hermes_with_a_profile(self):
         text = 'labels = ["worker:w1"]\n[agent]\npreset = "hermes-profile"\nprofile = "coder"\n'
