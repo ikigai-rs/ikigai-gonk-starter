@@ -668,5 +668,41 @@ class UiConventions(unittest.TestCase):
             self.assertNotIn(private, doc, private)
 
 
+SKIMMABLE_HEADING = "## Writing text people skim (optional)"
+
+
+class SkimmableText(unittest.TestCase):
+    """Every generated repository, whatever its process, carries the skimmable-text skill and
+    its optional AGENTS.md pointer after the ikigai-style guides."""
+
+    def test_every_process_carries_the_skill_and_optional_pointer(self):
+        for process in [None, ["solo"], ["hub"], ["workers"], ["audits"]]:
+            repo = scratch(self)
+            new.generate(repo, "python", process)
+            label = ",".join(process or ["default"])
+            for name in ["SKILL.md", "sets.py"]:
+                rel = Path("skills") / "skimmable-text" / name
+                self.assertEqual((repo / rel).read_bytes(), (ROOT / rel).read_bytes(), label)
+            agents = (repo / "AGENTS.md").read_text()
+            self.assertEqual(agents.count(SKIMMABLE_HEADING), 1, label)
+            self.assertIn("skills/skimmable-text/SKILL.md", agents, label)
+            self.assertIn("Nothing requires it.", agents, label)
+            self.assertLess(
+                agents.index(IKIGAI_STYLE_HEADING), agents.index(SKIMMABLE_HEADING), label
+            )
+            harness = (repo / ".gonk" / "harness" / "harness.ttl").read_text()
+            self.assertIn("guide:skimmable-text", harness, label)
+
+    def test_the_skill_names_itself_and_its_source(self):
+        skill = (ROOT / "skills" / "skimmable-text" / "SKILL.md").read_text(encoding="utf-8")
+        front = skill.split("---")[1]
+        self.assertIn("\nname: skimmable-text\n", front)
+        self.assertIn("\ndescription: ", front)
+        self.assertIn("Shreya Shankar", skill)
+        self.assertIn("https://fsdatalab.github.io/blog/agent-text-at-scale/", skill)
+        for heading in ["## The five principles", "## Write mode", "## Review mode"]:
+            self.assertIn(heading, skill, heading)
+
+
 if __name__ == "__main__":
     unittest.main()
