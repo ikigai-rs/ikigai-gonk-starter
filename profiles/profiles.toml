@@ -30,6 +30,7 @@ sections = [
     "accessibility",
     "layout",
     "building-ikigai-style",
+    "skimmable-text",
     "spec-first",
     "workers",
     "hub",
@@ -52,6 +53,7 @@ sections = [
     "accessibility",
     "layout",
     "building-ikigai-style",
+    "skimmable-text",
     "claude-hook",
 ]
 # The optional Claude Code hook that refuses an edit without a claim (hooks/claude/). Every

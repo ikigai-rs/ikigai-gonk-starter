@@ -62,6 +62,8 @@ STARTER_FILES = [
     "docs/windows.md",
     "docs/resource-design.md",
     "docs/ui-conventions.md",
+    "skills/skimmable-text/SKILL.md",
+    "skills/skimmable-text/sets.py",
     "tools/gonk.py",
     "tools/harness.py",
     "hooks/claude/README.md",
