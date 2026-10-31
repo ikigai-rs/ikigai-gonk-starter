@@ -17,9 +17,16 @@ down before any code is designed.
 
 ## The five steps
 
-1. **Sets.** List every kind of thing in the domain. Give each a name pattern
-   (`urn:<ns>:<set>:{var}`) and one line on what a member IS. Include the questions people
-   ask ("whose turn", "who won") as sets too: a question is a resource.
+1. **Sets.** List every kind of thing in the domain. Give each a name pattern and one line
+   on what a member IS. Include the questions people ask ("whose turn", "who won") as sets
+   too: a question is a resource. Name them this way, in URNs and HTTP paths alike:
+   - **Singular, never plural:** `urn:<ns>:account`, `/account`; never `accounts`.
+   - **The left-most element is the TYPE, and it names the WHOLE SET:** `/account` is every
+     account, whether or not anyone ever reads it.
+   - **Each level below partitions that set by a NAMED KEY:** `urn:<ns>:account:id:{id}` and
+     `/account/id/12345`, not `/account/12345`; `/account/state/tx` (the accounts in Texas);
+     `/account/status/gold`. Naming the key lets several ways of slicing the set coexist
+     without colliding: an id `tx` and a state `tx` are different names.
 2. **Atoms.** Mark the FEW sets that must HOLD state: the ones written by Sink. These, and
    only these, are code that stores. Everything else must justify being code.
 3. **Compositions.** For every other set, say how it is COMPOSED from other names,
