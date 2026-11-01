@@ -7,7 +7,7 @@ guide:claim-before-write a harness:Guide ;
 
 guide:a-claim-is-a-lease a harness:Guide ;
     rdfs:label "a claim is a lease" ;
-    rdfs:comment "A claim runs for its lease, and is renewed by claiming the same item again before the lease runs out." ;
+    rdfs:comment "A claim runs for its lease, and is renewed before the lease runs out (`claim --renew`, or claiming the same item again); a renewal never takes an item back." ;
     harness:statedIn "AGENTS.md" ; harness:section "1. Claim the item before you write" ;
     harness:direction harness:feedforward ; harness:execution harness:inferential ;
     harness:stage harness:toolCall ; harness:category harness:authoritySafety .

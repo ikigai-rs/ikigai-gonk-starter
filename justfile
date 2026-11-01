@@ -21,7 +21,7 @@ seed *flags:
 next:
     python3 tools/gonk.py next
 
-# Take an item (or renew this tree's lease on it): just claim 12 [--lease 2h]
+# Take an item (or renew this tree's lease on it): just claim 12 [--lease 2h] [--renew]
 claim item *flags:
     python3 tools/gonk.py claim {{item}} {{flags}}
 

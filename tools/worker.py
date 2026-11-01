@@ -522,8 +522,13 @@ class Ledger:
         doc, err = self._json(f"source {self.cfg.resource(f'item:{number}')} as=application/json")
         return (doc.get("item") if doc else None), err
 
-    def claim(self, number: int, holder: str, lease: str) -> gonk.Answer:
+    def claim(self, number: int, holder: str, lease: str, renew: bool = False) -> gonk.Answer:
+        """Take item `number` for `holder`, or with `renew` renew a claim it holds now:
+        `renew=true` never takes, and is a `Conflict` when the claim changed hands or was
+        released (ikigai-ledger 0.7.0, ledger item 1178)."""
         command = f"sink {self.cfg.resource('claim')} item={number} lease={lease}"
+        if renew:
+            command += " renew=true"
         return self.ikigai.run(command, stdin=holder)
 
     def release(self, number: int, holder: str) -> gonk.Answer:
@@ -760,9 +765,10 @@ class RepoLock:
 
 class Heartbeat(threading.Thread):
     """Renews the claim every `every` seconds while the item is worked. Each beat first reads
-    the item, because a claim's DELETE releases whoever holds it and a CLAIM by the same holder
-    of a free item succeeds: a renewal alone would silently re-take an item the dispatcher had
-    released. A definite answer that the claim is gone (another holder, no holder, closed, or
+    the item, because a plain CLAIM by the same holder of a free item succeeds, so a renewal
+    alone would silently re-take an item the dispatcher had released; and it renews with
+    `renew=true`, which never takes, so a release between the read and the renewal cannot
+    either. A definite answer that the claim is gone (another holder, no holder, closed, or
     the renewal refused) sets `lost`. A transport failure is retried at the next beat."""
 
     def __init__(self, ledger: Ledger, number: int, holder: str, lease: str, every: int):
@@ -796,7 +802,7 @@ class Heartbeat(threading.Thread):
             who = f"held by `{held}`" if held else "released (held by nobody)"
             self.why = f"item {display} is {who}, not `{self.holder}`"
             return False
-        answer = self.ledger.claim(self.number, self.holder, self.lease)
+        answer = self.ledger.claim(self.number, self.holder, self.lease, renew=True)
         if answer.ok:
             self.renewals += 1
             return True
