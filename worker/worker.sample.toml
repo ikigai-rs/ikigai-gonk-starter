@@ -75,6 +75,16 @@ preset = "claude"
 # status_item = 1234      # the item the report is commented on; omit to only log it
 #                         # (the loop also posts its `Worker:` line there: labels, repos)
 
+# Free disk and kept work (the defaults). Under floor_gb free on the volume holding work_root,
+# the loop takes no new item and says why in its log and in a `Disk:` line on its status item,
+# then takes items again by itself once space returns (0 turns the floor off). Worktrees kept
+# after a run without evidence, and items' logs, are removed once older than prune_after, at the
+# loop's start and once a day; one whose branch has an open pull request is kept.
+# [disk]
+# floor_gb = 30
+# every = "6h"            # how often the Disk: line is posted between crossings of the floor
+# prune_after = "7d"      # "0s" keeps everything
+
 # The worker's own fence: derive repo:<name> as this GitHub organization's repository.
 # Edit this organization before running. New repositories need no stanza and no restart.
 # The token must have push permission; the worker checks GitHub before taking derived work.

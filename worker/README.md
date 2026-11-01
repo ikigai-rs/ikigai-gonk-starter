@@ -766,6 +766,7 @@ account that could push with another credential. The first push is the final wor
 | `ci_wait`, `ci_poll` | `10m`, `20s` | how long to wait, after the agent exits, for its pull request's CI to finish |
 | `poll` | `60s` | between polls of `next` when nothing is ready |
 | `keep` | `false` | keep every worktree after its hand-back (`run --keep` for one run) |
+| `[disk]` | `floor_gb = 30`, `every = "6h"`, `prune_after = "7d"` | under `floor_gb` free on the work root's volume the loop takes no new item (`0` turns the floor off); `every` paces its `Disk:` line; kept worktrees and logs older than `prune_after` are removed (`"0s"` keeps them) |
 | `gh`, `stop_file` | `gh`, `.gonk/state/worker/stop` (a loop's own: `.gonk/state/worker/<agent>/stop`) | the GitHub CLI; the file that stops the loop between items (`.gonk/state/worker/stop` stops every loop) |
 
 The presets are each agent's documented non-interactive form (`claude -p`, `codex exec`,
@@ -863,6 +864,20 @@ the Pop!_OS 24.04 worker, `run --once`) showed, and what is still to try:
    hand-back there. With no pull request, the first line of the agent's report file (a URL) is
    the evidence; with neither, the item goes back with a note and no evidence. An overrun goes
    back the same way, naming the overrun.
+7. **Disk.** Before each item the loop reads the free space on the volume holding the work
+   root. Under `[disk] floor_gb` (default 30) it takes no new item, logs why once, and posts
+   `Disk: free=<GB>GB floor=<GB>GB state=held read=<time> (<why>)` on its status item; it
+   takes items again by itself once a reading is back at or over the floor (`state=taking`).
+   The line is posted at the first reading, at each crossing, and every `[disk] every`
+   (default 6h) between; a failed reading is `free=unknown` and never holds the loop. An item
+   already running is not stopped. Items leave things behind: a worktree kept after a run
+   with no evidence, a lost claim or an overrun (or every one, with `keep`), and every item's
+   log. When the loop starts and once a day after, it removes each worktree under the work
+   root, with its log, prompt and report, and each log of a removed worktree, once the newest
+   of them is older than `[disk] prune_after` (default 7 days). A worktree whose branch has an
+   open pull request is never pruned, nor one whose pull requests `gh` cannot list, nor a
+   repository with an item running on this machine; its local branch goes with it, and the
+   pushed branch stays on GitHub.
 
 `run --once` exits 0 when it handed an item back with evidence, 3 when there was nothing to
 take, 4 when it took one and could not hand it back with evidence (lost, overrun, stopped,

@@ -344,8 +344,10 @@ class Rig:
     def gh_argv(self) -> list[str]:
         return [sys.executable, str(FAKES / "gh.py"), "--state", str(self.gh_state)]
 
-    def configure(self, file: str = "worker.toml", **overrides) -> Path:
-        """Write `.gonk/<file>`: worker.toml, or one loop's worker-<agent>.toml."""
+    def configure(self, file: str = "worker.toml", disk: str = "floor_gb = 0", **overrides) -> Path:
+        """Write `.gonk/<file>`: worker.toml, or one loop's worker-<agent>.toml. Its [disk]
+        table is `disk`: the floor is off by default, so no test depends on this machine's free
+        disk (tests/test_worker_disk.py sets it, with a fake reader)."""
         settings = {
             "labels": '["worker:w1"]',
             "work_root": '"~/work"',
@@ -380,6 +382,7 @@ class Rig:
         lines += ["", "[agent]", f"command = {json.dumps(command)}"]
         lines += ["", "[repos.lib]", f'remote = "{self.origin}"', 'github = "acme/lib"']
         lines += ["", "[repos.other]", f'remote = "{self.origin}"', 'github = "acme/other"']
+        lines += ["", "[disk]", disk]
         path = self.checkout / ".gonk" / file
         path.write_text("\n".join(lines) + "\n")
         return path

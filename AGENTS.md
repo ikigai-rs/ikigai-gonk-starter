@@ -204,6 +204,12 @@ items the dispatcher marks for them, and work each one in a fresh working tree o
   `status_item`, with no token or account id. Above `threshold` percent (default 85) the loop
   takes no NEW item for that agent, and says so, until a reading is under it or its reset time
   has passed; an item already running is not stopped.
+- **Free disk, and kept work pruned.** Before each item the worker reads the free space on the
+  volume holding its work root. Under `[disk] floor_gb` (default 30) it takes no NEW item, says
+  why in its log and in a `Disk:` line on its status item, and takes items again by itself once
+  space returns. Worktrees kept after a run without evidence, and items' logs, are removed once
+  older than `[disk] prune_after` (default 7 days), when the loop starts and once a day; one
+  whose branch has an open pull request is never removed.
 - **A skip the dispatcher can fix is said on the item.** An item dispatched to a worker that
   skips it because its repository is not configured there, its dispatch no longer matches it,
   or the loop holds for usage, gets one comment per reason saying why and what to do (for a
