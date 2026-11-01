@@ -340,6 +340,64 @@ class Init(unittest.TestCase):
         self.assertIn("nothing to enroll", out)
 
 
+def report_key(note: str) -> str:
+    """The key `report` sends for `note` on acme#12 as agent-1, spelled out here so that a
+    change to it (which would let a retry across the change post twice) is a test that fails."""
+    text = "\n".join(["acme", "12", "agent-1", "report", note])
+    return "gonk-starter:report:sha256:" + hashlib.sha256(text.encode()).hexdigest()
+
+
+class KeyedComments(FakeIkigai):
+    """One item, acme#12, as the ledger keeps it: a claim with `renew=true` and `from=`, and
+    comments with `key=` (ikigai-ledger 0.7.0 and later, `Error: conflict: …` as the cli
+    prints it). With `timeout_first`, the first comment lands and its answer never arrives."""
+
+    def __init__(self, timeout_first=False):
+        super().__init__()
+        self.holder: str | None = None
+        self.comments: list[str] = []
+        self.keys: set[str] = set()
+        self.existing = 0
+        self.timeout_first = timeout_first
+
+    @property
+    def commands(self):
+        return [c for c, _ in self.calls]
+
+    def run(self, command, stdin=None):
+        self.calls.append((command, stdin))
+        verb, name, *words = command.split()
+        args = dict(w.split("=", 1) for w in words)
+        conflict = lambda why: gonk.Answer(1, "", f"Error: conflict: acme#12 {why}\n")  # noqa: E731
+        if name.endswith(":claim") and verb == "sink":
+            if args.get("renew") == "true" and self.holder != stdin:
+                return conflict(f"is no longer held by {stdin}")
+            if self.holder not in (None, stdin):
+                return conflict(f"is already claimed by {self.holder}")
+            self.holder = stdin
+            return ok(f"acme#12 claimed by {stdin}\n")
+        if name.endswith(":claim") and verb == "delete":
+            if "from" in args and self.holder != args["from"]:
+                return conflict(f"is held by {self.holder}, not {args['from']}")
+            self.holder = None
+            return ok("acme#12 released\n")
+        if name.endswith(":comment"):
+            key = args.get("key")
+            if key in self.keys:
+                self.existing += 1
+                return ok("commented on acme#12 (urn:…) existing\n")
+            self.keys.add(key)
+            self.comments.append(stdin)
+            if self.timeout_first:
+                self.timeout_first = False
+                return gonk.Answer(124, "", "no answer within 30s")
+            return ok("commented on acme#12 (urn:…)\n")
+        if name.endswith(":close"):
+            self.holder = None  # the close releases the claim (ikigai-ledger 0.7.0)
+            return ok("closed acme#12 (done) released agent-1\n")
+        return gonk.Answer(1, "", f"no scripted answer for {command!r}")
+
+
 class Claims(unittest.TestCase):
     def setUp(self):
         self.repo = scratch_repo(self)
@@ -376,8 +434,73 @@ class Claims(unittest.TestCase):
     def test_a_refused_claim_records_nothing(self):
         fake = FakeIkigai([(":claim", gonk.Answer(1, "", "error: conflict: held by someone"))])
         code, _, _ = run(self.repo, ["claim", "12"], fake)
-        self.assertEqual(code, 1)
+        self.assertEqual(code, gonk.CONFLICT_EXIT)
         self.assertFalse((self.repo / ".gonk" / "state" / "claim.toml").exists())
+
+    def test_a_conflict_has_an_exit_of_its_own(self):
+        # The kind is read from the cli's `Error: <kind>: …`, never from the ledger's wording,
+        # so a lost race (3) is told from gonk not answering (1) and from this tool's own
+        # refusal of a flag (2).
+        for err, want in [
+            ("Error: conflict: acme#12 was claimed by two first\n", gonk.CONFLICT_EXIT),
+            ("error: conflict: anything at all", gonk.CONFLICT_EXIT),
+            ("Error: denied: no claim grant\n", 1),
+            ("Error: the detail mentions a conflict: but the kind is not one\n", 1),
+            ("no answer within 30s from the socket", 1),
+        ]:
+            fake = FakeIkigai([(":claim", gonk.Answer(1, "", err))])
+            self.assertEqual(run(self.repo, ["claim", "12"], fake)[0], want, err)
+        self.assertFalse(gonk.Answer(0, "", "conflict: printed by a success").conflict)
+
+    def test_renew_sends_renew_and_never_takes(self):
+        fake = FakeIkigai(
+            [(":claim", ok("acme#12 renewed by agent-1 until 2026-10-10T23:00:00Z\n"))]
+        )
+        code, _, _ = run(self.repo, ["claim", "12", "--renew", "--lease", "2h"], fake)
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            fake.calls,
+            [("sink urn:gk:iki:ledger:acme:claim item=12 lease=2h renew=true", "agent-1")],
+        )
+        state = gonk.read_toml(self.repo / ".gonk" / "state" / "claim.toml")
+        self.assertEqual((state["item"], state["expires"]), (12, "2026-10-10T23:00:00Z"))
+
+    def test_claiming_the_item_this_tree_holds_is_a_renewal(self):
+        # A plain claim by the same holder takes a FREE item, so a "renewal" after a release
+        # silently took the item back. Claiming what this tree holds now sends renew=true.
+        fake = FakeIkigai([(":claim", ok("acme#12 claimed by agent-1\n"))])
+        run(self.repo, ["claim", "12"], fake)
+        run(self.repo, ["claim", "12"], fake)
+        self.assertEqual(
+            [c for c, _ in fake.calls],
+            [
+                "sink urn:gk:iki:ledger:acme:claim item=12 lease=30m",
+                "sink urn:gk:iki:ledger:acme:claim item=12 lease=30m renew=true",
+            ],
+        )
+
+    def test_a_refused_renewal_is_a_claim_gone(self):
+        fake = FakeIkigai([(":claim", ok("acme#12 claimed by agent-1\n"))])
+        run(self.repo, ["claim", "12"], fake)
+        refused = "Error: conflict: acme#12 is no longer held by agent-1: the claim changed hands"
+        fake = FakeIkigai([(":claim", gonk.Answer(1, "", refused))])
+        code, _, err = run(self.repo, ["claim", "12"], fake)
+        self.assertEqual(code, gonk.CONFLICT_EXIT)
+        self.assertIn("renew=true", fake.calls[0][0])
+        self.assertIn("no longer holds item 12: stop writing", err)
+        self.assertFalse((self.repo / ".gonk" / "state" / "claim.toml").exists())
+
+    def test_a_renewal_gonk_did_not_answer_keeps_the_claim(self):
+        fake = FakeIkigai([(":claim", ok("acme#12 claimed by agent-1\n"))])
+        run(self.repo, ["claim", "12"], fake)
+        fake = FakeIkigai([(":claim", gonk.Answer(124, "", "no answer within 30s"))])
+        self.assertEqual(run(self.repo, ["claim", "12", "--renew"], fake)[0], 1)
+        self.assertTrue((self.repo / ".gonk" / "state" / "claim.toml").exists())
+
+    def test_renew_cannot_take_over(self):
+        code, _, err = run(self.repo, ["claim", "12", "--renew", "--takeover-from", "old"])
+        self.assertEqual(code, 2)
+        self.assertIn("cannot take one over", err)
 
     def test_a_bad_lease_is_refused_locally(self):
         code, _, err = run(self.repo, ["claim", "12", "--lease", "soon"])
@@ -398,6 +521,7 @@ class Claims(unittest.TestCase):
         url = "https://github.com/o/r/pull/3"
         code, _, _ = run(self.repo, ["report", "12", "--evidence", url, "--note", "ok"], fake)
         self.assertEqual(code, 0)
+        note = f"Evidence: {url}\n\nok"
         self.assertEqual(
             fake.calls[1:],
             [
@@ -405,11 +529,14 @@ class Claims(unittest.TestCase):
                 # item 1199), so `next` stops offering the item; the Evidence: prefix stays
                 # for the ledgers that have no such state. Over the socket the holder is the
                 # comment's free-text author, since the door names nobody there.
+                # The key makes a retried report post its evidence once; `from=` makes the
+                # release a compare-and-set on this tree's holder.
                 (
-                    "sink urn:gk:iki:ledger:acme:comment item=12 handback=true author=agent-1",
-                    f"Evidence: {url}\n\nok",
+                    "sink urn:gk:iki:ledger:acme:comment item=12 handback=true author=agent-1 "
+                    f"key={report_key(note)}",
+                    note,
                 ),
-                ("delete urn:gk:iki:ledger:acme:claim item=12", ""),
+                ("delete urn:gk:iki:ledger:acme:claim item=12 from=agent-1", ""),
             ],
         )
         self.assertFalse((self.repo / ".gonk" / "state" / "claim.toml").exists())
@@ -428,12 +555,58 @@ class Claims(unittest.TestCase):
             fake.calls[1:],
             [
                 (
-                    "sink urn:gk:iki:ledger:acme:comment item=12 handback=true author=agent-1",
+                    "sink urn:gk:iki:ledger:acme:comment item=12 handback=true author=agent-1 "
+                    f"key={report_key('Evidence: ' + url)}",
                     f"Evidence: {url}",
                 ),
-                ("delete urn:gk:iki:ledger:acme:claim item=12", ""),
+                ("delete urn:gk:iki:ledger:acme:claim item=12 from=agent-1", ""),
             ],
         )
+
+    def test_a_retried_report_posts_its_evidence_once(self):
+        # The first report's comment lands but its answer does not come back within the
+        # timeout, so the agent runs the report again. The ledger writes nothing for a key it
+        # holds (`comment key=`, ikigai-ledger 0.7.0), and both runs send the same key.
+        ledger = KeyedComments(timeout_first=True)
+        run(self.repo, ["claim", "12"], ledger)
+        url = "https://github.com/o/r/pull/3"
+        code, _, _ = run(self.repo, ["report", "12", "--evidence", url], ledger)
+        self.assertEqual(code, 1)
+        self.assertTrue((self.repo / ".gonk" / "state" / "claim.toml").exists())
+        code, _, _ = run(self.repo, ["report", "12", "--evidence", url], ledger)
+        self.assertEqual(code, 0)
+        self.assertEqual(ledger.comments, [f"Evidence: {url}"])
+        self.assertEqual(ledger.existing, 1)
+        # Another report, with other evidence, is another comment.
+        run(self.repo, ["report", "12", "--evidence", url + "#2"], ledger)
+        self.assertEqual(len(ledger.comments), 2)
+
+    def test_a_release_that_lost_to_a_takeover_releases_nothing(self):
+        # A sibling took the item over after this tree's lease ran out. The release names this
+        # tree's holder, so the ledger refuses it and the sibling keeps its claim.
+        ledger = KeyedComments()
+        run(self.repo, ["claim", "12"], ledger)
+        ledger.holder = "agent-2"
+        code, _, err = run(self.repo, ["release", "--note", "out of time"], ledger)
+        self.assertEqual(code, gonk.CONFLICT_EXIT)
+        self.assertEqual(ledger.holder, "agent-2")
+        self.assertIn("delete urn:gk:iki:ledger:acme:claim item=12 from=agent-1", ledger.commands)
+        self.assertIn("no longer holds item 12: stop writing", err)
+        self.assertFalse((self.repo / ".gonk" / "state" / "claim.toml").exists())
+
+    def test_a_report_that_lost_to_a_takeover_releases_nothing(self):
+        ledger = KeyedComments()
+        run(self.repo, ["claim", "12"], ledger)
+        ledger.holder = "agent-2"
+        code, _, _ = run(self.repo, ["report", "12", "--evidence", "https://x.test/pr/1"], ledger)
+        self.assertEqual(code, gonk.CONFLICT_EXIT)
+        self.assertEqual(ledger.holder, "agent-2")
+        self.assertFalse((self.repo / ".gonk" / "state" / "claim.toml").exists())
+
+    def test_releasing_an_item_this_tree_does_not_hold_is_the_dispatchers_override(self):
+        fake = FakeIkigai([(":claim", ok("acme#7 released\n"))])
+        self.assertEqual(run(self.repo, ["release", "7"], fake)[0], 0)
+        self.assertEqual(fake.calls, [("delete urn:gk:iki:ledger:acme:claim item=7", "")])
 
     def test_reject_clears_the_hand_back_with_a_reason(self):
         fake = FakeIkigai([(":comment", ok("commented\n"))])
@@ -461,11 +634,12 @@ class Claims(unittest.TestCase):
         run(self.repo, ["claim", "12"], fake)
         code, _, _ = run(self.repo, ["release", "--note", "blocked on the schema"], fake)
         self.assertEqual(code, 0)
+        key = gonk.comment_key(gonk.load(self.repo), 12, "release", "blocked on the schema")
         self.assertEqual(
             fake.calls[1:],
             [
-                ("sink urn:gk:iki:ledger:acme:comment item=12", "blocked on the schema"),
-                ("delete urn:gk:iki:ledger:acme:claim item=12", ""),
+                (f"sink urn:gk:iki:ledger:acme:comment item=12 key={key}", "blocked on the schema"),
+                ("delete urn:gk:iki:ledger:acme:claim item=12 from=agent-1", ""),
             ],
         )
         self.assertFalse((self.repo / ".gonk" / "state" / "claim.toml").exists())
@@ -498,9 +672,19 @@ class Claims(unittest.TestCase):
             [c for c, _ in fake.calls[1:]],
             [
                 "sink urn:gk:iki:ledger:acme:close item=12 reason=done author=agent-1",
-                "delete urn:gk:iki:ledger:acme:claim item=12",
+                "delete urn:gk:iki:ledger:acme:claim item=12 from=agent-1",
             ],
         )
+
+    def test_a_close_that_released_the_claim_itself_is_a_close(self):
+        # Since ikigai-ledger 0.7.0 the close releases the claim, so the `from=` release after
+        # it is a Conflict: nothing left to release, and the close stands.
+        ledger = KeyedComments()
+        run(self.repo, ["claim", "12"], ledger)
+        code, _, _ = run(self.repo, ["close", "12", "--evidence", "https://x.test/pr/1"], ledger)
+        self.assertEqual(code, 0)
+        self.assertIsNone(ledger.holder)
+        self.assertFalse((self.repo / ".gonk" / "state" / "claim.toml").exists())
 
     def test_the_holder_is_the_author_over_the_socket_and_never_over_quic(self):
         # Over the owner's socket the door names nobody, so a hand-back would be stored

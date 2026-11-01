@@ -268,7 +268,7 @@ class AgainstARealGonk(unittest.TestCase):
         edit = {"tool_name": "Edit", "tool_input": {"file_path": str(one / "artifacts" / "x")}}
         self.assertEqual(hook.decide(edit), (0, ""))
         code, out = tool(two, "claim", "1")
-        self.assertEqual(code, 1, out)
+        self.assertEqual(code, gonk.CONFLICT_EXIT, out)
         self.assertIn("already claimed by one", out)
 
         # The lease runs out: not free, but no longer good for writing in tree one.
@@ -278,7 +278,7 @@ class AgainstARealGonk(unittest.TestCase):
         self.assertIn("ran out", out)
         self.assertEqual(hook.decide(edit)[0], 2)
         code, out = tool(two, "claim", "1")
-        self.assertEqual(code, 1, out)
+        self.assertEqual(code, gonk.CONFLICT_EXIT, out)
         self.assertIn("takeover=true from=one", out)
 
         # Tree two takes it over; tree one is told its claim is gone.
@@ -500,10 +500,11 @@ class AgainstARealGonk(unittest.TestCase):
         # Real refusals, recorded: the ledger's own wording is what fire_claim_refusal reads.
         self.assertEqual(tool(one, "file", "Lend a book")[0], 0)
         self.assertEqual(tool(one, "claim", "1", "--lease", "1s")[0], 0)
-        self.assertEqual(tool(two, "claim", "1")[0], 1)
-        self.assertEqual(tool(two, "claim", "1", "--takeover-from", "one")[0], 1)
+        conflict = gonk.CONFLICT_EXIT
+        self.assertEqual(tool(two, "claim", "1")[0], conflict)
+        self.assertEqual(tool(two, "claim", "1", "--takeover-from", "one")[0], conflict)
         time.sleep(1.5)
-        self.assertEqual(tool(two, "claim", "1")[0], 1)
+        self.assertEqual(tool(two, "claim", "1")[0], conflict)
         self.assertEqual(tool(one, "report", "1")[0], 2)  # no evidence
         fired_two = [f.control for f in harness.read_firings(two).firings]
         self.assertEqual(

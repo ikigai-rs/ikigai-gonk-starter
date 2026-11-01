@@ -239,10 +239,17 @@ class FakeLedger:
                 )
             if self.refuse_renewals and held:
                 return gonk.Answer(1, "", f"conflict: {display} is already claimed by someone")
+            renew = args.get("renew") == "true"
+            if renew and held is None:
+                # `renew=true` never takes (ikigai-ledger 0.7.0): a free item is a Conflict.
+                return gonk.Answer(
+                    1, "", f"conflict: {display} is no longer held by {holder}: it was released"
+                )
             lease = worker.seconds(args.get("lease", "30m"), "lease")
             expires = iso(now + timedelta(seconds=lease))
             item["claim"] = {"holder": holder, "kind": "machine", "expires": expires}
-            return gonk.Answer(0, f"claimed by {holder} until {expires}\n", "")
+            verb_done = "renewed" if renew else "claimed"
+            return gonk.Answer(0, f"{display} {verb_done} by {holder} until {expires}\n", "")
         if verb == "delete" and name == "claim":
             # No note, whatever is piped: the cli gives a batch's stdin only to a content-less
             # SINK, never to a DELETE, so gonk's ledger never sees one (ledger item 1229). An

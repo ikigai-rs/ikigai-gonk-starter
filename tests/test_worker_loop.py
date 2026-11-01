@@ -247,6 +247,30 @@ class TheLoop(unittest.TestCase):
         self.assertGreaterEqual(len(claims), 3)  # the claim, then the renewals
         self.assertTrue(all(holder == "w1" for c, holder in self.ledger.calls if c in claims))
         self.assertEqual(len(evidence_comments(self.ledger.items[n])), 1)
+        # The claim takes; every renewal sends `renew=true`, which never takes.
+        self.assertNotIn("renew=true", claims[0])
+        self.assertTrue(all(c.endswith(" renew=true") for c in claims[1:]), claims)
+
+    def test_a_release_between_the_read_and_the_renewal_is_not_taken_back(self):
+        # The heartbeat reads the item held by this worker, then the dispatcher releases it,
+        # then the renewal lands. A plain claim would take the free item back; `renew=true`
+        # is refused, and the claim is lost.
+        n = self.ledger.file("Released mid-beat", ["worker:w1", "repo:lib"])
+        self.ledger.force_claim(n, "w1")
+        held = dict(self.ledger.items[n], claim=dict(self.ledger.items[n]["claim"]))
+
+        fake = self.ledger
+
+        class ReleasedAfterTheRead(worker.Ledger):
+            def item(self, number):
+                fake.items[n]["claim"] = None  # the dispatcher's release
+                return held, None
+
+        cfg = gonk.Config(self.rig.checkout, "acme", None, "w1", {})
+        beat = worker.Heartbeat(ReleasedAfterTheRead(cfg, fake), n, "w1", "30m", 600)
+        self.assertFalse(beat.beat())
+        self.assertIn("the renewal was refused", beat.why)
+        self.assertIsNone(self.ledger.items[n]["claim"])
 
     def test_a_claim_lost_mid_run_stops_the_agent_and_releases_nothing(self):
         self.rig.agent_flags = ["--sleep", "60"]

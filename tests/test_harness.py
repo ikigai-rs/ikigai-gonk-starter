@@ -394,7 +394,7 @@ class TheCommandLine(unittest.TestCase):
 
 LEDGER = {
     "held": (
-        "error: conflict: acme#12 is already claimed by one. Release it first (`delete "
+        "Error: conflict: acme#12 is already claimed by one. Release it first (`delete "
         "urn:iki:ledger:acme:claim item=12`), or take it up with them — a claim is a fence"
     ),
     "expired": (
@@ -445,7 +445,8 @@ class SensorsFire(unittest.TestCase):
     def claim_refused(self, text: str, *flags: str) -> None:
         fake = FakeIkigai([(":claim", gonk.Answer(1, "", text))])
         code, _, _ = run(gonk.main, self.repo, ["claim", "12", *flags], fake)
-        self.assertEqual(code, 1)
+        # The ledger's refusals are each a Conflict; gonk not answering is not.
+        self.assertEqual(code, gonk.CONFLICT_EXIT if "conflict:" in text else 1)
 
     def test_claim_held_by_another(self):
         self.claim_refused(LEDGER["held"])

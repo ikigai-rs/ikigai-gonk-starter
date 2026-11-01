@@ -75,6 +75,14 @@ EVIDENCE_SHAPE = re.compile(r"^https?://\S+$")
 CLOSE_REASONS = ("done", "wontfix", "duplicate", "superseded", "audit-no-change")
 TIMEOUT_S = 30
 
+# The exit status of a command gonk refused with a `Conflict`: the ledger's answer that the
+# item is not in the state the command needs (held by another holder, a lease run out, a
+# renewal or a release that lost to a takeover). 1 is any other failure, gonk unreachable
+# included, and 2 a refusal of this tool's own (ConfigError). The kind is the error's, not its
+# wording: the cli prints every error as `Error: <kind>: <detail>` (ikigai-core's Display).
+CONFLICT_EXIT = 3
+CONFLICT = re.compile(r"^(?:error:\s*)?conflict:", re.IGNORECASE | re.MULTILINE)
+
 
 class ConfigError(Exception):
     """A configuration file is malformed, or a flag or value is refused."""
@@ -1023,6 +1031,11 @@ class Answer:
     def text(self) -> str:
         return (self.out + self.err).strip()
 
+    @property
+    def conflict(self) -> bool:
+        """Did gonk refuse this with a `Conflict` (see CONFLICT_EXIT)?"""
+        return not self.ok and CONFLICT.search(self.err) is not None
+
 
 class Ikigai:
     """Runs `ikigai` with this repository's mount. A test passes its own `run`."""
@@ -1111,7 +1124,7 @@ def parse_instant(text: str) -> datetime:
     return datetime.fromisoformat(text.replace("Z", "+00:00"))
 
 
-CLAIMED = re.compile(r"(?:claimed by|taken over from \S+ by) (\S+)(?: until (\S+))?")
+CLAIMED = re.compile(r"(?:claimed by|renewed by|taken over from \S+ by) (\S+)(?: until (\S+))?")
 
 
 def read_claim(cfg: Config) -> dict | None:
@@ -1611,7 +1624,45 @@ def set_key(path: Path, header: str, key: str, value: str) -> None:
 def show(answer: Answer) -> int:
     sys.stdout.write(answer.out)
     sys.stderr.write(answer.err)
-    return 0 if answer.ok else 1
+    if answer.ok:
+        return 0
+    return CONFLICT_EXIT if answer.conflict else 1
+
+
+def comment_key(cfg: Config, number: int, what: str, note: str) -> str:
+    """The key of a comment this tool posts, so that a retry posts it once: the ledger writes
+    nothing for a key it already holds and answers `existing` (`comment key=`, ikigai-ledger
+    0.7.0, ledger item 1178). The same hand-back of the same item is the same key; another
+    note is another. A key is letters, digits and `-._~:`, so it is the digest form the
+    ledger's README gives for anything else (`{prefix}sha256:{hex}`)."""
+    text = "\n".join([cfg.ledger or "", str(number), cfg.holder or "", what, note])
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return f"gonk-starter:{what}:sha256:{digest}"
+
+
+def release_claim(ikigai: Ikigai, cfg: Config, number: int, held: dict | None) -> Answer:
+    """Release item `number`, as a compare-and-set on this tree's holder when this tree holds
+    it: `from=` releases only while that holder still holds the claim, and otherwise is a
+    `Conflict` that releases nothing (ikigai-ledger 0.7.0, ledger item 1178). Without it, a
+    release after a takeover drops the new holder's claim. An item this tree does not hold is
+    released without `from=`, which for someone else's claim is the dispatcher's override."""
+    command = f"delete {cfg.resource('claim')} item={number}"
+    if held and held.get("item") == number and held.get("holder"):
+        command += f" from={held['holder']}"
+    return ikigai.run(command, stdin="")
+
+
+def claim_gone(cfg: Config, number: int) -> None:
+    """gonk said this tree's claim on `number` changed hands: the record of it is wrong, so it
+    goes, and the rule says what to do (AGENTS.md, "If your claim is gone, stop")."""
+    held = read_claim(cfg)
+    if held and held.get("item") == number:
+        cfg.claim_file.unlink(missing_ok=True)
+    print(
+        f"gonk.py: this working tree no longer holds item {number}: stop writing, put what you "
+        "have on a branch, say where in a comment, and claim something else",
+        file=sys.stderr,
+    )
 
 
 def cmd_file(args, cfg: Config, make_ikigai) -> int:
@@ -1652,7 +1703,20 @@ def cmd_claim(args, cfg: Config, make_ikigai) -> int:
             "one item per working tree. Release or close it first",
             args,
         )
+    if args.renew and args.takeover_from:
+        raise ConfigError("--renew renews this tree's own claim; it cannot take one over")
+    # Claiming the item this tree holds is a renewal, and `renew=true` makes it one that never
+    # takes: a plain claim by the same holder takes a FREE item, so a renewal after a release
+    # (or a takeover and a release) would silently take the item back (ikigai-ledger 0.7.0).
+    renew = args.renew or (
+        not args.takeover_from
+        and held is not None
+        and held.get("item") == args.item
+        and held.get("holder") == cfg.holder
+    )
     words = ["sink", cfg.resource("claim"), f"item={args.item}", f"lease={args.lease}"]
+    if renew:
+        words.append("renew=true")
     if args.takeover_from:
         problem = holder_problem(args.takeover_from)
         if problem:
@@ -1662,6 +1726,8 @@ def cmd_claim(args, cfg: Config, make_ikigai) -> int:
     code = show(answer)
     if not answer.ok:
         fire_claim_refusal(cfg, answer.text(), bool(args.takeover_from), args)
+        if renew and answer.conflict:
+            claim_gone(cfg, args.item)
     if answer.ok:
         m = CLAIMED.search(answer.out)
         state = {"ledger": cfg.ledger, "item": args.item, "holder": cfg.holder}
@@ -1724,13 +1790,19 @@ def cmd_release(args, cfg: Config, make_ikigai) -> int:
         # The note is a comment of its own, posted first, as `report` posts its evidence: the
         # cli gives a batch's stdin only to a content-less SINK, never to a DELETE, so a note
         # piped to the release never reached the item (ledger item 1229).
-        posted = ikigai.run(f"sink {cfg.resource('comment')} item={number}", stdin=args.note)
+        key = comment_key(cfg, number, "release", args.note)
+        posted = ikigai.run(
+            f"sink {cfg.resource('comment')} item={number} key={key}", stdin=args.note
+        )
         if not posted.ok:
             return show(posted)
-    answer = ikigai.run(f"delete {cfg.resource('claim')} item={number}", stdin="")
+    answer = release_claim(ikigai, cfg, number, held)
+    code = show(answer)
     if answer.ok and held and held.get("item") == number:
         cfg.claim_file.unlink(missing_ok=True)
-    return show(answer)
+    elif answer.conflict and held and held.get("item") == number:
+        claim_gone(cfg, number)
+    return code
 
 
 def evidence_note(args, cfg: Config) -> str:
@@ -1761,17 +1833,19 @@ def socket_author(cfg: Config) -> str:
 
 
 def comment_flag(
-    ikigai: Ikigai, cfg: Config, number: int, note: str, flag: str, author: str = ""
+    ikigai: Ikigai, cfg: Config, number: int, note: str, flag: str, author: str = "", key=None
 ) -> Answer:
-    """Post `note` with `flag=true` (and `author`, as `socket_author` gives it).
+    """Post `note` with `flag=true` (and `author`, as `socket_author` gives it, and `key`, as
+    `comment_key` gives it).
 
     The flag is a hand-back's state (`handback`, `rejects`: ikigai-ledger 0.8.0, ledger item
     1199). A ledger older than that does not know the argument and ignores it — the comment is
     written either way — so the `Evidence:` prefix stays in the note for the ledgers (and the
     readers) that have no such state.
     """
+    keyed = f" key={key}" if key else ""
     return ikigai.run(
-        f"sink {cfg.resource('comment')} item={number} {flag}=true{author}", stdin=note
+        f"sink {cfg.resource('comment')} item={number} {flag}=true{author}{keyed}", stdin=note
     )
 
 
@@ -1781,19 +1855,27 @@ def cmd_report(args, cfg: Config, make_ikigai) -> int:
     The comment is marked `handback=true`, so the ledger knows the item waits for its
     dispatcher and `next` stops offering it to the next worker (ikigai-ledger 0.8.0, ledger
     item 1199). Closing is the dispatcher's, after checking that evidence.
+
+    The comment is keyed (`comment_key`), so a report run again after an answer that never
+    came (the 30-second timeout) posts its evidence once. The release is a compare-and-set
+    on this tree's holder (`release_claim`), so it never drops a claim someone took over.
     """
     need(cfg, "ledger", "target")
     note = evidence_note(args, cfg)
     ikigai = make_ikigai(cfg.target)
-    answer = comment_flag(ikigai, cfg, args.item, note, "handback", socket_author(cfg))
+    key = comment_key(cfg, args.item, "report", note)
+    answer = comment_flag(ikigai, cfg, args.item, note, "handback", socket_author(cfg), key)
     code = show(answer)
     if not answer.ok:
         return code
     held = read_claim(cfg)
     if held and held.get("item") == args.item:
-        code = show(ikigai.run(f"delete {cfg.resource('claim')} item={args.item}", stdin=""))
+        released = release_claim(ikigai, cfg, args.item, held)
+        code = show(released)
         if code == 0:
             cfg.claim_file.unlink(missing_ok=True)
+        elif released.conflict:
+            claim_gone(cfg, args.item)
     return code
 
 
@@ -2036,11 +2118,16 @@ def cmd_close(args, cfg: Config, make_ikigai) -> int:
     code = show(answer)
     held = read_claim(cfg)
     if answer.ok and held and held.get("item") == args.item:
-        # A close does not end a claim in the ledger, and a machine's claim left on an
-        # item that is no longer in flight is what the ledger's doctor reports as orphaned.
-        code = show(ikigai.run(f"delete {cfg.resource('claim')} item={args.item}", stdin=""))
-        if code == 0:
-            cfg.claim_file.unlink(missing_ok=True)
+        # Until ikigai-ledger 0.7.0 a close did not end a claim, and a machine's claim left on
+        # an item no longer in flight is what the ledger's doctor reports as orphaned. Since
+        # then the close releases it, so this tree's `from=` release finds nothing to release:
+        # a Conflict, and the claim is gone either way.
+        released = release_claim(ikigai, cfg, args.item, held)
+        if released.ok:
+            code = show(released)
+        elif not released.conflict:
+            return show(released)
+        cfg.claim_file.unlink(missing_ok=True)
     return code
 
 
@@ -2313,6 +2400,12 @@ def parser() -> argparse.ArgumentParser:
     s = sub.add_parser("claim", help="take an item, or renew this tree's lease on it")
     s.add_argument("item", type=int)
     s.add_argument("--lease", default=DEFAULT_LEASE)
+    s.add_argument(
+        "--renew",
+        action="store_true",
+        help="renew only, never take (the default when this tree holds the item); "
+        f"refused with exit {CONFLICT_EXIT} when the claim changed hands",
+    )
     s.add_argument("--takeover-from", help="take over an EXPIRED lease from this holder")
     s.set_defaults(run=cmd_claim)
 
