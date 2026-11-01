@@ -113,6 +113,11 @@ class InTheLoop(unittest.TestCase):
         w = self.rig.worker(self.ledger)
         return w, w.run_once()
 
+    def usage_lines(self) -> list[dict]:
+        """The status item's `Usage:` comments (it also carries the `Disk:` line)."""
+        comments = self.ledger.human_comments(self.status)
+        return [c for c in comments if c["text"].startswith("Usage:")]
+
     def test_the_config_is_checked(self):
         path = self.rig.configure()
         for bad in ["threshold = 0", "threshold = 101", 'status_item = "x"', "command = []"]:
@@ -124,7 +129,7 @@ class InTheLoop(unittest.TestCase):
         w, outcome = self.run_with('{"plan": "Max", "used": 90, "limit": 100}')
         self.assertEqual(outcome.code, worker.NOTHING)
         self.assertIn("90% of its weekly limit", outcome.summary)
-        [comment] = self.ledger.human_comments(self.status)
+        [comment] = self.usage_lines()
         self.assertIn("agent=claude", comment["text"])
         self.assertIn("percent=90", comment["text"])
         self.assertIsNone(self.ledger.items[self.item]["claim"])
@@ -136,7 +141,7 @@ class InTheLoop(unittest.TestCase):
         w, outcome = self.run_with('{"percent": 10}')
         self.assertNotEqual(outcome.code, worker.NOTHING)
         self.assertEqual(outcome.number, self.item)
-        [comment] = self.ledger.human_comments(self.status)
+        [comment] = self.usage_lines()
         self.assertIn("percent=10", comment["text"])
 
 

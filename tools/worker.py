@@ -56,6 +56,12 @@ repository admission on its status item as one `Worker:` line (`gonk.worker_stat
 when that line differs from the one it last posted there. The loop labels an existing
 `[usage] status_item` with `worker-status:<name>`, or discovers it through that label.
 
+Before each item the loop reads the free space on the volume holding the work root (ledger
+item 2816). Under `[disk] floor_gb` it takes no new item, says why in its log and in a `Disk:`
+line on its status item, and takes items again once space returns. When it starts and once a day
+after, it prunes the worktrees and logs items left under the work root once they are older than
+`[disk] prune_after`, keeping any worktree whose branch has an open pull request (`prune_work`).
+
 The one-agent-per-repository rule here is BEST-EFFORT until the ledger enforces it (ledger
 item 1140 on ikigai's own ledger): two workers can read "free" at the same moment. Each
 re-reads after claiming and backs off if it sees another claim, which narrows the window and
@@ -73,6 +79,7 @@ import os
 import plistlib
 import re
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -193,6 +200,7 @@ class WorkerConfig:
     repos_from: str | None = None  # the GitHub organization admitted by configuration
     repos_except: list[str] = field(default_factory=list)
     holder: str | None = None  # overrides .gonk/local.toml's holder for this loop's claims
+    disk: dict = field(default_factory=dict)  # the [disk] table: see load_disk
 
     def __post_init__(self) -> None:
         self.loop_dir = self.loop_dir or self.state_dir
@@ -267,6 +275,26 @@ def load_usage(u, where: str, command: list[str]) -> dict:
         "every": every,
         "status_item": item,
         "agent": agent,
+    }
+
+
+DEFAULT_DISK_FLOOR_GB = 30
+DEFAULT_PRUNE_AFTER = "7d"
+
+
+def load_disk(d, where: str) -> dict:
+    """The [disk] table, checked: floor_gb (free space under which the loop takes no new item;
+    0 turns the floor off), every (how often the `Disk:` line is posted), prune_after (how old a
+    kept worktree or log is before the loop removes it; `0s` keeps them all)."""
+    if not isinstance(d, dict) or set(d) - {"floor_gb", "every", "prune_after"}:
+        raise gonk.ConfigError(f"{where}: [disk] accepts floor_gb, every and prune_after only")
+    floor = d.get("floor_gb", DEFAULT_DISK_FLOOR_GB)
+    if isinstance(floor, bool) or not isinstance(floor, (int, float)) or floor < 0:
+        raise gonk.ConfigError(f"{where}: [disk] floor_gb is a number of GB, 0 or more")
+    return {
+        "floor_gb": float(floor),
+        "every": seconds(str(d.get("every", "6h")), "disk every"),
+        "prune_after": seconds(str(d.get("prune_after", DEFAULT_PRUNE_AFTER)), "prune_after"),
     }
 
 
@@ -415,6 +443,7 @@ def load_worker(cfg: gonk.Config, path: Path | None = None) -> WorkerConfig:
         loop=loop,
         holder=holder,
         usage=load_usage(t.get("usage", {}), where, command),
+        disk=load_disk(t.get("disk", {}), where),
     )
 
 
@@ -1028,6 +1057,155 @@ class GitHub:
             pr.ci = "red"
 
 
+# --------------------------------------------------------------------------- disk
+
+GB = 1024**3
+DISK_PREFIX = "Disk:"
+PRUNE_EVERY = 86400  # kept work is pruned when the loop starts, then once a day
+# What an item leaves under `<work root>/<repo>/`: its worktree, its log, its prompt, its report.
+WORK_NAME = re.compile(r"^(item-\d+(?:\.\d+)?)(?:\.log|\.prompt\.md|\.report)?$")
+
+
+def free_bytes(path: Path) -> int:
+    """Free space for this account on the volume holding `path`, or its nearest existing parent
+    (the work root is made by the first item)."""
+    while not path.exists() and path != path.parent:
+        path = path.parent
+    return shutil.disk_usage(path).free
+
+
+def gb(n: float) -> str:
+    return f"{n / GB:.1f}"
+
+
+class DiskWatch:
+    """Free space on the volume holding the work root, read before each item (ledger item 2816).
+    Under the floor the loop takes no new item and says why, in its log and in a `Disk:` line on
+    its status item, and takes items again by itself once a reading is back at or over it. The
+    line is posted at the first reading, at each crossing of the floor, and at most every
+    `every` seconds between. A reading that fails is `unknown`, which never holds the loop."""
+
+    def __init__(self, root, floor_gb, every, status_item, ledger, log, read=free_bytes):
+        self.root, self.floor_gb, self.every = root, floor_gb, every
+        self.status_item, self.ledger, self.log, self.read = status_item, ledger, log, read
+        self.last: float | None = None
+        self.holding = False
+
+    def check(self) -> str | None:
+        """Read, report when due, and answer the reason to take no new item, or None."""
+        try:
+            free = self.read(self.root)
+        except OSError as e:
+            self.log(f"could not read the free disk under {self.root}: {e}")
+            free = None
+        below = bool(self.floor_gb) and free is not None and free < self.floor_gb * GB
+        changed, self.holding = below != self.holding, below
+        why = (
+            f"free disk on the work root's volume is {gb(free)} GB, under the floor of "
+            f"{self.floor_gb:g} GB: taking no new item until space returns"
+            if below
+            else None
+        )
+        if changed:
+            now = f"{gb(free)} GB" if free is not None else "unknown"
+            self.log(
+                why
+                or f"free disk is back to {now}, no longer under the floor of "
+                f"{self.floor_gb:g} GB: taking items again"
+            )
+        if changed or self.last is None or time.monotonic() - self.last >= self.every:
+            self.last = time.monotonic()
+            self.report(free, why)
+        return why
+
+    def line(self, free: int | None, why: str | None) -> str:
+        read_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        words = [
+            f"free={gb(free)}GB" if free is not None else "free=unknown",
+            f"floor={self.floor_gb:g}GB" if self.floor_gb else "floor=off",
+            f"state={'held' if why else 'taking'}",
+            f"read={read_at}",
+        ]
+        return f"{DISK_PREFIX} {' '.join(words)}" + (f" ({why})" if why else "")
+
+    def report(self, free: int | None, why: str | None) -> None:
+        line = self.line(free, why)
+        self.log(line)
+        if self.status_item is not None:
+            posted = self.ledger.comment(self.status_item, line)
+            if not posted.ok:
+                item = self.status_item
+                self.log(f"could not post the Disk: line on item {item}: {posted.text()}")
+
+
+def prune_work(root: Path, older_than: int, open_pr, lock_dir: Path, now: float | None = None):
+    """Remove what items left under `<root>/<repo>/` (a kept worktree, its log, prompt and
+    report, or the log of one already removed) once the newest of them is `older_than` seconds
+    old. A worktree is kept when its branch has an open pull request (`open_pr(repo, branch)`
+    answers True), when that cannot be told (it answers a string, the reason), or when it is
+    not a worktree whose branch can be read. A repository with an item running on this machine
+    (its RepoLock held) is left for the next pruning. Returns the item paths removed."""
+    now = time.time() if now is None else now
+    removed: list[Path] = []
+    if not root.is_dir():
+        return removed
+    for home in sorted(root.iterdir()):
+        if not home.is_dir() or home.is_symlink() or home.name.startswith("."):
+            continue
+        lock = RepoLock(lock_dir, home.name)
+        if not lock.acquire():
+            log(f"prune: repo:{home.name} has an item running here; pruning it later")
+            continue
+        try:
+            removed += prune_repo(home, older_than, open_pr, now)
+        finally:
+            lock.release()
+    return removed
+
+
+def prune_repo(home: Path, older_than: int, open_pr, now: float) -> list[Path]:
+    left: dict[str, list[Path]] = {}
+    for entry in home.iterdir():
+        m = WORK_NAME.match(entry.name)
+        if m:
+            left.setdefault(m.group(1), []).append(entry)
+    removed = []
+    for name, entries in sorted(left.items()):
+        age = now - max(e.lstat().st_mtime for e in entries)
+        if age < older_than:
+            continue
+        tree = home / name
+        where = f"{home.name}/{name}"
+        if tree.is_dir() and not tree.is_symlink():
+            if not (tree / ".git").is_file():
+                log(f"prune: keeping {tree}: not a worktree")
+                continue
+            branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=tree).stdout.strip()
+            if not branch or branch == "HEAD":
+                log(f"prune: keeping {tree}: its branch could not be read")
+                continue
+            answer = open_pr(home.name, branch)
+            if answer is True:
+                log(f"prune: keeping {tree}: {branch} has an open pull request")
+                continue
+            if isinstance(answer, str):
+                log(f"prune: keeping {tree}: whether {branch} has an open PR is unknown: {answer}")
+                continue
+            source = home / ".source"
+            git("worktree", "remove", "--force", str(tree), cwd=source)
+            if tree.exists():
+                shutil.rmtree(tree)
+            git("worktree", "prune", cwd=source)
+            git("branch", "-D", branch, cwd=source)
+            where += f" (branch {branch})"
+        for e in entries:
+            if e != tree:
+                e.unlink(missing_ok=True)
+        log(f"prune: removed {where}, {age / 86400:.1f} days old")
+        removed.append(tree)
+    return removed
+
+
 # --------------------------------------------------------------------------- the brief
 
 PREAMBLE = """\
@@ -1254,6 +1432,12 @@ class Worker:
             self.ledger,
             log,
         )
+        d = wc.disk or load_disk({}, "defaults")
+        self.disk = DiskWatch(
+            self.root, d["floor_gb"], d["every"], u.get("status_item"), self.ledger, log
+        )
+        self.prune_after = d["prune_after"]
+        self.pruned_at: float | None = None
 
     # ----------------------------------------------------------------- choosing
 
@@ -1444,7 +1628,7 @@ class Worker:
                 )
                 return
             item = items[0]
-        self.usage.status_item = item
+        self.usage.status_item = self.disk.status_item = item
         for label in gonk.worker_status_labels(self.wc.labels):
             answer = self.ledger.ikigai.run(
                 f"sink {self.cfg.resource('label')} item={item}", stdin=label
@@ -1487,10 +1671,13 @@ class Worker:
     # ----------------------------------------------------------------- one item
 
     def run_once(self) -> Outcome:
+        low = self.disk.check()
         held = self.usage.check()
         if held:
             self.explain_hold(held)
             return Outcome(NOTHING, held)
+        if low:
+            return Outcome(NOTHING, low)
         take, skip, err = self.candidates()
         if err:
             return Outcome(ERROR, f"gonk did not answer next: {err}")
@@ -1768,6 +1955,25 @@ class Worker:
             return False
         return self.ledger.release(number, self.cfg.holder).ok
 
+    # ----------------------------------------------------------------- kept work
+
+    def prune(self) -> list[Path]:
+        """Remove kept worktrees and logs older than `[disk] prune_after` (prune_work)."""
+        self.pruned_at = time.monotonic()
+        if not self.prune_after:
+            return []
+        return prune_work(self.root, self.prune_after, self.open_pr, self.wc.state_dir)
+
+    def open_pr(self, name: str, branch: str) -> bool | str:
+        """Whether `branch` of repo:<name> has an open pull request, or why that is not known."""
+        repo, problem = self.wc.repository(name)
+        if repo is None:
+            return problem or f"repo:{name} is not configured here"
+        prs, err = GitHub(self.wc.gh, repo.github).pull_requests(branch)
+        if err:
+            return err
+        return any(pr.state.upper() == "OPEN" for pr in prs)
+
     # ----------------------------------------------------------------- the loop
 
     def loop(self) -> int:
@@ -1787,6 +1993,8 @@ class Worker:
             if stop is not None:
                 log(f"stopping: {stop} exists (remove it to run again)")
                 return 0
+            if self.pruned_at is None or time.monotonic() - self.pruned_at >= PRUNE_EVERY:
+                self.prune()
             outcome = self.run_once()
             if outcome.code in (NOTHING, ERROR):
                 if outcome.code == ERROR:

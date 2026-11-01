@@ -1,0 +1,3 @@
+- [x] 1. Tests with a fake free-space reader and a scratch work root, failing without the change.
+- [x] 2. The `[disk]` table, the floor and its `Disk:` status line, and pruning.
+- [x] 3. Worker documentation, the sample configuration and the workers profile section.
