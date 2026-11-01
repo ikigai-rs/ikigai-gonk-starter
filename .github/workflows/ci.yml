@@ -41,7 +41,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: setup, check green, re-create each leak, check red, repair
-        run: sudo -E ./worker/tests/ci-linux.sh
+        # Name the two variables the runner guard reads: ubuntu-26.04's sudo ignores `-E` ("preserving
+        # the entire environment is not supported"), so the guard saw neither and refused to run.
+        run: sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT ./worker/tests/ci-linux.sh
 
   worker-macos:
     name: worker boundary (macos)
