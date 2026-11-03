@@ -184,8 +184,8 @@ identity, sending the certificate, the fingerprint read-back, and editing the co
 
 **What still needs a person:** the OS and its accounts (1, 2), the GitHub token and the git
 identity (3), keeping it awake (4), the model (5), the hub's `hubdiag` ssh stanza and the tunnel
-(7), the repositories each loop may work in (`tools/worker_repos.py`), the approval on the controller's side, and,
-until the doors reload their trust lists (ledger item 1825), a restart of the door and gonk
+(7), the repositories each loop may work in (`tools/worker_repos.py`), the approval on the
+controller's side, and, until the doors reload their trust lists (ledger item 1825), a restart of the door and gonk
 after the approval. Steps 1 to 8 below are the whole procedure, by hand.
 
 ### 1. The OS
