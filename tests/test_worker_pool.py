@@ -21,7 +21,7 @@ from support import gonk
 from worker_support import DISPATCHER, FakeLedger, Rig, worker
 
 CLAUDE = {"labels": '["worker:more", "agent:claude"]', "holder": '"more-claude"'}
-OTHER_CLAUDE = {"labels": '["worker:lawnboy", "agent:claude"]', "holder": '"lawnboy-claude"'}
+SECOND_CLAUDE = {"labels": '["worker:second", "agent:claude"]', "holder": '"second-claude"'}
 
 
 class Quiet(unittest.TestCase):
@@ -100,19 +100,19 @@ class TheRouting(Quiet):
     def test_pinning_after_the_pool_takes_it_out_of_the_pool(self):
         n = self.ledger.file("Fix", ["worker:pool", "agent:claude", "repo:lib"])
         item = self.ledger.items[n]
-        item["labels"] = sorted([*item["labels"], "worker:lawnboy"])
-        self.ledger.dispatch(n, labels=["worker:lawnboy", "agent:claude", "repo:lib"])
+        item["labels"] = sorted([*item["labels"], "worker:second"])
+        self.ledger.dispatch(n, labels=["worker:second", "agent:claude", "repo:lib"])
         loop = self.loop()
         self.assertEqual(self.taken(loop), [])
-        self.assertEqual(self.taken(self.loop(Rig(self), **OTHER_CLAUDE)), [n])
+        self.assertEqual(self.taken(self.loop(Rig(self), **SECOND_CLAUDE)), [n])
 
     def test_sending_a_pinned_item_to_the_pool_lets_any_loop_take_it(self):
-        n = self.ledger.file("Fix", ["worker:lawnboy", "agent:claude", "repo:lib"])
+        n = self.ledger.file("Fix", ["worker:second", "agent:claude", "repo:lib"])
         item = self.ledger.items[n]
         item["labels"] = sorted([*item["labels"], "worker:pool"])
         self.ledger.dispatch(n, labels=["worker:pool", "agent:claude", "repo:lib"])
         self.assertEqual(self.taken(self.loop()), [n])
-        self.assertEqual(self.taken(self.loop(Rig(self), **OTHER_CLAUDE)), [n])
+        self.assertEqual(self.taken(self.loop(Rig(self), **SECOND_CLAUDE)), [n])
 
     def test_a_pool_label_alone_routes_nothing(self):
         n = self.ledger.file(
@@ -152,7 +152,7 @@ class TwoLoops(Quiet):
 
     def test_both_read_it_as_free_and_only_one_claims_it(self):
         n = self.ledger.file("Fix", ["worker:pool", "agent:claude", "repo:lib"])
-        one, two = self.loop(), self.loop(Rig(self), **OTHER_CLAUDE)
+        one, two = self.loop(), self.loop(Rig(self), **SECOND_CLAUDE)
         self.assertEqual(self.taken(one), [n])
         self.assertEqual(self.taken(two), [n])  # the race: both read it free
         item = dict(self.ledger.items[n])
@@ -171,7 +171,7 @@ class TwoLoops(Quiet):
         def taken_first(command, stdin):
             if command.split()[1].endswith(":claim") and f"item={lost}" in command.split():
                 self.ledger.items[lost]["claim"] = {
-                    "holder": "lawnboy-claude",
+                    "holder": "second-claude",
                     "kind": "machine",
                     "expires": "2099-01-01T00:00:00.000Z",
                 }
@@ -186,7 +186,7 @@ class TwoLoops(Quiet):
         labels = ["worker:pool", "agent:claude"]
         numbers = [self.ledger.file(f"Item {i}", [*labels, f"repo:r{i}"]) for i in range(6)]
         rigs = [self.rig, Rig(self)]
-        settings = [CLAUDE, OTHER_CLAUDE]
+        settings = [CLAUDE, SECOND_CLAUDE]
         loops = []
         for rig, s in zip(rigs, settings, strict=True):
             path = rig.configure(**s)
