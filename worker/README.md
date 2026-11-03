@@ -242,13 +242,12 @@ the organization: GitHub offers an organization as resource owner only to its me
 token. Making it a member costs a paid seat and exposes private repositories through the
 organization's base permission, so use a **classic** token instead:
 
-1. `github.com/settings/tokens/new` (classic), an expiry, and only the scope **`public_repo`**:
-   not `repo`, not `workflow`. Its reach is bounded by the collaborator grants the account has on
-   public repositories, and nothing the token says widens that.
-2. `gh auth login --with-token` refuses a classic token without the **`repo`** and **`read:org`**
-   scopes, and `public_repo` alone is refused. Either create the token with those scopes too (the
-   token then reaches every repository the account may push to, private ones included, still
-   bounded by the grants), or accept that `gh auth login` is not the way to store it.
+1. `github.com/settings/tokens/new` (classic), an expiry, and the scopes **`repo`** and
+   **`read:org`**, nothing else: not `workflow` (a worker must not edit CI).
+2. `gh auth login --with-token` refuses a classic token without those two, so `public_repo` alone
+   will not do. (`gh auth login --help` also names `gist`; the first worker Mac holds `repo` and
+   `read:org` without it, and works.) `repo` reaches every repository the account may push to,
+   private ones included, bounded by its collaborator grants; nothing the token says widens them.
    Measured on one worker, 2026-10-16: a classic token with `repo` and `read:org` pushed to 8 of 47
    enrolled repositories, exactly its collaborator grants.
 3. Which repositories the worker can push to is decided by those grants, not by the token:
@@ -262,13 +261,29 @@ Either way, then:
 4. On the worker, AS the agent (the token is typed, never echoed, and never in history):
 
        sudo -iu agent
-       read -rs T && printf '%s' "$T" | gh auth login --with-token && unset T
+       read -rs T && printf '%s' "$T" | gh auth login --with-token --insecure-storage && unset T
+       git config --global credential.helper ''
        gh auth setup-git
        gh auth status          # says where the token is stored, and its prefix class
+       git config --global --get-regexp '^credential'
 
-   On macOS the agent never logs in to the GUI, so it has no unlocked login keychain; gh then
-   keeps the token in `~agent/.config/gh/hosts.yml`, which the boundary protects. Check what
-   `gh auth status` reports rather than assume (not yet tried on a worker Mac).
+   Both additions are for macOS, measured on the first worker Mac, 2026-11-02. On Linux, untried
+   there, they should change nothing: it has no osxkeychain helper, and gh already keeps the token
+   in that file when it finds no keyring.
+
+   - **`--insecure-storage`.** Without it the login hangs: gh tries the login keychain, `agent`
+     never logs in to the GUI so it has none, and macOS raises "a keychain cannot be found" on the
+     DESKTOP USER's screen while the shell waits. With it gh writes
+     `~agent/.config/gh/hosts.yml`, which the boundary protects, and `gh auth status` names that
+     file. **Click Cancel on any such dialog, never "Reset To Defaults".**
+   - **The empty helper.** Apple's git sets `credential.helper=osxkeychain` system-wide, and an
+     empty value resets that list. `gh auth setup-git` resets it only for `github.com` and
+     `gist.github.com` (gh 2.103.3), so without this line a push before it, or git asking about any
+     other host, still reaches for the keychain `agent` does not have.
+   - **The check.** The last command should print an empty `credential.helper`, then for each of
+     those two hosts an empty helper followed by gh's, and no `osxkeychain`. gh writes its helper
+     under those hosts' keys, so `git config --global --get-all credential.helper` alone shows only
+     a blank line.
 5. `sudo ./worker/worker-setup.sh --check` again, so the facts name the holder: the `[agent]`
    block should say `holds a FINE-GRAINED token` (route A) or a classic one (route B).
 
@@ -396,7 +411,8 @@ account, that it does not yet say:
 6. **macOS, a worker account with no GUI login:** a TCC prompt (Local Network, for an mDNS
    announce) can never be answered for it, and it has no unlocked keychain. Keep the agent's
    ikigai processes off mDNS announcing (configured peers, not discovery), and expect anything
-   that reaches for the Keychain to fail. Unverified: no worker Mac has run it yet.
+   that reaches for the Keychain to fail, or to wait on a dialog on the desktop user's screen as
+   gh did (step 3). The TCC prompt is unverified: nothing has been measured of it on a worker Mac.
 7. **Firewall.** A Linux worker running `ufw` must allow the QUIC port (UDP) only if the hub
    dials in; the worker loop's design has the worker pull, so nothing is opened.
 
