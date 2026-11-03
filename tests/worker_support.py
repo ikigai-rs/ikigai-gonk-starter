@@ -56,6 +56,8 @@ class FakeLedger:
         self.refuse_comments = 0  # refuse this many comments, then answer them again
         self.older_comment = older_comment  # a comment resource without handback/rejects
         self.tick = 0
+        self.aliases: dict[str, str] = {}
+        self.refuse_aliases = False
 
     # -- the test's own hands on it
     def file(
@@ -143,6 +145,20 @@ class FakeLedger:
         verb, resource, *words = command.split()
         args = dict(w.split("=", 1) for w in words)
         prefix = f"urn:gk:iki:ledger:{self.name}:"
+        if resource == "urn:gk:iki:alias:scheme:gh" and verb == "sink":
+            if self.refuse_aliases:
+                return gonk.Answer(1, "", "alias grant denied")
+            return gonk.Answer(0, "scheme gh owned by worker", "")
+        if resource.startswith("urn:gk:iki:alias:scheme:gh:value:"):
+            if self.refuse_aliases:
+                return gonk.Answer(1, "", "alias grant denied")
+            if verb != "sink":
+                return gonk.Answer(1, "", "unsupported alias verb")
+            prior = self.aliases.get(resource)
+            if prior is not None and prior != stdin:
+                return gonk.Answer(3, "", f"alias already names {prior}")
+            self.aliases[resource] = stdin
+            return gonk.Answer(0, f"alias names {stdin}", "")
         if not resource.startswith(prefix):
             return gonk.Answer(1, "", f"no endpoint resolved for {resource}")
         name = resource[len(prefix) :]
@@ -210,7 +226,14 @@ class FakeLedger:
             ]
             return gonk.Answer(0, json.dumps({"schema": 1, "items": rows, "total": len(rows)}), "")
         if verb == "source" and name.startswith("item:"):
-            item = self.items.get(int(name[5:]))
+            reference = name[5:]
+            if reference.startswith("gh:"):
+                alias = "urn:gk:iki:alias:scheme:gh:value:" + reference[3:]
+                target = self.aliases.get(alias, "")
+                if not target.startswith(f"{self.name}#"):
+                    return gonk.Answer(1, "", f"unknown alias {reference}")
+                reference = target.split("#", 1)[1]
+            item = self.items.get(int(reference))
             if item is None:
                 return gonk.Answer(1, "", f"no item {name[5:]}")
             return gonk.Answer(0, json.dumps({"schema": 1, "item": served(item)}), "")

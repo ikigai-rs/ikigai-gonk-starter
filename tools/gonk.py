@@ -49,6 +49,7 @@ except ModuleNotFoundError:  # before any 3.11 feature: macOS's /usr/bin/python3
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import quote
 
 try:
     import harness  # beside this file: the harness graph and the firing log
@@ -540,11 +541,17 @@ def worker_tokens(ledger: str) -> list[str]:
 def enrollment_lines(fingerprint: str, grant: str, ledger: str) -> list[str]:
     """What the gonk operator adds for this machine, by command or by hand. The `--worker` form
     is what an unattended machine is enrolled with; `--ledger <ledger>=write` stays the option
-    for a person's machine, and the by-hand `grants.json` entry is the worker grant."""
-    worker = json.dumps({grant: worker_tokens(ledger)}, indent=2).splitlines()
+    for a person's machine. Both worker forms include the explicit gh alias grants."""
+    tokens = worker_tokens(ledger) + [
+        f"urn:cap:ledger:alias:{ledger}",
+        "urn:cap:alias:scheme:gh",
+        "urn:cap:store:read:graph:urn:iki:alias:graph",
+        "urn:cap:store:write:graph:urn:iki:alias:graph",
+    ]
+    worker = json.dumps({grant: tokens}, indent=2).splitlines()
     return [
         "on the gonk machine, with this machine's client.crt copied there:",
-        f"  ikigai-gonk client add {grant} --cert client.crt --worker {ledger}",
+        f"  ikigai-gonk client add {grant} --cert client.crt --worker {ledger} --alias {ledger}=gh",
         "  (an unattended machine: the worker grant reads, claims, renews, comments and",
         "  releases, and cannot close, relabel or file)",
         f"  ikigai-gonk client add {grant} --cert client.crt --ledger {ledger}=write",
@@ -1170,7 +1177,39 @@ def read_claim(cfg: Config) -> dict | None:
     return table or None
 
 
-def item_json(cfg: Config, ikigai: Ikigai, number: int) -> tuple[dict | None, str | None]:
+GH_REFERENCE = re.compile(r"gh:[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+#[1-9][0-9]*\Z")
+
+
+def item_reference(value: str) -> int | str:
+    """Keep numeric arguments numeric; admit only a single, safe PR alias word."""
+    try:
+        return int(value)
+    except ValueError:
+        if GH_REFERENCE.fullmatch(value):
+            return value
+        raise argparse.ArgumentTypeError(
+            "expected an item number or gh:owner/repo#number"
+        ) from None
+
+
+def gh_alias_resource(value: str) -> str:
+    return f"{PREFIX}iki:alias:scheme:gh:value:{quote(value, safe='')}"
+
+
+def resolve_item(cfg: Config, ikigai: Ikigai, reference: int | str) -> int:
+    if isinstance(reference, int):
+        return reference
+    # Read through this ledger's item endpoint: a foreign or unreadable alias must fail,
+    # rather than resolving globally and accidentally addressing the same number here.
+    encoded = "gh:" + quote(reference[3:], safe="")
+    item, err = item_json(cfg, ikigai, encoded)
+    number = (item or {}).get("number")
+    if err or type(number) is not int or number <= 0:
+        raise ConfigError(f"could not resolve {reference}: {err or 'item has no valid number'}")
+    return number
+
+
+def item_json(cfg: Config, ikigai: Ikigai, number: int | str) -> tuple[dict | None, str | None]:
     answer = ikigai.run(f"source {cfg.resource(f'item:{number}')} as=application/json")
     if not answer.ok:
         return None, answer.text() or f"exit {answer.code}"
@@ -2472,7 +2511,7 @@ def parser() -> argparse.ArgumentParser:
     s.set_defaults(run=cmd_next)
 
     s = sub.add_parser("claim", help="take an item, or renew this tree's lease on it")
-    s.add_argument("item", type=int)
+    s.add_argument("item", type=item_reference)
     s.add_argument("--lease", default=DEFAULT_LEASE)
     s.add_argument(
         "--renew",
@@ -2484,12 +2523,12 @@ def parser() -> argparse.ArgumentParser:
     s.set_defaults(run=cmd_claim)
 
     s = sub.add_parser("release", help="hand an item back")
-    s.add_argument("item", type=int, nargs="?")
+    s.add_argument("item", type=item_reference, nargs="?")
     s.add_argument("--note", help="why, recorded as a comment")
     s.set_defaults(run=cmd_release)
 
     s = sub.add_parser("report", help="post the evidence and hand the item back (a worker's end)")
-    s.add_argument("item", type=int)
+    s.add_argument("item", type=item_reference)
     s.add_argument("--evidence", help="the URL that shows the work (required)")
     s.add_argument("--note")
     s.set_defaults(run=cmd_report)
@@ -2497,7 +2536,7 @@ def parser() -> argparse.ArgumentParser:
     s = sub.add_parser(
         "reject", help="the evidence did not hold: the item is ready again (a dispatcher's act)"
     )
-    s.add_argument("item", type=int)
+    s.add_argument("item", type=item_reference)
     s.add_argument("--note", help="why the evidence did not hold (required)")
     s.set_defaults(run=cmd_reject)
 
@@ -2506,7 +2545,7 @@ def parser() -> argparse.ArgumentParser:
         help="route an item to the pool or a worker: labels and a dispatch it checks "
         "(a dispatcher's act)",
     )
-    s.add_argument("item", type=int)
+    s.add_argument("item", type=item_reference)
     s.add_argument(
         "--labels",
         help="the routing labels: agent:<kind> sends it to the pool (worker:pool, any free loop "
@@ -2534,7 +2573,7 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--note", help="why, recorded in the dispatch comment")
     s.add_argument(
         "--status-item",
-        type=int,
+        type=item_reference,
         action="append",
         help="a worker status item to check the repository against (repeatable; default: "
         "discovered through worker-status:<name>; also accepts `status_items` in .gonk/gonk.toml)",
@@ -2542,7 +2581,7 @@ def parser() -> argparse.ArgumentParser:
     s.set_defaults(run=cmd_dispatch)
 
     s = sub.add_parser("close", help="close an item, with evidence (the dispatcher's act)")
-    s.add_argument("item", type=int)
+    s.add_argument("item", type=item_reference)
     s.add_argument(
         "--evidence",
         action="append",
@@ -2574,7 +2613,16 @@ def main(argv: list[str] | None = None, make_ikigai=Ikigai) -> int:
         repo = Path(args.repo).resolve() if args.repo else find_repo(Path.cwd())
         if not (repo / ".gonk" / "layout.toml").is_file():
             raise ConfigError(f"{repo} has no .gonk/layout.toml")
-        return args.run(args, load(repo), make_ikigai)
+        cfg = load(repo)
+        references = [getattr(args, "item", None), *(getattr(args, "status_item", None) or [])]
+        if any(isinstance(ref, str) for ref in references):
+            need(cfg, "ledger", "target")
+            ikigai = make_ikigai(cfg.target)
+            if getattr(args, "item", None) is not None:
+                args.item = resolve_item(cfg, ikigai, args.item)
+            if getattr(args, "status_item", None):
+                args.status_item = [resolve_item(cfg, ikigai, ref) for ref in args.status_item]
+        return args.run(args, cfg, make_ikigai)
     except ConfigError as e:
         print(f"gonk.py: {e}", file=sys.stderr)
         return 2

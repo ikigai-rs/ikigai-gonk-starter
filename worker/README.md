@@ -1221,3 +1221,39 @@ section).
 | [`units/gonk-worker.service`](units/gonk-worker.service), [`units/dev.ikigai-rs.gonk-worker.plist`](units/dev.ikigai-rs.gonk-worker.plist) | as agent, by systemd or launchd | the single loop as a service, with its PATH; the plist is also what `worker.py plist` generates each agent's daemon from |
 | [`tests/probe-test.sh`](tests/probe-test.sh), [`tests/setup-test.sh`](tests/setup-test.sh) | anywhere, no root | the hermetic tests, run by `scripts/gates.sh` |
 | [`tests/ci-linux.sh`](tests/ci-linux.sh), [`tests/ci-macos.sh`](tests/ci-macos.sh) | on throwaway CI runners only | the boundary, end to end |
+
+## Pull request aliases
+
+A worker gives each PR it finds on its branch a ledger alias, for example
+`gh:ikigai-rs/ikigai-gonk-starter#123`. Dispatchers can use that spelling anywhere
+`tools/gonk.py` takes an item, including `--status-item`. Resolution uses the configured
+ledger before acting, so a PR belonging to another ledger is refused.
+
+This needs gonk with **ikigai-ledger 0.18.0 or later** (default#2905). Enroll the intended
+scheme-owning worker principal with the existing gonk alias grant option:
+
+```sh
+ikigai-gonk client add <name> --cert client.crt --worker default --alias default=gh
+```
+
+`gonk.py init` prints this enrollment command. The operator must apply it to gonk's
+configuration and distribute the refreshed bundle; printing it does not change the host.
+The `--alias default=gh` option grants `urn:cap:alias:scheme:gh`,
+`urn:cap:ledger:alias:default`, and the aliases graph's store read/write grants, alongside
+ledger read. It does not grant ownership of other schemes or permission to remove their
+aliases. See [gonk's alias grant implementation](https://github.com/ikigai-rs/ikigai-gonk/blob/main/src/grants.rs)
+and [ledger's ownership checks](https://github.com/ikigai-rs/ikigai-ledger/blob/main/src/alias.rs).
+
+The worker registers `gh` as its authenticated principal before adding an alias. Registration
+is idempotent for that principal. **A scheme has one permanent owner.** A worker with a
+different principal cannot add or remove its aliases, even with the same grant. Do not
+register the scheme as the host operator on behalf of a worker: that makes the operator
+its owner. A fleet using separate principals needs an explicitly designed shared alias
+writer in gonk; this client change does not create one or expand another worker's identity.
+
+The worker never deletes an alias or moves one between items. The ledger refuses a duplicate
+mapping to another item; retries to the same item are safe. Registration, missing grants,
+and duplicate refusals are recorded beside the PR's CI in the hand-back, while the PR URL
+remains available as evidence. A hand-back with such a refusal needs dispatcher attention;
+it does not prove deployment is complete. This repository does not deploy the gonk host
+configuration. Verify the owner, enrollment and ledger version there before closing the item.
