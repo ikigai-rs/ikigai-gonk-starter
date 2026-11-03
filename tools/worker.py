@@ -348,6 +348,23 @@ def load_worker(cfg: gonk.Config, path: Path | None = None) -> WorkerConfig:
     t = gonk.read_toml(path)
     where = str(path)
 
+    def check_holder(value, table: str = "") -> None:
+        # Walk parsed TOML, including inline tables and arrays of tables: a holder
+        # anywhere below the root would otherwise silently lose the loop's identity.
+        if isinstance(value, dict):
+            if table and "holder" in value:
+                raise gonk.ConfigError(
+                    f"{where}: [{table}] contains holder, which is a top-level setting; "
+                    "move the line above the first table header, beside labels."
+                )
+            for key, child in value.items():
+                check_holder(child, f"{table}.{key}" if table else key)
+        elif isinstance(value, list):
+            for child in value:
+                check_holder(child, table)
+
+    check_holder(t)
+
     def words(key: str) -> list[str]:
         value = t.get(key, [])
         if isinstance(value, str):
@@ -424,6 +441,15 @@ def load_worker(cfg: gonk.Config, path: Path | None = None) -> WorkerConfig:
     for name, r in (t.get("repos") or {}).items():
         if not REPO_SHAPE.match(name) or name in (".", ".."):
             raise gonk.ConfigError(f"{where}: [repos.{name}] is not a repository name")
+        known_keys = ("remote", "github", "base")
+        if not isinstance(r, dict):
+            raise gonk.ConfigError(f"{where}: [repos.{name}] must be a table")
+        unknown = set(r) - set(known_keys)
+        if unknown:
+            raise gonk.ConfigError(
+                f"{where}: [repos.{name}] has unknown keys: {', '.join(sorted(unknown))}; "
+                f"known keys: {', '.join(known_keys)}"
+            )
         remote = r.get("remote")
         if not remote:
             raise gonk.ConfigError(f'{where}: [repos.{name}] needs remote = "<git URL>"')

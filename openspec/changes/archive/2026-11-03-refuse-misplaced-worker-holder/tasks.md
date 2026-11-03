@@ -1,0 +1,1 @@
+- [x] 1.1 Validate worker key placement, test refusals and document holder placement (Worker configuration key placement)
