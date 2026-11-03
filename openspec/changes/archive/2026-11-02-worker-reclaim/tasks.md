@@ -1,0 +1,3 @@
+- [x] 1. Tests with a fake ledger answer and a scratch work root, failing without the change.
+- [x] 2. Reclaiming at each poll: closed or moved removed, `target/` dropped under the floor.
+- [x] 3. Worker documentation, the sample configuration and the workers profile section.

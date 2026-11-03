@@ -87,7 +87,7 @@ preset = "claude"
 # [disk]
 # floor_gb = 30
 # every = "6h"            # how often the Disk: line is posted between crossings of the floor
-# prune_after = "7d"      # "0s" keeps everything
+# prune_after = "7d"      # "0s" keeps every worktree and log; under the floor a build still goes
 
 # The worker's own fence: derive repo:<name> as this GitHub organization's repository.
 # Edit this organization before running. New repositories need no stanza and no restart.

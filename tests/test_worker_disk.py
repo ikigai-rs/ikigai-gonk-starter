@@ -208,5 +208,213 @@ class Pruning(unittest.TestCase):
         self.assertEqual(first, second)  # not again within the day
 
 
+class Reclaiming(unittest.TestCase):
+    """What the ledger says of a kept worktree's item decides, whatever the worktree's age
+    (ledger item 2937). A fake ledger answer and a scratch work root."""
+
+    def setUp(self):
+        self.rig = Rig(self)
+        self.rig.configure()
+        self.ledger = FakeLedger()
+        self.w = self.rig.worker(self.ledger)
+        self.w.wc.labels = ["worker:none"]  # polls here take nothing
+        self.w.wc.pool = []
+        self.repo = self.w.wc.repos["lib"]
+        self.me = self.w.cfg.holder
+
+    def kept(self, made_by: str | None = None, label: str = "repo:lib"):
+        """An open item and the worktree a run kept of it, with a build in it."""
+        number = self.ledger.file("fix", ["worker:other", label])
+        ws = worker.make_workspace(self.w.root, self.repo, number)
+        ws.holder.write_text(f"{made_by or self.me}\n")
+        ws.prompt.write_text("the brief\n")
+        ws.log.write_text("the agent's output\n")
+        (ws.path / "target").mkdir()
+        (ws.path / "target" / "big.rlib").write_bytes(b"0" * 4096)
+        return number, ws
+
+    def worktrees(self) -> str:
+        return worker.git("worktree", "list", cwd=self.w.root / "lib" / ".source").stdout
+
+    def under_the_floor(self, reads: list[int] | None = None) -> None:
+        """Under the floor: at each of `reads` in turn, or for good."""
+        self.w.disk.floor_gb = 30.0
+        left = reads
+        self.w.disk.read = lambda root: left.pop(0) if left else 10 * GB
+
+    def test_a_closed_items_worktree_goes_however_recent(self):
+        number, ws = self.kept()
+        self.ledger.items[number]["status"] = "closed"
+        self.w.run_once()
+        self.assertFalse(ws.path.exists())
+        self.assertNotIn(str(ws.path), self.worktrees())
+        out = worker.git("branch", "--format=%(refname:short)", cwd=ws.source).stdout
+        self.assertNotIn(ws.branch, out)
+        for gone in (ws.prompt, ws.holder):
+            self.assertFalse(gone.exists(), gone)
+        self.assertTrue(ws.log.exists())  # prune_after's to take
+
+    def test_a_second_attempts_worktree_is_the_same_items(self):
+        number, first = self.kept()
+        second = worker.make_workspace(self.w.root, self.repo, number)
+        self.assertEqual(second.path.name, f"item-{number}.2")
+        self.ledger.items[number]["status"] = "closed"
+        self.w.run_once()
+        self.assertFalse(first.path.exists())
+        self.assertFalse(second.path.exists())
+
+    def test_a_closed_item_with_an_open_pull_request_still_goes(self):
+        # Its pushed branch stays on GitHub; only age-based pruning waits on an open PR.
+        number, ws = self.kept()
+        self.ledger.items[number]["status"] = "closed"
+        doc = self.rig.gh()
+        doc.setdefault("prs", []).append(
+            {"number": 1, "url": "https://github.com/acme/lib/pull/1", "state": "OPEN",
+             "headRefName": ws.branch, "headRefOid": "0" * 40}
+        )  # fmt: skip
+        self.rig.gh_state.write_text(json.dumps(doc))
+        self.w.run_once()
+        self.assertFalse(ws.path.exists())
+
+    def test_a_claim_that_moved_to_another_holder_goes(self):
+        number, ws = self.kept()
+        self.ledger.force_claim(number, "someone-else")
+        self.w.run_once()
+        self.assertFalse(ws.path.exists())
+
+    def test_a_claim_this_loop_holds_is_never_touched(self):
+        number, ws = self.kept()
+        self.ledger.force_claim(number, self.me)
+        self.under_the_floor()
+        self.w.run_once()
+        self.assertTrue((ws.path / "target" / "big.rlib").exists())
+
+    def test_the_claim_of_the_holder_that_made_it_is_never_touched(self):
+        # A sibling loop's: it died holding this item, and this worktree is that claim's work.
+        number, ws = self.kept(made_by="sibling")
+        self.ledger.force_claim(number, "sibling")
+        self.under_the_floor()
+        self.w.run_once()
+        self.assertTrue((ws.path / "target" / "big.rlib").exists())
+
+    def test_another_holders_claim_on_a_worktree_of_unknown_origin_is_left(self):
+        # Made before the record of who made it existed; it could be a sibling's.
+        number, ws = self.kept()
+        ws.holder.unlink()
+        self.ledger.force_claim(number, "someone-else")
+        self.under_the_floor()
+        self.w.run_once()
+        self.assertTrue((ws.path / "target" / "big.rlib").exists())
+
+    def test_no_answer_from_the_ledger_keeps_it(self):
+        number, ws = self.kept()
+        del self.ledger.items[number]
+        self.under_the_floor()
+        self.w.run_once()
+        self.assertTrue((ws.path / "target" / "big.rlib").exists())
+
+    def test_an_item_with_no_status_keeps_it(self):
+        number, ws = self.kept()
+        del self.ledger.items[number]["status"]
+        self.under_the_floor()
+        self.w.reclaim()
+        self.assertTrue((ws.path / "target" / "big.rlib").exists())
+
+    def test_a_number_that_is_not_this_repositorys_item_keeps_it(self):
+        number, ws = self.kept(label="repo:other")
+        self.ledger.items[number]["status"] = "closed"
+        self.w.run_once()
+        self.assertTrue(ws.path.exists())
+
+    def test_an_open_unclaimed_item_keeps_its_worktree_and_build_over_the_floor(self):
+        _, ws = self.kept()
+        self.w.disk.floor_gb = 30.0
+        self.w.disk.read = lambda root: 40 * GB
+        self.w.run_once()
+        self.assertTrue((ws.path / "target" / "big.rlib").exists())
+
+    def test_under_the_floor_an_open_unclaimed_item_loses_its_build_only(self):
+        _, ws = self.kept()
+        self.under_the_floor()
+        self.w.run_once()
+        self.assertFalse((ws.path / "target").exists())
+        self.assertTrue((ws.path / ".git").exists())
+        self.assertTrue(ws.prompt.exists())
+
+    def test_builds_go_one_at_a_time_until_the_floor_is_met(self):
+        _, first = self.kept()
+        _, second = self.kept()
+        # Read at the start of the reclaim's thinning, then again after the first build goes.
+        self.under_the_floor([10 * GB, 40 * GB, 40 * GB, 40 * GB])
+        self.w.run_once()
+        self.assertFalse((first.path / "target").exists())
+        self.assertTrue((second.path / "target").exists())
+
+    def test_removing_closed_work_comes_before_dropping_builds(self):
+        closed, gone = self.kept()
+        self.ledger.items[closed]["status"] = "closed"
+        _, open_one = self.kept()
+        self.w.disk.floor_gb = 30.0
+        self.w.disk.read = lambda root: 10 * GB if gone.path.exists() else 40 * GB
+        self.w.run_once()
+        self.assertFalse(gone.path.exists())
+        self.assertTrue((open_one.path / "target").exists())
+
+    def test_the_floor_reports_what_reclaiming_left(self):
+        status = self.ledger.file("status: w1", ["worker:status"], dispatched_by=None)
+        self.w.disk.status_item = status
+        number, ws = self.kept()
+        self.ledger.items[number]["status"] = "closed"
+        self.w.disk.floor_gb = 30.0
+        self.w.disk.read = lambda root: 10 * GB if ws.path.exists() else 40 * GB
+        self.assertNotIn("under the floor", self.w.run_once().summary)
+        [line] = [c["text"] for c in self.ledger.human_comments(status)]
+        self.assertIn("state=taking", line)
+
+    def test_an_item_running_on_this_machine_is_left_alone(self):
+        number, ws = self.kept()
+        self.ledger.items[number]["status"] = "closed"
+        lock = worker.RepoLock(self.w.wc.state_dir, "lib")
+        self.assertTrue(lock.acquire())
+        self.addCleanup(lock.release)
+        self.w.reclaim()
+        self.assertTrue(ws.path.exists())
+
+    def test_keep_and_a_prune_after_of_zero_keep_the_worktree(self):
+        number, ws = self.kept()
+        self.ledger.items[number]["status"] = "closed"
+        self.w.wc.keep = True
+        self.w.run_once()
+        self.assertTrue(ws.path.exists())
+        self.w.wc.keep = False
+        self.w.prune_after = 0
+        self.w.run_once()
+        self.assertTrue(ws.path.exists())
+
+    def test_a_run_records_who_made_its_worktree_and_a_lost_claim_is_reclaimed(self):
+        self.w.wc.labels = ["worker:w1"]
+        number = self.ledger.file("fix", ["worker:w1", "repo:lib"])
+        seen = {}
+        real = self.w.watch
+
+        def lost_while_running(proc, started, beat):
+            seen["holder"] = (self.w.root / "lib" / f"item-{number}.holder").read_text().strip()
+            self.ledger.force_claim(number, "someone-else")
+            beat.lost.set()
+            beat.why = "someone-else holds it"
+            return real(proc, started, beat)
+
+        self.w.watch = lost_while_running
+        outcome = self.w.run_once()
+        self.assertEqual(seen["holder"], self.me)
+        self.assertEqual(outcome.code, worker.NOT_HANDED_BACK)
+        tree = self.w.root / "lib" / f"item-{number}"
+        self.assertTrue(tree.exists())
+        self.assertIn("until the item closes or another holder claims it",
+                      self.ledger.human_comments(number)[-1]["text"])  # fmt: skip
+        self.w.run_once()
+        self.assertFalse(tree.exists())
+
+
 if __name__ == "__main__":
     unittest.main()
