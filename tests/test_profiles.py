@@ -45,7 +45,7 @@ OWN_FILES = {
 }
 OWN_RECIPES = {
     "workers": ["worker", "worker-once", "worker-plan", "worker-forget"],
-    "hub": ["arc", "dispatch"],
+    "hub": ["arc", "dispatch", "hub-close"],
     "review-every-commit": ["hooks"],
     "audits": ["audit"],
 }
@@ -404,6 +404,94 @@ class Hub(unittest.TestCase):
         new.generate(self.repo, "python", ["hub"])
         wire(self.repo)
         self.hub = load_tool(self.repo, "tools/hub.py", "hub")
+
+    def test_close_records_the_merged_pr_and_commit_without_merging(self):
+        url = "https://github.com/acme/library/pull/7"
+        sha = "a" * 40
+        fake = FakeIkigai([(":close", ok("closed\n"))])
+        merged = {"state": "MERGED", "url": url, "mergeCommit": {"oid": sha}}
+        result = subprocess.CompletedProcess([], 0, json.dumps(merged), "")
+        with mock.patch.object(self.hub.subprocess, "run", return_value=result) as gh:
+            code, _, err = run_tool(self.hub.main, self.repo, ["close", "12", "--pr", url], fake)
+        self.assertEqual(code, 0, err)
+        gh.assert_called_once_with(
+            ["gh", "pr", "view", url, "--json", "state,url,mergeCommit"],
+            cwd=self.repo,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        commit = f"https://github.com/acme/library/commit/{sha}"
+        self.assertEqual(
+            fake.calls,
+            [
+                (
+                    "sink urn:gk:iki:ledger:acme:close item=12 reason=done author=hub-1"
+                    f' evidence="{url}" evidence="{commit}"',
+                    f"Evidence: {url}\nEvidence: {commit}",
+                )
+            ],
+        )
+
+    def test_close_refuses_unverified_merges_without_writing(self):
+        url = "https://github.com/acme/library/pull/7"
+        merged = {"state": "MERGED", "url": url, "mergeCommit": {"oid": "a" * 40}}
+        cases = [
+            {**merged, "state": "OPEN"},
+            {**merged, "state": "CLOSED"},
+            {**merged, "mergeCommit": None},
+            {**merged, "mergeCommit": {"oid": "not-a-sha"}},
+            {**merged, "url": "https://github.com/other/library/pull/7"},
+            {},
+            None,
+            [],
+        ]
+        results = [subprocess.CompletedProcess([], 0, json.dumps(pr), "") for pr in cases]
+        results += [
+            subprocess.CompletedProcess([], 0, "not JSON", ""),
+            subprocess.CompletedProcess([], 1, "", "GitHub unavailable"),
+        ]
+        for result in results:
+            with self.subTest(result=result):
+                fake = FakeIkigai()
+                with mock.patch.object(self.hub.subprocess, "run", return_value=result):
+                    code, _, err = run_tool(
+                        self.hub.main, self.repo, ["close", "12", "--pr", url], fake
+                    )
+                self.assertEqual(code, 2, err)
+                self.assertEqual(fake.calls, [])
+        for error in [OSError("gh missing"), subprocess.TimeoutExpired("gh", 30)]:
+            with mock.patch.object(self.hub.subprocess, "run", side_effect=error):
+                fake = FakeIkigai()
+                code, _, _ = run_tool(self.hub.main, self.repo, ["close", "12", "--pr", url], fake)
+                self.assertEqual(code, 2)
+                self.assertEqual(fake.calls, [])
+
+    def test_close_rejects_invalid_pr_urls_before_invoking_gh(self):
+        with mock.patch.object(self.hub.subprocess, "run") as gh:
+            code, _, _ = run_tool(self.hub.main, self.repo, ["close", "12", "--pr=--help=x"])
+        self.assertEqual(code, 2)
+        gh.assert_not_called()
+
+    def test_close_preserves_a_ledger_failure(self):
+        url = "https://github.com/acme/library/pull/7"
+        result = subprocess.CompletedProcess(
+            [],
+            0,
+            json.dumps(
+                {
+                    "state": "MERGED",
+                    "url": url,
+                    "mergeCommit": {"oid": "a" * 40},
+                }
+            ),
+            "",
+        )
+        fake = FakeIkigai([(":close", gonk.Answer(1, "", "close denied"))])
+        with mock.patch.object(self.hub.subprocess, "run", return_value=result):
+            code, _, err = run_tool(self.hub.main, self.repo, ["close", "12", "--pr", url], fake)
+        self.assertEqual(code, 1)
+        self.assertIn("close denied", err)
 
     def test_an_arc_is_its_brief_filed_and_linked(self):
         brief = self.repo / "brief.md"

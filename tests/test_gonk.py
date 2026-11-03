@@ -660,7 +660,7 @@ class Claims(unittest.TestCase):
     def test_close_needs_evidence_and_releases_this_trees_claim(self):
         code, _, err = run(self.repo, ["close", "12", "--evidence", "merged"])
         self.assertEqual(code, 2)
-        self.assertIn("--evidence is a URL", err)
+        self.assertIn("--evidence is an absolute IRI", err)
         fake = FakeIkigai(
             [(":claim", ok("acme#12 claimed by agent-1\n")), (":close", ok("closed\n"))]
         )
@@ -671,10 +671,53 @@ class Claims(unittest.TestCase):
         self.assertEqual(
             [c for c, _ in fake.calls[1:]],
             [
-                "sink urn:gk:iki:ledger:acme:close item=12 reason=done author=agent-1",
+                "sink urn:gk:iki:ledger:acme:close item=12 reason=done author=agent-1"
+                f' evidence="{url}"',
                 "delete urn:gk:iki:ledger:acme:claim item=12 from=agent-1",
             ],
         )
+
+    def test_close_forwards_every_evidence_iri_and_keeps_a_readable_note(self):
+        evidence = [
+            "https://github.com/o/r/pull/3",
+            "https://github.com/o/r/commit/abc",
+            "urn:test:proof",
+        ]
+        fake = FakeIkigai([(":close", ok("closed\n"))])
+        argv = ["close", "12", "--note", "Checked merged and green."]
+        for iri in evidence:
+            argv += ["--evidence", iri]
+        code, _, _ = run(self.repo, argv, fake)
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            fake.calls,
+            [
+                (
+                    "sink urn:gk:iki:ledger:acme:close item=12 reason=done author=agent-1"
+                    ' evidence="https://github.com/o/r/pull/3"'
+                    ' evidence="https://github.com/o/r/commit/abc" evidence="urn:test:proof"',
+                    "Evidence: https://github.com/o/r/pull/3\n"
+                    "Evidence: https://github.com/o/r/commit/abc\nEvidence: urn:test:proof"
+                    "\n\nChecked merged and green.",
+                )
+            ],
+        )
+
+    def test_invalid_close_evidence_refuses_before_writing(self):
+        for value in ["", "merged", "https://x/ has-space", 'https://x/"', "urn:x|sink"]:
+            with self.subTest(value=value):
+                fake = FakeIkigai()
+                code, _, _ = run(
+                    self.repo,
+                    ["close", "12", "--evidence", "https://x/pr", "--evidence", value],
+                    fake,
+                )
+                self.assertEqual(code, 2)
+                self.assertEqual(fake.calls, [])
+        fake = FakeIkigai()
+        code, _, _ = run(self.repo, ["close", "12"], fake)
+        self.assertEqual(code, 2)
+        self.assertEqual(fake.calls, [])
 
     def test_a_close_that_released_the_claim_itself_is_a_close(self):
         # Since ikigai-ledger 0.7.0 the close releases the claim, so the `from=` release after

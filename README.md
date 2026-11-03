@@ -32,10 +32,18 @@ the same way. Over the owner's socket, where gonk names nobody, `report` and `cl
 working tree's holder as the comment's free-text `author`, so a reader can tell hand-backs
 apart; over QUIC gonk names the machine itself, and nothing is added.
 
+`close --evidence <iri>` is repeatable. With gonk carrying ikigai-ledger 0.18.0 or
+later, each IRI is stored on the close's StatusEvent as well as named in its readable
+note. After checking green CI and merging, the dispatcher supplies both the PR URL and
+`https://github.com/<owner>/<repo>/commit/<merge-sha>`. The hub profile automates this
+close step with `python3 tools/hub.py close 12 --pr <PR URL>` (or `just hub-close 12 <PR URL>`);
+it verifies the PR is merged before recording both IRIs. A worker's hand-back proposes
+evidence and leaves closing to the dispatcher.
+
 ### Evidence before there is a forge
 
-`report` and `close` accept any `http(s)` URL: the check is the URL's shape, not what it
-points at. The rules ask for the pull request, and a repository with no remote yet has none,
+`report` accepts any `http(s)` URL; `close` also accepts other absolute IRIs. These
+checks validate the shape, not what the evidence points at. The rules ask for the pull request, and a repository with no remote yet has none,
 so the easy wrong answer is a made-up one. Give gonk the repository as a browse root instead
 (`gonk.browse.root = "<name>=<path to this checkout>"` in gonk's `config.toml`, then restart
 gonk) and use gonk's own page for what changed as the evidence, with the commit in the note:

@@ -5,3 +5,7 @@ arc title brief *flags:
 # A working tree and a holder of its own for an arc: just dispatch 12 ../arc-12
 dispatch item dir *flags:
     python3 tools/hub.py dispatch {{item}} "{{dir}}" {{flags}}
+
+# After the authorized merge on green CI, record both the PR and its merge commit as close evidence.
+hub-close item pr *flags:
+    python3 tools/hub.py close {{item}} --pr "{{pr}}" {{flags}}

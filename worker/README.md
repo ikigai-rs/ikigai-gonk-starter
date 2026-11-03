@@ -971,6 +971,9 @@ the Pop!_OS 24.04 worker, `run --once`) showed, and what is still to try:
    silently, so the worker never asks with one). The comment names which source answered.
    Then `Evidence: <PR URL>` and the details go on the item as a comment posted with
    `handback=true`, the claim is released, and the worktree is removed (unless `keep`).
+   This is proposed close evidence. After checking CI and merging, the dispatcher closes
+   with both `--evidence <PR URL>` and `--evidence <merge commit IRI>`; the worker never
+   closes. Gonk with ikigai-ledger 0.18.0 or later stores those IRIs on the close event.
    `handback=true` makes the hand-back a STATE of the item (ikigai-ledger 0.8.0, ledger item
    1199), so `next` stops offering it to the next worker; a ledger older than 0.8.0 ignores
    the argument it does not know and writes the comment, the `Evidence:` prefix being the

@@ -2018,6 +2018,8 @@ class Worker:
             "",
             f"gonk worker `{holder}` handed this back: {agent}. It never closes and never "
             "merges; the dispatcher does both, after checking this evidence.",
+            "The evidence above is proposed close evidence; the dispatcher records the PR "
+            "and merge commit IRIs when closing a merged pull request.",
         ]
         if prs:
             body += ["", *lines]
