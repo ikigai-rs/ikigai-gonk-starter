@@ -443,8 +443,10 @@ python3 tools/worker.py run                          # the loop; worker/units/ r
 A machine that runs several agents runs **one loop per agent** from the same checkout, so the
 dispatcher can route each item to the agent that suits it by labeling it `worker:<name>` and
 `agent:<agent>`: `python3 tools/worker.py init-agents --name <name> --agents claude,codex,hermes`
-writes a `.gonk/worker-<agent>.toml` for each (`setup` is an alias). Review `[repos_from] github`
-in each: the sample admits `ikigai-rs`; choose the organization this worker may work in.
+writes a `.gonk/worker-<agent>.toml` for each (`setup` is an alias). Set `routers` in each to the
+dispatcher's principal, since `plan` refuses the sample's placeholder, and review
+`[repos_from] github`: the sample admits `ikigai-rs`; choose the organization this worker may work
+in.
 `worker/units/gonk-worker@.service` runs each as `gonk-worker@<agent>`. The loops share the
 per-repository locks, so two agents never work one repository at once ([`worker/README.md`](worker/README.md), step 8).
 

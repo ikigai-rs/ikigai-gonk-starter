@@ -36,7 +36,16 @@ import re
 import shutil
 import subprocess
 import sys
-import tomllib
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # before any 3.11 feature: macOS's /usr/bin/python3 is Apple's 3.9
+    sys.exit(
+        "tools/gonk.py needs Python 3.11 or later (found "
+        f"{sys.version_info[0]}.{sys.version_info[1]} at {sys.executable}). "
+        "On macOS: brew install python, then run it as /opt/homebrew/bin/python3."
+    )
+
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path

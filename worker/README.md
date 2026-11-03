@@ -161,7 +161,8 @@ in `scripts/gates.sh` everywhere.
 **With an invitation, the machine enrolls itself** (ledger item 2009). The controller runs
 `onboard invite <name> --kind worker` (or `--kind task-member`, or both kinds for one machine)
 and hands you a pairing code, an invite id, the layer door's address, its server certificate and
-that certificate's fingerprint. Then, as `agent`, in the checkout of step 8:
+that certificate's fingerprint. Then, as `agent`, in the checkout of step 8 (on macOS, with
+Homebrew's Python, as step 8 says):
 
     python3 tools/worker.py onboard --door door.example.org:4434 --pin <door fingerprint> \
         --server-cert door.crt --code <pairing code> --invite <id> --name <name> \
@@ -181,9 +182,9 @@ the lines that start the loops. It never replaces a file that differs without `-
 rerun posts nothing it posted before. That replaces the hand steps in 6 and 8: making the
 identity, sending the certificate, the fingerprint read-back, and editing the configuration.
 
-**What still needs a person:** the OS and its accounts (1, 2), the GitHub token (3), keeping it
-awake (4), the model (5), the hub's `hubdiag` ssh stanza and the tunnel (7), the repositories
-each loop may work in (`tools/worker_repos.py`), the approval on the controller's side, and,
+**What still needs a person:** the OS and its accounts (1, 2), the GitHub token and the git
+identity (3), keeping it awake (4), the model (5), the hub's `hubdiag` ssh stanza and the tunnel
+(7), the repositories each loop may work in (`tools/worker_repos.py`), the approval on the controller's side, and,
 until the doors reload their trust lists (ledger item 1825), a restart of the door and gonk
 after the approval. Steps 1 to 8 below are the whole procedure, by hand.
 
@@ -201,6 +202,10 @@ NVIDIA ISO ships the driver; `nvidia-smi` should name the GPU before Ollama is i
 users" (the setup adds `hubdiag` to that list, `com.apple.access_ssh`). Then
 `xcode-select --install` for the compilers and libclang. Note that Remote Login's switch may need
 Full Disk Access for the terminal if you try `systemsetup -setremotelogin on` instead.
+
+Then `brew install python`, as the admin ([Homebrew](https://brew.sh) is the admin's, and `agent`
+has no sudo). macOS's `/usr/bin/python3` is Apple's 3.9, and `tools/gonk.py` and `tools/worker.py`
+need 3.11 or later; step 8 says how `agent` runs them.
 
 ### 2. The accounts, the views, sshd
 
@@ -284,7 +289,15 @@ Either way, then:
      those two hosts an empty helper followed by gh's, and no `osxkeychain`. gh writes its helper
      under those hosts' keys, so `git config --global --get-all credential.helper` alone shows only
      a blank line.
-5. `sudo ./worker/worker-setup.sh --check` again, so the facts name the holder: the `[agent]`
+5. Still as `agent`, the name and address its commits carry:
+
+       git config --global user.name <worker account>
+       git config --global user.email <its address>
+
+   `agent` has neither, so without these every commit the worker makes fails: *Author identity
+   unknown … fatal: unable to auto-detect email address (got 'agent@more.(none)')*, measured on the
+   first worker Mac, 2026-11-02. `worker.py onboard` does not set them either.
+6. `sudo ./worker/worker-setup.sh --check` again, so the facts name the holder: the `[agent]`
    block should say `holds a FINE-GRAINED token` (route A) or a classic one (route B).
 
 ⚠ **No Checks permission exists for fine-grained tokens** (a classic token has no such limit, and `gh pr checks` works with it). With a fine-grained token `gh pr checks` fails with *Resource
@@ -391,6 +404,14 @@ a program starts:
 - **A launchd job** (macOS) likewise: the plist's `EnvironmentVariables` dictionary carries a
   `PATH` key with `/Users/agent/.cargo/bin` first.
 
+Install `ikigai` with QUIC, as that runbook does:
+
+    cargo install --locked --features quic ikigai-cli
+
+The features matter: the crate's defaults are `embedded` and `ipc`, so a plain `cargo install
+--locked ikigai-cli` builds without QUIC, and step 8's `ikigai cert generate` then fails with
+*`cert generate` needs the `quic` feature*. The loop talks to gonk over QUIC anyway.
+
 That runbook was written and captured on macOS. The differences on Linux, and on a worker
 account, that it does not yet say:
 
@@ -445,14 +466,25 @@ A worker set up before gonk moved from 1060 to 1062 (2026-10-12) permits only 10
 repository in agent's home (the units below expect `~/gonk-worker`), and works only under
 agent's home: it refuses a work root anywhere else, and refuses to run as root.
 
+**On macOS, type `/opt/homebrew/bin/python3` wherever these commands say `python3`** (Homebrew's,
+[step 1](#1-the-os); `/usr/local/bin/python3` on an Intel Mac). `agent`'s login `PATH` puts
+`/usr/bin` first, so a bare `python3` is Apple's 3.9, and the tools refuse it: *needs Python 3.11 or
+later (found 3.9 at …)*. The launchd plists already put Homebrew first.
+
     sudo -iu agent
     git clone https://github.com/ikigai-rs/ikigai-gonk-starter ~/gonk-worker && cd ~/gonk-worker
+    cargo install --locked --features quic ikigai-cli             # step 6's, for cert generate
     ikigai cert generate --dir ~/gonk-cert
     python3 tools/gonk.py init --ledger <ledger> --holder <worker name> \
         --quic quic://<gonk host>:<port> --cert-dir ~/gonk-cert   # prints the lines to enroll it
-    cp worker/worker.sample.toml .gonk/worker.toml                # then edit it
+    cp worker/worker.sample.toml .gonk/worker.toml                # then edit it: routers, below
     python3 tools/worker.py plan                                  # what it would take, and why
     python3 tools/worker.py run --once                            # one item, then exit
+
+**Set `routers` before `plan`.** The sample's `routers` is a placeholder, and `plan` refuses it
+(*routers has "urn:iki:gonk:passkey:<the dispatcher's credential id>", which is not a principal
+gonk names*). Replace it with the dispatcher's principal, which is the author on one of their
+dispatch comments ([Who may route work here](#who-may-route-work-here) says where else to find it).
 
 `init` and the enrollment are the top-level README's "gonk on another machine"; the claims
 then carry this machine's identity and are stamped a machine's. The loop uses the regular
@@ -502,6 +534,7 @@ agent**, so the dispatcher can route each item to the agent that suits it. It la
 Every loop runs from the one checkout, `~/gonk-worker`, under the one account.
 
     python3 tools/worker.py init-agents --name <worker name> --agents claude,codex,hermes
+    # Set routers in each configuration, above: from the sample, plan refuses its placeholder.
     # Review [repos_from] github in each configuration: the sample admits ikigai-rs.
     # Set except = ["name"] for exclusions; explicit [repos.<name>] overrides still work.
     python3 tools/worker.py --config .gonk/worker-codex.toml plan    # each loop, checked
@@ -515,7 +548,8 @@ Every loop runs from the one checkout, `~/gonk-worker`, under the one account.
   `--permission-mode bypassPermissions`, Codex with `--sandbox danger-full-access`, Hermes's
   preset (below says why each is opened). It never overwrites a configuration that exists, so
   running it again is safe and an edited file stays edited. `--from <file>` starts from another
-  file.
+  file. It takes `routers` from that file too, so starting from the sample leaves the placeholder
+  in each configuration until you set it.
 - **`holder`** in a loop's configuration overrides `.gonk/local.toml`'s, so a claim says which
   agent holds it (`my-worker-codex`). The holder is a **label**; the identity stays the
   machine's. gonk records the principal (the machine's certificate) beside the label, so the
