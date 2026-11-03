@@ -61,6 +61,10 @@ item 2816). Under `[disk] floor_gb` it takes no new item, says why in its log an
 line on its status item, and takes items again once space returns. When it starts and once a day
 after, it prunes the worktrees and logs items left under the work root once they are older than
 `[disk] prune_after`, keeping any worktree whose branch has an open pull request (`prune_work`).
+At each poll it also asks the ledger about each kept worktree (ledger item 2937, `Worker.reclaim`):
+one whose item is closed, or whose claim moved from the holder that made it to another, goes
+whatever its age, and under the floor the `target/` of one whose item is open and unclaimed goes
+first. A worktree a claim still holds is never touched, nor one the ledger gives no answer for.
 
 A loop that names an `agent:` label also reads the shared targets, in order after its own labels
 (ledger item 2793): `worker:pool` on every machine, `worker:mac` first on a Mac (`pool` in its
@@ -88,6 +92,7 @@ import re
 import shlex
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import threading
@@ -932,6 +937,7 @@ class Workspace:
     log: Path
     prompt: Path
     report: Path
+    holder: Path  # who made it, so a reclaim can tell a claim that moved from one that did not
 
 
 def make_workspace(root: Path, repo: Repo, number: int) -> Workspace:
@@ -971,13 +977,23 @@ def make_workspace(root: Path, repo: Repo, number: int) -> Workspace:
         log=home / f"{name}.log",
         prompt=home / f"{name}.prompt.md",
         report=home / f"{name}.report",
+        holder=home / f"{name}.holder",
     )
 
 
+def remove_worktree(tree: Path, branch: str, source: Path) -> None:
+    """The worktree and its local branch; a pushed branch stays on GitHub."""
+    git("worktree", "remove", "--force", str(tree), cwd=source)
+    if tree.exists():
+        shutil.rmtree(tree)
+    git("worktree", "prune", cwd=source)
+    if branch and branch != "HEAD":
+        git("branch", "-D", branch, cwd=source)
+
+
 def remove_workspace(ws: Workspace) -> None:
-    git("worktree", "remove", "--force", str(ws.path), cwd=ws.source)
-    git("branch", "-D", ws.branch, cwd=ws.source)
-    for leftover in (ws.prompt, ws.report):
+    remove_worktree(ws.path, ws.branch, ws.source)
+    for leftover in (ws.prompt, ws.report, ws.holder):
         leftover.unlink(missing_ok=True)
 
 
@@ -1126,8 +1142,9 @@ class GitHub:
 GB = 1024**3
 DISK_PREFIX = "Disk:"
 PRUNE_EVERY = 86400  # kept work is pruned when the loop starts, then once a day
-# What an item leaves under `<work root>/<repo>/`: its worktree, its log, its prompt, its report.
-WORK_NAME = re.compile(r"^(item-\d+(?:\.\d+)?)(?:\.log|\.prompt\.md|\.report)?$")
+# What an item leaves under `<work root>/<repo>/`: its worktree, its log, prompt, report, holder.
+WORK_NAME = re.compile(r"^(item-\d+(?:\.\d+)?)(?:\.log|\.prompt\.md|\.report|\.holder)?$")
+TREE_NAME = re.compile(r"^item-(\d+)(?:\.\d+)?$")
 
 
 def free_bytes(path: Path) -> int:
@@ -1182,6 +1199,15 @@ class DiskWatch:
             self.report(free, why)
         return why
 
+    def under_floor(self) -> bool:
+        """Whether a reading now is under the floor; a failed one is not, as in `check`."""
+        if not self.floor_gb:
+            return False
+        try:
+            return self.read(self.root) < self.floor_gb * GB
+        except OSError:
+            return False
+
     def line(self, free: int | None, why: str | None) -> str:
         read_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         words = [
@@ -1202,6 +1228,47 @@ class DiskWatch:
                 self.log(f"could not post the Disk: line on item {item}: {posted.text()}")
 
 
+def work_homes(root: Path) -> list[Path]:
+    """The `<root>/<repo>/` directories items work in."""
+    if not root.is_dir():
+        return []
+    return [
+        home
+        for home in sorted(root.iterdir())
+        if home.is_dir() and not home.is_symlink() and not home.name.startswith(".")
+    ]
+
+
+def kept_trees(home: Path) -> list[Path]:
+    """The worktrees under `home`. One left by an earlier run is never reused (make_workspace),
+    so with the repository's RepoLock free none of them has an agent in it."""
+    return [
+        tree
+        for tree in sorted(home.iterdir())
+        if TREE_NAME.match(tree.name)
+        and tree.is_dir()
+        and not tree.is_symlink()
+        and (tree / ".git").is_file()
+    ]
+
+
+def tree_bytes(tree: Path) -> int:
+    """What removing `tree` frees: a file hard-linked within it (cargo does) counts once."""
+    total, seen = 0, set()
+    for where, dirs, files in os.walk(tree):
+        for name in dirs + files:
+            try:
+                st = os.lstat(os.path.join(where, name))
+            except OSError:
+                continue
+            if st.st_nlink > 1 and not stat.S_ISDIR(st.st_mode):
+                if (st.st_dev, st.st_ino) in seen:
+                    continue
+                seen.add((st.st_dev, st.st_ino))
+            total += st.st_blocks * 512
+    return total
+
+
 def prune_work(root: Path, older_than: int, open_pr, lock_dir: Path, now: float | None = None):
     """Remove what items left under `<root>/<repo>/` (a kept worktree, its log, prompt and
     report, or the log of one already removed) once the newest of them is `older_than` seconds
@@ -1211,11 +1278,7 @@ def prune_work(root: Path, older_than: int, open_pr, lock_dir: Path, now: float 
     (its RepoLock held) is left for the next pruning. Returns the item paths removed."""
     now = time.time() if now is None else now
     removed: list[Path] = []
-    if not root.is_dir():
-        return removed
-    for home in sorted(root.iterdir()):
-        if not home.is_dir() or home.is_symlink() or home.name.startswith("."):
-            continue
+    for home in work_homes(root):
         lock = RepoLock(lock_dir, home.name)
         if not lock.acquire():
             log(f"prune: repo:{home.name} has an item running here; pruning it later")
@@ -1255,12 +1318,7 @@ def prune_repo(home: Path, older_than: int, open_pr, now: float) -> list[Path]:
             if isinstance(answer, str):
                 log(f"prune: keeping {tree}: whether {branch} has an open PR is unknown: {answer}")
                 continue
-            source = home / ".source"
-            git("worktree", "remove", "--force", str(tree), cwd=source)
-            if tree.exists():
-                shutil.rmtree(tree)
-            git("worktree", "prune", cwd=source)
-            git("branch", "-D", branch, cwd=source)
+            remove_worktree(tree, branch, home / ".source")
             where += f" (branch {branch})"
         for e in entries:
             if e != tree:
@@ -1503,6 +1561,7 @@ class Worker:
         )
         self.prune_after = d["prune_after"]
         self.pruned_at: float | None = None
+        self.reclaim_logged: dict[Path, str] = {}
 
     # ----------------------------------------------------------------- choosing
 
@@ -1749,6 +1808,7 @@ class Worker:
     # ----------------------------------------------------------------- one item
 
     def run_once(self) -> Outcome:
+        self.reclaim()
         low = self.disk.check()
         held = self.usage.check()
         if held:
@@ -1840,6 +1900,7 @@ class Worker:
     def work_claimed(self, item: dict, repo: Repo, beat: Heartbeat) -> Outcome:
         number, display, holder = item["number"], item.get("display"), self.cfg.holder
         ws = make_workspace(self.root, repo, number)
+        ws.holder.write_text(holder + "\n", encoding="utf-8")
         text = brief(item, self.cfg.ledger, ws, repo, self.wc.budget, self.wc.routers)
         ws.prompt.write_text(text, encoding="utf-8")
         argv = agent_argv(
@@ -1875,7 +1936,10 @@ class Worker:
             ended, code = self.watch(proc, started, beat)
         exited = datetime.now(UTC)
         took = spoken(time.monotonic() - started)
-        where = f"the worktree is kept at {ws.path} (branch {ws.branch}, log {ws.log})"
+        where = (
+            f"the worktree is kept at {ws.path} (branch {ws.branch}, log {ws.log}) until the "
+            "item closes or another holder claims it"
+        )
         gh = GitHub(self.wc.gh, repo.github)
 
         if ended == "lost":
@@ -2053,6 +2117,94 @@ class Worker:
         if not self.prune_after:
             return []
         return prune_work(self.root, self.prune_after, self.open_pr, self.wc.state_dir)
+
+    def reclaim(self) -> None:
+        """Give back what kept worktrees hold, by what the ledger says of their items: remove
+        those no claim will come back to (`kept_fate`), unless `keep` or a `prune_after` of `0s`
+        says to keep them. Then, only while the disk is under the floor, drop the `target/` of
+        those whose item is open and unclaimed, one at a time until it no longer is. A repository
+        with an item running on this machine (its RepoLock held) waits for a later poll."""
+        removing = bool(self.prune_after) and not self.wc.keep
+        if not removing and not self.disk.under_floor():
+            return
+        items: dict[int, tuple[dict | None, str | None]] = {}
+        thinnable: list[Path] = []
+        for home in work_homes(self.root):
+            if not kept_trees(home):
+                continue  # no lock taken, so a poll with nothing kept never fences a sibling loop
+            lock = RepoLock(self.wc.state_dir, home.name)
+            if not lock.acquire():
+                continue
+            try:
+                for tree in kept_trees(home):
+                    action, why = self.kept_fate(tree, items)
+                    if action == "remove" and removing:
+                        self.reclaim_tree(tree, why)
+                    elif action == "thin":
+                        thinnable.append(tree)
+                    elif action is None and self.reclaim_logged.get(tree) != why:
+                        self.reclaim_logged[tree] = why
+                        log(f"reclaim: keeping {tree}: {why}")
+            finally:
+                lock.release()
+        for tree in thinnable:  # never reused, so no agent can have started in one since
+            if not self.disk.under_floor():
+                break
+            self.thin_tree(tree)
+
+    def kept_fate(self, tree: Path, items: dict) -> tuple[str | None, str]:
+        """("remove", why) when no claim will come back to this worktree, ("thin", why) when one
+        may, (None, why) to leave it alone: a claim holds it, or the ledger cannot say."""
+        number = int(TREE_NAME.match(tree.name).group(1))
+        if number not in items:
+            items[number] = self.ledger.item(number)
+        item, err = items[number]
+        if item is None:
+            return None, f"the ledger did not answer for item {number}: {err}"
+        if tree.parent.name not in repo_labels(item):
+            return None, f"item {number} is not labelled repo:{tree.parent.name}"
+        status = item.get("status")
+        if not status:
+            return None, f"the ledger gave no status for item {number}"
+        if status != "open":  # the word for a finished item is the ledger's, as in Heartbeat
+            return "remove", f"item {number} is {status}"
+        claim = (item.get("claim") or {}).get("holder")
+        if not claim:
+            return "thin", f"item {number} is open and unclaimed"
+        if claim == self.cfg.holder:
+            return None, f"this loop's claim holds item {number}"
+        try:
+            made_by = tree.with_name(f"{tree.name}.holder").read_text(encoding="utf-8").strip()
+        except OSError:
+            return None, f"`{claim}` holds item {number}, and who made this worktree is not known"
+        if made_by == claim:
+            return None, f"`{claim}`, which made this worktree, holds item {number}"
+        return "remove", f"item {number} moved from `{made_by}` to `{claim}`"
+
+    def reclaim_tree(self, tree: Path, why: str) -> None:
+        size = tree_bytes(tree)
+        try:
+            branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=tree).stdout.strip()
+            remove_worktree(tree, branch, tree.parent / ".source")
+        except OSError as e:
+            log(f"reclaim: could not remove {tree}: {e}")
+            return
+        for suffix in (".prompt.md", ".report", ".holder"):  # the log stays for prune_after
+            tree.with_name(tree.name + suffix).unlink(missing_ok=True)
+        self.reclaim_logged.pop(tree, None)
+        log(f"reclaim: removed {tree} (branch {branch}), {gb(size)} GB: {why}")
+
+    def thin_tree(self, tree: Path) -> None:
+        target = tree / "target"
+        if not target.is_dir() or target.is_symlink():
+            return
+        size = tree_bytes(target)
+        try:
+            shutil.rmtree(target)
+        except OSError as e:
+            log(f"reclaim: could not drop {target}: {e}")
+            return
+        log(f"reclaim: dropped {target}, {gb(size)} GB: the free disk is under the floor")
 
     def open_pr(self, name: str, branch: str) -> bool | str:
         """Whether `branch` of repo:<name> has an open pull request, or why that is not known."""

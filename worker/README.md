@@ -878,8 +878,8 @@ account that could push with another credential. The first push is the final wor
 | `budget` | `45m` | wall-clock per item; the agent is stopped when it runs out |
 | `ci_wait`, `ci_poll` | `10m`, `20s` | how long to wait, after the agent exits, for its pull request's CI to finish |
 | `poll` | `60s` | between polls of `next` when nothing is ready |
-| `keep` | `false` | keep every worktree after its hand-back (`run --keep` for one run) |
-| `[disk]` | `floor_gb = 30`, `every = "6h"`, `prune_after = "7d"` | under `floor_gb` free on the work root's volume the loop takes no new item (`0` turns the floor off); `every` paces its `Disk:` line; kept worktrees and logs older than `prune_after` are removed (`"0s"` keeps them) |
+| `keep` | `false` | keep every worktree after its hand-back, and past its item's closing (`run --keep` for one run) |
+| `[disk]` | `floor_gb = 30`, `every = "6h"`, `prune_after = "7d"` | under `floor_gb` free on the work root's volume the loop takes no new item (`0` turns the floor off); `every` paces its `Disk:` line; kept worktrees and logs older than `prune_after` are removed, and a kept worktree goes as soon as its item closes or its claim moves to another holder (`"0s"` keeps them; see Disk below) |
 | `gh`, `stop_file` | `gh`, `.gonk/state/worker/stop` (a loop's own: `.gonk/state/worker/<agent>/stop`) | the GitHub CLI; the file that stops the loop between items (`.gonk/state/worker/stop` stops every loop) |
 
 The presets are each agent's documented non-interactive form (`claude -p`, `codex exec`,
@@ -988,9 +988,27 @@ the Pop!_OS 24.04 worker, `run --once`) showed, and what is still to try:
    log. When the loop starts and once a day after, it removes each worktree under the work
    root, with its log, prompt and report, and each log of a removed worktree, once the newest
    of them is older than `[disk] prune_after` (default 7 days). A worktree whose branch has an
-   open pull request is never pruned, nor one whose pull requests `gh` cannot list, nor a
-   repository with an item running on this machine; its local branch goes with it, and the
-   pushed branch stays on GitHub.
+   open pull request is not pruned for its age, nor one whose pull requests `gh` cannot list,
+   nor a repository with an item running on this machine; its local branch goes with it, and
+   the pushed branch stays on GitHub.
+
+   A kept worktree is there so the dispatcher can look, and a build in one is tens of GB, so
+   age is not the only thing that ends it. At each poll the loop asks the ledger about the item
+   of every kept worktree under the work root, and logs what it reclaims with its size:
+
+   | The item | The kept worktree |
+   | --- | --- |
+   | closed | removed with its local branch, prompt and report, whatever its age and even with an open pull request (`git worktree remove --force`, then `git worktree prune`); the log stays for `prune_after` |
+   | open, held by another holder than the one that made it | removed the same way: the claim moved, so that work is no longer this worker's. Whatever it had not pushed goes with it |
+   | open, unclaimed | kept. Only while the free disk is under `floor_gb`, its `target/` is dropped, one worktree at a time until a reading is back at the floor, after the removals above |
+   | open, held by this loop's holder, or by the holder that made it | never touched |
+   | open, held by another holder, and who made it is not known (a worktree older than the `item-<N>.holder` file) | never touched; `prune_after` still applies |
+   | the ledger gives no answer, or it does not carry this repository's `repo:` label | never touched |
+
+   A repository with an item running on this machine waits for a later poll. `keep` and a
+   `prune_after` of `"0s"` turn the removals off; the floor's `target/` drop still runs, since a
+   build can be made again. To look at a kept worktree before it goes, copy what matters out of
+   it or push its branch.
 
 `run --once` exits 0 when it handed an item back with evidence, 3 when there was nothing to
 take, 4 when it took one and could not hand it back with evidence (lost, overrun, stopped,
