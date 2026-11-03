@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""The hub-and-spoke profile's two steps: file an arc from its brief, and dispatch it.
+"""The hub-and-spoke profile: file, dispatch, and close an arc with merge evidence.
 
     python3 tools/hub.py arc "<title>" --brief <file> [--parent N] [--after N]… [--labels a,b]
     python3 tools/hub.py dispatch <item> <dir> [--holder <name>] [--base <ref>]
+    python3 tools/hub.py close <item> --pr <merged PR URL> [--note <text>]
 
 `arc` files one ledger item whose body is the brief (`.gonk/templates/brief.md` is the shape),
 labeled `arc`, and links it: `parent` to the item it is part of, and `blocks` from each arc
@@ -13,14 +14,19 @@ branch `arc-<item>`, and that tree's `.gonk/local.toml` saying how it reaches go
 tree's way) under the holder `arc-<item>`. Two agents never share a tree or a claim (rule 2
 of AGENTS.md); the agent started there claims the item and works from its brief.
 
-Standard library only, beside tools/gonk.py, whose transport and configuration it shares. Its
-two refusals (a missing or empty brief, a working tree that exists) are harness sensors,
+`close` is the step after the authorized merge on green CI. It verifies the merged PR
+with `gh` and records its URL and merge commit IRI on the ledger close StatusEvent
+(ikigai-ledger 0.18.0 or later). It never merges a pull request.
+
+Standard library only, beside tools/gonk.py, whose transport and configuration it shares. The
+brief and working-tree refusals are harness sensors,
 recorded in this working tree's firing log (tools/harness.py).
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import subprocess
 import sys
@@ -113,6 +119,51 @@ def cmd_dispatch(args, cfg: gonk.Config, make_ikigai) -> int:
     return 0
 
 
+PR_URL = re.compile(r"https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/pull/([1-9][0-9]*)")
+
+
+def cmd_close(args, cfg: gonk.Config, make_ikigai) -> int:
+    """After the dispatcher checks CI and merges, close with the PR and its merge commit."""
+    gonk.need(cfg, "ledger", "target")
+    requested = PR_URL.fullmatch(args.pr)
+    if not requested:
+        raise gonk.ConfigError("--pr must be a GitHub pull request URL")
+    try:
+        done = subprocess.run(
+            ["gh", "pr", "view", args.pr, "--json", "state,url,mergeCommit"],
+            cwd=cfg.repo,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise gonk.ConfigError(f"could not verify merged PR: {e}") from e
+    if done.returncode != 0:
+        raise gonk.ConfigError(f"gh pr view: {(done.stderr or done.stdout).strip()}")
+    try:
+        pr = json.loads(done.stdout)
+        url = pr["url"]
+        canonical = PR_URL.fullmatch(url)
+        sha = pr["mergeCommit"]["oid"]
+        if (
+            pr["state"] != "MERGED"
+            or canonical is None
+            or canonical.groups() != requested.groups()
+            or not re.fullmatch(r"[0-9a-fA-F]{40}", sha)
+        ):
+            raise ValueError("PR is not verified as merged with a valid merge commit")
+    except (ValueError, KeyError, TypeError) as e:
+        raise gonk.ConfigError(f"could not verify merged PR: {e}") from e
+    owner, repo, _ = canonical.groups()
+    close = argparse.Namespace(
+        item=args.item,
+        evidence=[url, f"https://github.com/{owner}/{repo}/commit/{sha}"],
+        reason="done",
+        note=args.note,
+    )
+    return gonk.cmd_close(close, cfg, make_ikigai)
+
+
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="hub.py", description=__doc__.splitlines()[0])
     p.add_argument("--repo", help="the repository (default: found from the working directory)")
@@ -135,6 +186,11 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--holder", help="the holder it claims under (default: arc-<item>)")
     s.add_argument("--base", default="HEAD", help="what the branch starts from (default: HEAD)")
     s.set_defaults(run=cmd_dispatch)
+    s = sub.add_parser("close", help="close an item with its merged PR and merge commit evidence")
+    s.add_argument("item", type=int)
+    s.add_argument("--pr", required=True, help="the merged GitHub pull request URL")
+    s.add_argument("--note")
+    s.set_defaults(run=cmd_close)
     return p
 
 

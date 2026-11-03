@@ -80,6 +80,7 @@ DEFAULT_LEASE = "30m"
 
 ARTIFACT_SHAPE = LEDGER_SHAPE
 EVIDENCE_SHAPE = re.compile(r"^https?://\S+$")
+EVIDENCE_IRI_SHAPE = re.compile(r'^[A-Za-z][A-Za-z0-9+.-]*:[^\s\x00-\x20\x7f<>"{}|\\^`]+$')
 # ikigai-ledger's close reasons (src/vocabulary.rs, CLOSE_REASONS).
 CLOSE_REASONS = ("done", "wontfix", "duplicate", "superseded", "audit-no-change")
 TIMEOUT_S = 30
@@ -1843,15 +1844,22 @@ def cmd_release(args, cfg: Config, make_ikigai) -> int:
 
 
 def evidence_note(args, cfg: Config) -> str:
-    if not args.evidence or not EVIDENCE_SHAPE.match(args.evidence):
+    # Reports propose one URL; closes accept the ledger's repeatable absolute IRIs.
+    closing = isinstance(args.evidence, list)
+    evidence = args.evidence if closing else [args.evidence]
+    shape = EVIDENCE_IRI_SHAPE if closing else EVIDENCE_SHAPE
+    if not evidence or any(not value or not shape.fullmatch(value) for value in evidence):
+        requirement = "--evidence is an absolute IRI" if closing else "--evidence is a URL"
         raise refuse(
             "evidence-required",
             cfg.repo,
-            "--evidence is a URL (the pull request, or the reproduction that shows it is not a "
-            "defect): a report without evidence is a claim nobody can check",
+            requirement + " (the pull request, or the reproduction that shows it is not a "
+            "defect): evidence must be something a reader can check",
             args,
         )
-    return f"Evidence: {args.evidence}" + (f"\n\n{args.note.strip()}" if args.note else "")
+    return "\n".join(f"Evidence: {value}" for value in evidence) + (
+        f"\n\n{args.note.strip()}" if args.note else ""
+    )
 
 
 def socket_author(cfg: Config) -> str:
@@ -2178,6 +2186,7 @@ def cmd_close(args, cfg: Config, make_ikigai) -> int:
     command = f"sink {cfg.resource('close')} item={args.item} reason={args.reason}" + socket_author(
         cfg
     )
+    command += "".join(f" evidence={json.dumps(iri, ensure_ascii=False)}" for iri in args.evidence)
     ikigai = make_ikigai(cfg.target)
     answer = ikigai.run(command, stdin=note)
     code = show(answer)
@@ -2534,7 +2543,12 @@ def parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("close", help="close an item, with evidence (the dispatcher's act)")
     s.add_argument("item", type=int)
-    s.add_argument("--evidence", help="the URL that shows it is done (required)")
+    s.add_argument(
+        "--evidence",
+        action="append",
+        default=[],
+        help="an IRI that shows it is done (required; repeatable)",
+    )
     s.add_argument("--reason", default="done", choices=CLOSE_REASONS)
     s.add_argument("--note")
     s.set_defaults(run=cmd_close)

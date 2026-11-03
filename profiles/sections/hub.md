@@ -17,4 +17,11 @@ One **hub** session coordinates, and each piece of work goes to an agent of its 
 - **The hub asks a person before merging its own work.** One line, with the pull request and
   its CI: "PR 41 is green. Merge?", then merge on the answer. A merge is the moment work
   becomes shared, and the person gets one beat to redirect it.
-- **The hub closes an arc** after checking the evidence, as any dispatcher does.
+- **The hub closes an arc** after checking green CI and confirming the authorized merge,
+  as any dispatcher does. Run `python3 tools/hub.py close 12 --pr <PR URL>`: it verifies
+  the PR is merged using `gh pr view` and sends the PR URL and the merge commit IRI
+  (`https://github.com/<owner>/<repo>/commit/<sha>`) as repeatable `evidence=` values.
+  Requires gonk with ikigai-ledger 0.18.0 or later: both IRIs stay on that close's
+  StatusEvent, visible in history and the item's Turtle face. A comment naming them
+  alone does not record structured close evidence. Workers hand back their proposed PR
+  evidence and never merge or close; the dispatcher performs these steps.

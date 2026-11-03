@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import re
 import shutil
 import socket
@@ -296,9 +297,45 @@ class AgainstARealGonk(unittest.TestCase):
         (one / ".gonk" / "state" / "claim.toml").unlink()
         code, out = tool(one, "close", "1", "--evidence", url)
         self.assertEqual(code, 0, out)
-        self.assertIn("closed acme#1 (done)", out)
+        self.assertIn("closed acme#1 done (1 evidence)", out)
         code, out = tool(one, "next")
         self.assertIn("nothing is ready", out)
+
+    def test_close_evidence_reaches_history_and_the_item_turtle_face(self):
+        # Requires a scratch gonk with ikigai-ledger >= 0.18.0. Do not skip an older
+        # installed ledger silently: evidence dropped by the server must fail this test.
+        g = ScratchGonk(quic=False)
+        self.addCleanup(g.stop)
+        g.start()
+        repo = scratch_repo(self)
+        code, out = tool(
+            repo, "init", "--ledger", "acme", "--socket", str(g.socket), "--holder", "hub"
+        )
+        self.assertEqual(code, 0, out)
+        code, out = tool(repo, "file", "Close evidence acceptance")
+        self.assertEqual(code, 0, out)
+        pr = "https://github.com/example/library/pull/1"
+        commit = "https://github.com/example/library/commit/" + "a" * 40
+        code, out = tool(repo, "close", "1", "--evidence", pr, "--evidence", commit)
+        self.assertEqual(code, 0, out)
+        ikigai = gonk.Ikigai(gonk.Target(socket=str(g.socket)))
+        history = ikigai.run("source urn:gk:iki:ledger:acme:item:1:history as=application/json")
+        self.assertTrue(history.ok, history.text())
+        events = json.loads(history.out)["events"]
+        closes = [event for event in events if event["kind"] == "closed"]
+        self.assertEqual(len(closes), 1)
+        self.assertCountEqual(closes[0]["evidence"], [pr, commit])
+        history = ikigai.run("source urn:gk:iki:ledger:acme:item:1:history")
+        self.assertTrue(history.ok, history.text())
+        for iri in [pr, commit]:
+            self.assertIn(iri, history.out)
+        turtle = ikigai.run("source urn:gk:iki:ledger:acme:item:1 as=text/turtle")
+        self.assertTrue(turtle.ok, turtle.text())
+        # The item Turtle face includes close-note bodies, not StatusEvent triples.
+        # History above proves structured storage; this proves both remain readable
+        # through Turtle as well, without claiming the face exports event triples.
+        for iri in [pr, commit]:
+            self.assertIn(f"Evidence: {iri}", turtle.out)
 
     def test_a_release_note_reaches_the_item(self):
         # Ledger item 1229: a note piped to the claim's DELETE never reached the ledger.

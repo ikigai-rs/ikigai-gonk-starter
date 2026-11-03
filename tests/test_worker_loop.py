@@ -165,6 +165,7 @@ class TheLoop(unittest.TestCase):
         self.assertEqual(len(sha), 40)
         self.assertIn(f"GitHub Actions runs for {sha} (gh pr checks was refused", comment)
         self.assertIn("never closes and never merges", comment)
+        self.assertIn("proposed close evidence", comment)
 
         # The hand-back is the item's STATE, not just the prefix: the ledger is told
         # `handback=true` (ledger 0.8.0, ledger item 1199) so `next` stops offering the item,
