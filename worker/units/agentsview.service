@@ -1,0 +1,24 @@
+# AgentsView for the agent account (Linux): a systemd USER unit, like gonk-worker.service,
+# so it runs as agent with agent's own home and sessions. Step 9 of worker/README.md.
+#
+#   cp worker/units/agentsview.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now agentsview
+#
+# It serves agent's archive on the LAN for the hub's links, so ~/.agentsview/config.toml must
+# set require_auth = true (AgentsView refuses a non-loopback host from config without it).
+# Telemetry is off. The binary is the pinned one in ~/.agentsview-venv.
+
+[Unit]
+Description=AgentsView: agent's session archive, for links from the hub
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=AGENTSVIEW_TELEMETRY_ENABLED=0
+ExecStart=%h/.agentsview-venv/bin/agentsview serve --no-browser --no-update-check
+Restart=on-failure
+RestartSec=60
+
+[Install]
+WantedBy=default.target
