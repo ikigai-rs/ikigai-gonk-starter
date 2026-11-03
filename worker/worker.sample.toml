@@ -11,6 +11,10 @@
 # ready for this machine by adding the label.
 labels = ["worker:my-worker"]
 # holder = "my-worker-codex"   # this loop's holder name, over .gonk/local.toml's
+# The shared labels this loop also reads after its own, each in place of its worker:<name> and
+# keeping its agent:. The default, for a loop whose labels name an agent:, is ["worker:pool"], and
+# ["worker:mac", "worker:pool"] on a Mac; [] opts out (worker/README.md, "The pool").
+# pool = ["worker:pool"]
 # Items carrying ANY of these are never taken.
 # without = ["needs-person"]
 

@@ -62,6 +62,13 @@ line on its status item, and takes items again once space returns. When it start
 after, it prunes the worktrees and logs items left under the work root once they are older than
 `[disk] prune_after`, keeping any worktree whose branch has an open pull request (`prune_work`).
 
+A loop that names an `agent:` label also reads the shared targets, in order after its own labels
+(ledger item 2793): `worker:pool` on every machine, `worker:mac` first on a Mac (`pool` in its
+configuration, `gonk.worker_selectors`). Each stands in for the loop's `worker:<name>` and keeps
+its `agent:`. The claim is the ledger's compare-and-set, so two loops never hold one item, and a
+loop that loses that race goes straight on to its next candidate. The dispatch check is the same:
+the newest dispatch must name one of those label sets, so pinning an item takes it out of the pool.
+
 The one-agent-per-repository rule here is BEST-EFFORT until the ledger enforces it (ledger
 item 1140 on ikigai's own ledger): two workers can read "free" at the same moment. Each
 re-reads after claiming and backs off if it sees another claim, which narrows the window and
@@ -210,10 +217,16 @@ class WorkerConfig:
     repos_except: list[str] = field(default_factory=list)
     holder: str | None = None  # overrides .gonk/local.toml's holder for this loop's claims
     disk: dict = field(default_factory=dict)  # the [disk] table: see load_disk
+    pool: list[str] = field(default_factory=list)  # the shared labels it also reads: default_pool
 
     def __post_init__(self) -> None:
         self.loop_dir = self.loop_dir or self.state_dir
         self.global_stop = self.global_stop or self.state_dir / "stop"
+
+    @property
+    def selectors(self) -> list[list[str]]:
+        """The label sets this loop reads `next` with, in the order it reads them."""
+        return gonk.worker_selectors(self.labels, self.pool)
 
     def repository(self, name: str) -> tuple[Repo | None, str | None]:
         problem = gonk.repository_admission_problem(
@@ -307,6 +320,19 @@ def load_disk(d, where: str) -> dict:
     }
 
 
+def names_agent(labels: list[str]) -> bool:
+    return any(w.startswith("agent:") for w in labels)
+
+
+def default_pool(labels: list[str]) -> list[str]:
+    """The shared labels a loop reads unless its `pool` says otherwise: `worker:pool`, and
+    `worker:mac` first on a Mac. None for a loop that names no `agent:`, which could not tell an
+    item meant for another agent from one meant for its own."""
+    if not names_agent(labels):
+        return []
+    return [gonk.MAC_LABEL, gonk.POOL_LABEL] if sys.platform == "darwin" else [gonk.POOL_LABEL]
+
+
 def load_worker(cfg: gonk.Config, path: Path | None = None) -> WorkerConfig:
     path = path or cfg.repo / WORKER_TOML
     if not path.is_file():
@@ -335,6 +361,15 @@ def load_worker(cfg: gonk.Config, path: Path | None = None) -> WorkerConfig:
             cfg.repo,
             f"{where}: labels is empty. Name at least one (`worker:<name>`, `repo:<name>`): a "
             "worker that takes every ready item in a ledger takes work nobody meant for it",
+        )
+    pool = words("pool") if "pool" in t else default_pool(labels)
+    for label in pool:
+        if not label.startswith("worker:"):
+            raise gonk.ConfigError(f"{where}: pool has {label!r}: name a `worker:` label")
+    if pool and not names_agent(labels):
+        raise gonk.ConfigError(
+            f"{where}: pool needs an `agent:` label in labels: a loop that names no agent would "
+            "take items the dispatcher meant for another. Run one loop per agent (`init-agents`)"
         )
     routers = load_routers(t.get("routers"), where, cfg.repo)
     lease = str(t.get("lease", gonk.DEFAULT_LEASE))
@@ -428,6 +463,7 @@ def load_worker(cfg: gonk.Config, path: Path | None = None) -> WorkerConfig:
     stop = t.get("stop_file")
     return WorkerConfig(
         labels=labels,
+        pool=pool,
         without=without,
         routers=routers,
         work_root=str(t.get("work_root", "~/work")),
@@ -657,6 +693,19 @@ def dispatch_problem(item: dict, routers: list[str], labels: list[str]) -> str |
             "to nobody: a router dispatches it again to send the new text"
         )
     return None
+
+
+def routing_problem(item: dict, routers: list[str], selectors: list[list[str]]) -> str | None:
+    """`dispatch_problem` for a loop reading several label sets: None when the item is routed
+    through any of them, else what is wrong with the set its newest dispatch names (the first
+    set when it names none), which is the problem the dispatcher can act on."""
+    problems = [dispatch_problem(item, routers, labels) for labels in selectors]
+    if None in problems:
+        return None
+    for labels, problem in zip(selectors, problems, strict=True):
+        if dispatched_to(item, routers, labels):
+            return problem
+    return problems[0]
 
 
 def dispatched_to(item: dict, routers: list[str], labels: list[str]) -> bool:
@@ -1413,6 +1462,7 @@ class Outcome:
     number: int | None = None
     prs: list[PullRequest] = field(default_factory=list)
     renewals: int = 0
+    claim_refused: bool = False  # another loop took the item first: it was the ledger's to say
 
 
 class Worker:
@@ -1459,15 +1509,22 @@ class Worker:
     def candidates(self) -> tuple[list[tuple[dict, Repo]], list[tuple[str, str]], str | None]:
         """(takeable items in rank order with their repository, (item, why) for the rest, the
         error when gonk did not answer). Nothing is claimed."""
-        doc, err = self.ledger.next(self.wc.labels, self.wc.without)
-        if doc is None:
-            return [], [], err
+        ranking = []
+        for selector in self.wc.selectors:  # own labels first, then the shared ones
+            doc, err = self.ledger.next(selector, self.wc.without)
+            if doc is None:
+                return [], [], err
+            ranking += doc.get("ranking", [])
         now = gonk.iso_now()
         take, skip = [], []
         busy: dict[str, str | None] = {}
+        seen_numbers: set = set()
         self.skipped, self.skipped_items = [], []
-        for ranked in doc.get("ranking", []):
+        for ranked in ranking:
             item = ranked["item"]
+            if item.get("number") in seen_numbers:  # carried labels of two of the sets
+                continue
+            seen_numbers.add(item.get("number"))
             display = item.get("display", f"#{item.get('number')}")
             reason = self.skip_reason(item, now, busy)
             if reason:
@@ -1498,7 +1555,7 @@ class Worker:
         configured, problem = self.wc.repository(repo)
         if problem:
             return gonk.sensor("worker-one-repository-label"), problem
-        problem = dispatch_problem(item, self.wc.routers, self.wc.labels)
+        problem = routing_problem(item, self.wc.routers, self.wc.selectors)
         if problem:
             return gonk.sensor("worker-dispatched-by-a-router"), problem
         if awaiting_dispatcher(item):
@@ -1552,7 +1609,7 @@ class Worker:
             not isinstance(number, int)
             or item.get("claim")
             or awaiting_dispatcher(item)
-            or not dispatched_to(item, self.wc.routers, self.wc.labels)
+            or not any(dispatched_to(item, self.wc.routers, s) for s in self.wc.selectors)
         ):
             return
         why = PRINCIPAL.sub("a router", why)
@@ -1580,7 +1637,12 @@ class Worker:
     def remedy(self, item: dict, key: str) -> str:
         """What the dispatcher can do about the skip."""
         number, repos = item.get("number"), repo_labels(item)
-        dispatch = f"`python3 tools/gonk.py dispatch {number} --labels {','.join(self.wc.labels)}`"
+        # The set it was sent through: a remedy for a pool item must not pin it to this machine.
+        routed = next(
+            (s for s in self.wc.selectors if dispatched_to(item, self.wc.routers, s)),
+            self.wc.labels,
+        )
+        dispatch = f"`python3 tools/gonk.py dispatch {number} --labels {','.join(routed)}`"
         if key == "usage":
             return (
                 f"Remedy: it takes the item once a reading is at or under "
@@ -1644,7 +1706,7 @@ class Worker:
                 return
             item = items[0]
         self.usage.status_item = self.disk.status_item = item
-        for label in gonk.worker_status_labels(self.wc.labels):
+        for label in gonk.worker_status_labels([*self.wc.labels, *self.wc.pool]):
             answer = self.ledger.ikigai.run(
                 f"sink {self.cfg.resource('label')} item={item}", stdin=label
             )
@@ -1660,6 +1722,7 @@ class Worker:
             list(self.wc.repos),
             self.wc.repos_from,
             self.wc.repos_except,
+            self.wc.pool,
         )
         if self.notices.status() == text:
             return
@@ -1713,16 +1776,25 @@ class Worker:
                 self.fire_skip(gonk.sensor("worker-one-agent-per-repository"), item["number"])
                 continue
             try:
-                return self.work(item, repo)
+                outcome = self.work(item, repo)
             finally:
                 lock.release()
+            if not outcome.claim_refused:
+                return outcome
+            # Another loop won it: no reason to wait a poll with more candidates in hand.
+            log(outcome.summary)
         return Outcome(NOTHING, "nothing to take")
 
     def work(self, item: dict, repo: Repo) -> Outcome:
         number, display, holder = item["number"], item.get("display"), self.cfg.holder
         answer = self.ledger.claim(number, holder, self.wc.lease)
         if not answer.ok:
-            return Outcome(NOTHING, f"could not claim {display}: {answer.text()}", number)
+            return Outcome(
+                NOTHING,
+                f"could not claim {display}: {answer.text()}",
+                number,
+                claim_refused=answer.conflict,
+            )
         log(f"claimed {display} for `{holder}` on a {self.wc.lease} lease (repo:{repo.name})")
         other = self.repo_holder(repo.name, gonk.iso_now(), exclude=number)
         if other:
@@ -1736,7 +1808,7 @@ class Worker:
         problem = (
             f"it could not be read again after the claim ({err})"
             if fresh is None
-            else dispatch_problem(fresh, self.wc.routers, self.wc.labels)
+            else routing_problem(fresh, self.wc.routers, self.wc.selectors)
             or (
                 None
                 if repo_labels(fresh) == [repo.name]
@@ -1790,6 +1862,9 @@ class Worker:
                 proc = subprocess.Popen(
                     argv,
                     cwd=ws.path,
+                    # One cargo target directory per worktree, whatever this account's environment
+                    # or cargo configuration says: loops on one machine never share a build.
+                    env={**os.environ, "CARGO_TARGET_DIR": str(ws.path / "target")},
                     stdin=subprocess.DEVNULL,
                     stdout=out,
                     stderr=subprocess.STDOUT,
@@ -2000,7 +2075,8 @@ class Worker:
         )
         log(
             f"started: {loop}ledger `{self.cfg.ledger}` over {self.cfg.target.describe()}, "
-            f"holder `{self.cfg.holder}`, labels {','.join(self.wc.labels)}, work root "
+            f"holder `{self.cfg.holder}`, labels {','.join(self.wc.labels)}, "
+            f"pool {','.join(self.wc.pool) or 'none'}, work root "
             f"{self.root}; stop with: touch {self.wc.stop_file}{every}"
         )
         while not self.shutdown.is_set():
@@ -2057,6 +2133,7 @@ def build(args, make_ikigai, home: Path | None) -> Worker:
     wc = load_worker(cfg, Path(args.config).resolve() if args.config else None)
     if getattr(args, "labels", None):
         wc.labels = [w for w in args.labels.split(",") if w]
+        wc.pool = []  # these labels exactly, for this run
     if getattr(args, "keep", False):
         wc.keep = True
     # The holder may come from the loop's own configuration, so Worker checks it, after that.
@@ -2103,7 +2180,8 @@ def cmd_plan(args, make_ikigai, home) -> int:
     for display, why in skip:
         print(f"skip  {display}  {why}")
     if not take and not skip:
-        print(f"nothing ready with labels {','.join(worker.wc.labels)}")
+        read = " or ".join(",".join(s) for s in worker.wc.selectors)
+        print(f"nothing ready with labels {read}")
     return 0 if take else NOTHING
 
 
@@ -2239,6 +2317,11 @@ def agent_config_text(base: str, name: str, agent: str, source: str, from_sample
 
 def agent_config(base: str, name: str, agent: str, source: str, from_sample: bool) -> str:
     """`agent_config_text`, checked: what init-agents (and onboard) writes for one loop."""
+    if f"worker:{name}" in gonk.SHARED_WORKER_LABELS:
+        raise gonk.ConfigError(
+            f"--name {name!r}: `worker:{name}` is a shared label every matching loop reads, not "
+            "a machine's: name this machine something else"
+        )
     text = agent_config_text(base, name, agent, source, from_sample)
     t = tomllib.loads(text)  # a configuration this wrote that does not parse is a bug here
     expected = [f"worker:{name}", f"agent:{agent}"]

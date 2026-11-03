@@ -498,6 +498,8 @@ def _run(args, make_ikigai, home: Path | None, worker, gonk) -> int:
     name = args.name or socket.gethostname().split(".")[0].lower()
     if not NAME_SHAPE.match(name):
         raise Refused(f"--name {name!r}: lowercase letters, digits and -, at most 24")
+    if f"worker:{name}" in gonk.SHARED_WORKER_LABELS:
+        raise Refused(f"--name {name!r}: `worker:{name}` is a shared label, not a machine's")
     if not INVITE_SHAPE.match(args.invite):
         raise Refused(f"--invite {args.invite!r} is not an invite id")
     if not args.code or any(c.isspace() for c in args.code):

@@ -1,0 +1,4 @@
+- [x] 1. Tests with the in-memory ledger, failing without the change, including two loops racing.
+- [x] 2. `pool` and the selectors in the loop, the dispatch default, status line and coverage.
+- [x] 3. `CARGO_TARGET_DIR` per worktree, and refusing `pool` and `mac` as machine names.
+- [x] 4. Worker documentation, the sample configuration and the workers profile section.
