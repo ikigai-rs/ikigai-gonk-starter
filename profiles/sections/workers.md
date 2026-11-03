@@ -4,10 +4,13 @@ Some items are done by **unattended workers**: machines that run `tools/worker.p
 items the dispatcher marks for them, and work each one in a fresh working tree of their own.
 
 - **The dispatcher marks the work.** A worker takes only items carrying every label its
-  `.gonk/worker.toml` names (`worker:<name>` by convention); an item without them is never
-  taken by a worker.
+  `.gonk/worker.toml` names (`worker:<name>` by convention), or those labels with a shared
+  target for its `worker:<name>`: every per-agent loop also reads `worker:pool`, and on a Mac
+  `worker:mac`, after its own label. An item without them is never taken by a worker.
 - **A router dispatches the work.** A label says nothing about who set it, so a worker also
-  needs a DISPATCH: `python3 tools/gonk.py dispatch 12 --labels worker:<name>,agent:<kind>`
+  needs a DISPATCH: `python3 tools/gonk.py dispatch 12 --labels agent:<kind>` sends it to the
+  pool, where any free loop of that agent takes it (the claim decides, so never two), and
+  `--labels worker:<name>,agent:<kind>` pins it to one machine. Dispatch
   labels the item and posts a comment naming those labels and the item's `repo:`, with a
   digest of its title and body. A worker takes the item only when its newest dispatch is by a
   principal its configuration lists in `routers`, and the title and body still match. Edit an

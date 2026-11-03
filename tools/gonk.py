@@ -345,12 +345,37 @@ def parse_dispatch(text: str) -> tuple[list[str], str | None] | None:
 # A worker's standing status item carries what it takes (ledger item 2393): at start, and when
 # its configuration changed since it last said, the loop comments one line
 #
-#     Worker: holder=<holder> loop=<loop> labels=<label>,… repos=<name>,…
+#     Worker: holder=<holder> loop=<loop> labels=<label>,… pool=<label>,… repos=<name>,…
 #
-# (`loop=` only for one of several loops on a machine), so a dispatcher can check that a worker
-# carries an item's labels and works in its repository before dispatching it there.
+# (`loop=` only for one of several loops on a machine, `pool=` only for a loop that reads one),
+# so a dispatcher can check that a worker carries an item's labels and works in its repository
+# before dispatching it there.
 WORKER_STATUS_PREFIX = "Worker:"
-WORKER_STATUS_LISTS = ("labels", "repos", "repos_from", "except")
+WORKER_STATUS_LISTS = ("labels", "pool", "repos", "repos_from", "except")
+
+# The shared targets (ledger item 2793). `worker:pool` is dispatch's default target and every
+# per-agent loop on every machine reads it; `worker:mac` is read by the loops on a Mac. Each
+# stands in for a loop's own `worker:<name>` label and keeps the rest of what it selects on, so
+# an item for `agent:codex` in the pool reaches only codex loops. Neither names a machine.
+POOL_LABEL = "worker:pool"
+MAC_LABEL = "worker:mac"
+SHARED_WORKER_LABELS = (MAC_LABEL, POOL_LABEL)
+
+
+def worker_selectors(labels: list[str], pool: list[str] | None = None) -> list[list[str]]:
+    """The label sets a loop reads `next` with, in the order it reads them: its own labels, then
+    each shared label in place of its `worker:<name>`.
+
+    >>> worker_selectors(["worker:more", "agent:claude"], ["worker:pool"])
+    [['worker:more', 'agent:claude'], ['worker:pool', 'agent:claude']]
+    """
+    rest = [w for w in labels if not w.startswith("worker:")]
+    selectors = [list(labels)]
+    for label in pool or []:
+        selector = [label, *rest]
+        if not any(set(selector) == set(s) for s in selectors):
+            selectors.append(selector)
+    return selectors
 
 
 def worker_status_text(
@@ -360,10 +385,13 @@ def worker_status_text(
     repos: list[str],
     repos_from: str | None = None,
     excluded: list[str] | None = None,
+    pool: list[str] | None = None,
 ) -> str:
     """The status line for a worker with these labels and repositories."""
     words = [f"holder={holder}", *([f"loop={loop}"] if loop else [])]
-    words += [f"labels={','.join(labels)}", f"repos={','.join(repos)}"]
+    words += [f"labels={','.join(labels)}"]
+    words += [f"pool={','.join(pool)}"] if pool else []
+    words += [f"repos={','.join(repos)}"]
     if repos_from:
         words += [f"repos_from={repos_from}", f"except={','.join(excluded or [])}"]
     return f"{WORKER_STATUS_PREFIX} {' '.join(words)}"
@@ -1897,19 +1925,38 @@ def cmd_reject(args, cfg: Config, make_ikigai) -> int:
     return show(answer)
 
 
+def routing_labels(text: str | None) -> list[str]:
+    """What `--labels` routes to. With no `worker:` label the target is the pool (ledger item
+    2793). A shared target needs an `agent:` label: every loop that reads one selects on its
+    agent, so without it no loop would ever take the item."""
+    labels = [w for w in (text or "").split(",") if w]
+    if not all(re.fullmatch(r"[A-Za-z0-9._:-]+", w) for w in labels):
+        raise ConfigError(
+            "--labels is the routing labels, comma-separated: agent:<kind>, with worker:<name> "
+            "to pin the item to one machine"
+        )
+    if not any(w.startswith("worker:") for w in labels):
+        labels.insert(0, POOL_LABEL)
+    shared = [w for w in labels if w in SHARED_WORKER_LABELS]
+    if shared and not any(w.startswith("agent:") for w in labels):
+        raise ConfigError(
+            f"--labels needs agent:<kind>: {shared[0]} reaches a loop only through the agent it "
+            "runs, so no loop would take this item. Pass --labels agent:<kind> for the pool"
+        )
+    return labels
+
+
 def cmd_dispatch(args, cfg: Config, make_ikigai) -> int:
     """The dispatcher routes an item to a worker: its routing labels, then a dispatch comment
     (`dispatch_text`) that names them with the item's `repo:` label and pins the brief's digest.
+    With no `worker:` label the target is the pool, which any free loop running that agent reads;
+    `worker:<host>` pins it to one machine and `worker:mac` to the Macs (`routing_labels`).
     A worker takes an item only when its newest dispatch is by a principal in the worker's
     `routers` and still matches (tools/worker.py, `dispatch_problem`), so the comment's AUTHOR is
     what counts: over QUIC gonk names this machine's client; over the owner's socket nothing
     names anyone, so `--as` says which principal the dispatch is from."""
     need(cfg, "ledger", "target")
-    labels = [w for w in (args.labels or "").split(",") if w]
-    if not labels or not all(re.fullmatch(r"[A-Za-z0-9._:-]+", w) for w in labels):
-        raise ConfigError(
-            "--labels is the routing labels, comma-separated: worker:<name>,agent:<kind>"
-        )
+    labels = routing_labels(args.labels)
     author = None
     if args.as_principal:
         author = principal_form(args.as_principal)
@@ -2049,8 +2096,10 @@ def open_blockers(
 def worker_coverage(cfg: Config, ikigai: Ikigai, args, labels: list[str], repo: str) -> list[str]:
     """Warnings, never refusals: whether a worker that takes these labels lists the item's
     repository on its status item (`Worker:` lines, ledger item 2393). A worker takes only items
-    carrying every label it names, so a worker matches when its labels are among the item's
-    labels once dispatched. Discover status items by worker-status:<name>, also accepting
+    carrying every label it names, so a worker matches when its labels, or those labels with one
+    of its `pool=` labels for its machine's, are among the item's labels once dispatched. A loop
+    labels its status item for its pool too, so `worker-status:pool` finds them all. Discover
+    status items by worker-status:<name>, also accepting
     legacy --status-item and status_items configuration. Admission includes explicit repos,
     the configured organization and exclusions; unavailable coverage is said too."""
     name = repo[len("repo:") :]
@@ -2076,7 +2125,14 @@ def worker_coverage(cfg: Config, ikigai: Ikigai, args, labels: list[str], repo: 
         comments += status_item.get("comments") or []
     statuses = worker_statuses(comments)
     carried = set(labels) | {repo}
-    matching = [s for s in statuses if set(s.get("labels") or []) <= carried]
+    matching = [
+        s
+        for s in statuses
+        if any(
+            set(selector) <= carried
+            for selector in worker_selectors(s.get("labels") or [], s.get("pool"))
+        )
+    ]
     where = ", ".join(f"{cfg.ledger}#{n}" for n in items)
     if not matching:
         return lines + [
@@ -2429,11 +2485,14 @@ def parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser(
         "dispatch",
-        help="route an item to a worker: labels and a dispatch it checks (a dispatcher's act)",
+        help="route an item to the pool or a worker: labels and a dispatch it checks "
+        "(a dispatcher's act)",
     )
     s.add_argument("item", type=int)
     s.add_argument(
-        "--labels", help="the routing labels, e.g. worker:<name>,agent:<kind> (required)"
+        "--labels",
+        help="the routing labels: agent:<kind> sends it to the pool (worker:pool, any free loop "
+        "running that agent); add worker:<name> to pin it, or worker:mac for macOS-only work",
     )
     s.add_argument(
         "--as",

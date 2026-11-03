@@ -536,7 +536,7 @@ Every loop runs from the one checkout, `~/gonk-worker`, under the one account.
   A machine's single `worker.toml` loop keeps `attempts.json` and `stop` where they always were,
   directly under `.gonk/state/worker/`.
 - **Routing.** An item labeled only `worker:<name>` is taken by no per-agent loop: it needs an
-  `agent:` label too. And do not run the single loop beside the per-agent ones: its labels are
+  `agent:` label too, and normally goes to the pool (below), not to one machine. And do not run the single loop beside the per-agent ones: its labels are
   a subset of theirs, so it would take their items.
 - **As services:** [`units/gonk-worker@.service`](units/gonk-worker@.service) is a templated
   systemd user unit, `gonk-worker@<agent>`, which runs
@@ -577,6 +577,66 @@ A drop-in the single unit had (`systemctl --user edit gonk-worker`, e.g. Claude 
 `systemctl --user edit gonk-worker@claude`. Items handed back by the single loop stay in its
 `.gonk/state/worker/attempts.json`, which the per-agent loops do not read.
 
+#### The pool: `worker:pool` and `worker:mac`
+
+The dispatcher sends work to the **pool**, and any free loop of the right agent, on any machine,
+takes it. The fleet can then grow without the dispatcher choosing a machine for each item.
+
+    python3 tools/gonk.py dispatch 12 --labels agent:codex                  # the pool: the default
+    python3 tools/gonk.py dispatch 12 --labels worker:<name>,agent:codex    # pinned to one machine
+    python3 tools/gonk.py dispatch 12 --labels worker:mac,agent:claude      # macOS-only work
+
+- **What a loop reads.** A loop polls `next` with its own labels first, then with each shared
+  label in place of its `worker:<name>`, keeping its `agent:`:
+  `worker:<name>,agent:claude`, then `worker:mac,agent:claude` on a Mac, then
+  `worker:pool,agent:claude`. So its machine's items come first, and within each set the ledger's
+  rank decides. `pool` in a loop's configuration overrides the default, and `pool = []` opts out.
+- **The model stays the dispatcher's choice.** The pool replaces the machine, not the agent, so
+  `dispatch` refuses a shared target with no `agent:` label: no loop would ever take it. A single
+  loop whose labels name no `agent:` reads no pool and refuses a `pool` setting, because it could
+  not tell an item meant for another agent from its own. Run one loop per agent to join the pool.
+- **Never two.** A claim is the ledger's compare-and-set, so when two loops read an item as free,
+  one gets it and the other is refused, and goes on at once to its next candidate. This is tested
+  in `tests/test_worker_pool.py`. The rules below still hold across the pool: one agent per
+  repository, and a router's dispatch that still matches the item.
+- **The newest dispatch routes.** Labels stay on an item, but `dispatch` with `worker:<name>` after
+  the pool takes it out of the pool, and `dispatch` to the pool after a pin opens it to every loop.
+- **A retry can land elsewhere.** The record of items a loop handed back is its own, so an item
+  handed back without evidence can be taken once by the same agent's loop on another machine.
+- **Skips can repeat.** Each loop reading the pool explains its own skip on the item once, so a
+  repository one machine does not admit, or an edit after the dispatch, can draw a comment from
+  each matching loop.
+- **Rolling it out.** A loop reads the pool from its next restart. `git pull` and restart every
+  loop on every machine, then check its status item: the `Worker:` line now says
+  `pool=worker:pool`, and the item carries `worker-status:pool`, which `dispatch` uses to warn when
+  no loop reading the pool admits the repository. A grant that may not label its status item logs
+  which label to add. Dispatch to the pool only after that, or items wait for the first restart.
+- **`pool` and `mac` are not machine names.** `init-agents` and `onboard` refuse them.
+
+**`worker:mac` is for what only a Mac can build or run:** macOS-gated code and CI jobs, launchd
+plists, Xcode. It is not a route to a person. A worker Mac runs headless, as `agent`: it has no
+login keychain and no one to answer a TCC prompt. **Do not send EventKit or Keychain-backed tests
+to `worker:mac`.** They need a person at the screen, so they are not a worker's item at all; the
+same is true of anything else that needs a TCC grant.
+
+**Sharing a machine.** Two loops on one machine are two builds at once.
+
+- **Builds:** the worker sets `CARGO_TARGET_DIR` to `<worktree>/target` for each agent, over this
+  account's environment and any `build.target-dir` in its cargo configuration, so one target
+  directory is never shared between worktrees. The cost is disk: each worktree builds from
+  nothing, which is what `[disk]` watches.
+- **CPU and memory:** 64 GB holds two concurrent builds of the largest workspaces, which is one
+  claude loop and one codex loop. A third loop on such a machine, or a smaller machine with two,
+  can run out of memory during linking; watch for that before adding loops.
+- **One repository at a time:** loops of one checkout share the per-repository locks, so they
+  never build one repository at once; across machines the ledger's claims say the same.
+
+**Accounts.** Machines can share one Claude and one Codex account, each running both models: two
+machines make four loops, all drawing on those two accounts' usage limits. Start at full
+concurrency. If rate-limit refusals appear in the worker logs, scale back with configuration, not
+routing: stop one machine's loop for that model (`touch .gonk/state/worker/<agent>/stop`, and
+disable its service), and items in the pool go to the other machine.
+
 #### Who may route work here
 
 An unattended agent runs with its own checks opened and a token that pushes, so what it is
@@ -597,9 +657,10 @@ routing is a comment, the **dispatch**:
 
 which the dispatcher writes with
 
-    python3 tools/gonk.py dispatch 12 --labels worker:<name>,agent:<agent> [--as <principal>]
+    python3 tools/gonk.py dispatch 12 --labels agent:<agent> [--as <principal>]
 
-It adds the labels the item lacks, reads the item, and posts the dispatch, naming those labels
+(with `worker:pool` added and named when `--labels` has no `worker:` label; `worker:<name>` pins
+it, as above). It adds the labels the item lacks, reads the item, and posts the dispatch, naming those labels
 and the item's one `repo:` label. Over QUIC, gonk names the dispatching machine as the author
 (`--as` may name only that machine). Over the owner's socket nothing names anyone, so `--as`
 is required there: the principal the dispatch is from, as the workers' `routers` list it.
@@ -701,9 +762,10 @@ the ledger, each as a comment by the worker's own principal, with no token, acco
   the loop asks the dispatcher to add it and still publishes its status. It posts one line
   when its admission changes:
 
-      Worker: holder=<holder> loop=<loop> labels=<label>,… repos=<name>,… repos_from=<org> except=<name>,…
+      Worker: holder=<holder> loop=<loop> labels=<label>,… pool=<label>,… repos=<name>,… repos_from=<org> except=<name>,…
 
-  (`loop=` only for one of several loops; `gonk.parse_worker_status` reads it back), so a
+  (`loop=` only for one of several loops, `pool=` only for a loop that reads one, whose status
+  item it also labels `worker-status:pool`; `gonk.parse_worker_status` reads it back), so a
   dispatcher can check that a worker carries an item's labels and repository before sending it
   there. A running loop keeps the configuration it started with, so a changed one is posted
   when the loop restarts. New repositories under the admitted organization are derived per
@@ -770,6 +832,7 @@ account that could push with another credential. The first push is the final wor
 | key | default | what |
 | --- | --- | --- |
 | `labels` | (required) | `next` is narrowed to items carrying ALL of these, e.g. `["worker:<name>"]`, or `["worker:<name>", "agent:<agent>"]` for one loop of several; the dispatcher marks an item for this worker by labeling it |
+| `pool` | `["worker:pool"]`, with `worker:mac` first on a Mac, when `labels` names an `agent:`; else none | the shared labels this loop also reads after its own, each in place of its `worker:<name>` (see "The pool"); `[]` opts out |
 | `routers` | (required) | the principals whose dispatch routes an item here, e.g. `["urn:iki:gonk:passkey:<credential id>"]`; never free text ("Who may route work here") |
 | `holder` | `.gonk/local.toml`'s | the holder name this loop claims under, e.g. `<name>-<agent>`; a label, never a new identity |
 | `without` | none | items carrying ANY of these are never taken |
@@ -1084,7 +1147,8 @@ documentation, not a run, and the first WSL worker should confirm each:
 
 The Linux half was learned setting up the first worker by hand, a Pop!_OS 24.04 laptop with a
 6 GB RTX 3060, and is proved on GitHub's hosted Ubuntu runners. The macOS half was written from
-Apple's man pages and is proved on GitHub's hosted macOS runners; no worker Mac has run it yet.
+Apple's man pages and is proved on GitHub's hosted macOS runners; the first worker Mac was
+enrolled on 2026-11-02.
 The WSL2 half was written from Microsoft's WSL documentation and is proved only against a stub
 of a WSL machine; no WSL worker has run it yet (what that run must confirm is listed in its
 section).

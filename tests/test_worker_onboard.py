@@ -157,6 +157,15 @@ class Onboarding(unittest.TestCase):
 
     # -- the contract
 
+    def test_a_machine_is_not_named_for_a_shared_label(self):
+        # argparse keeps the last --name; a refused name sends nothing to the door.
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code, out = self.onboard("--name", "pool")
+        self.assertNotEqual(code, 0)
+        self.assertIn("worker:pool", out + err.getvalue())
+        self.assertEqual(self.door.says, [])
+
     def test_the_proof_matches_a_known_vector(self):
         # Computed independently with openssl:
         #   printf '%s' "$FP" | openssl dgst -sha256 -hmac 'K7Q2M9XW4P'

@@ -167,7 +167,7 @@ the same question the opposite way refuse to combine, with the reason: `audits` 
   your own item. The smallest process, and the one to start with.
   ([Book chapter](https://ikigai-rs.github.io/ikigai-tutorial/gonk/ways/solo.html))
 - **`workers`.** You (or a hub) dispatch, and machines work: dispatch an item to
-  `worker:<name>` (`gonk.py dispatch`), and a worker running `tools/worker.py` claims it, works it in a fresh worktree, opens a pull
+  the pool or to `worker:<name>` (`gonk.py dispatch`), and a worker running `tools/worker.py` claims it, works it in a fresh worktree, opens a pull
   request and hands it back with the evidence. It brings the worker loop, its sample
   configuration and its service units; [`worker/README.md`](worker/README.md) sets the
   machine up. ([Book chapter](https://ikigai-rs.github.io/ikigai-tutorial/gonk/ways/workers.html))
@@ -411,8 +411,8 @@ re-creates each mistake it exists to catch and proves the check red.
 ### The worker loop
 
 `tools/worker.py` is what runs on a worker, as its own account. It pulls `next` narrowed to
-the labels the dispatcher marks work with (`worker:<name>`), takes the first item it may,
-claims it on a lease and renews the lease while it works, branches a fresh worktree from
+the labels the dispatcher marks work with (`worker:<name>`, then the shared `worker:pool`),
+takes the first item it may, claims it on a lease and renews the lease while it works, branches a fresh worktree from
 `origin/main` under its own home, runs the configured agent (Claude Code, Codex, Hermes, or a
 command of your own) with the item as its brief behind a fixed preamble of this file's rules,
 and hands the item back: the pull request it opened and that pull request's CI, as an
@@ -425,7 +425,8 @@ a principal in the worker's `routers` names the worker's labels and the item's `
 pins the title and body the item still has. The dispatcher writes it:
 
 ```sh
-python3 tools/gonk.py dispatch 12 --labels worker:<name>,agent:<agent> [--as <principal>]
+python3 tools/gonk.py dispatch 12 --labels agent:<agent> [--as <principal>]   # the pool
+python3 tools/gonk.py dispatch 12 --labels worker:<name>,agent:<agent>        # pinned
 ```
 
 and the agent gets the title and body as its task, with every comment quoted under its
