@@ -541,17 +541,12 @@ def worker_tokens(ledger: str) -> list[str]:
 def enrollment_lines(fingerprint: str, grant: str, ledger: str) -> list[str]:
     """What the gonk operator adds for this machine, by command or by hand. The `--worker` form
     is what an unattended machine is enrolled with; `--ledger <ledger>=write` stays the option
-    for a person's machine. Both worker forms include the explicit gh alias grants."""
-    tokens = worker_tokens(ledger) + [
-        f"urn:cap:ledger:alias:{ledger}",
-        "urn:cap:alias:scheme:gh",
-        "urn:cap:store:read:graph:urn:iki:alias:graph",
-        "urn:cap:store:write:graph:urn:iki:alias:graph",
-    ]
+    for a person's machine. Workers receive no alias grants."""
+    tokens = worker_tokens(ledger)
     worker = json.dumps({grant: tokens}, indent=2).splitlines()
     return [
         "on the gonk machine, with this machine's client.crt copied there:",
-        f"  ikigai-gonk client add {grant} --cert client.crt --worker {ledger} --alias {ledger}=gh",
+        f"  ikigai-gonk client add {grant} --cert client.crt --worker {ledger}",
         "  (an unattended machine: the worker grant reads, claims, renews, comments and",
         "  releases, and cannot close, relabel or file)",
         f"  ikigai-gonk client add {grant} --cert client.crt --ledger {ledger}=write",
@@ -2219,6 +2214,33 @@ def worker_coverage(cfg: Config, ikigai: Ikigai, args, labels: list[str], repo: 
     ]
 
 
+# Match only canonical GitHub PR URLs, not commits, lookalike hosts or arbitrary evidence.
+GITHUB_PR_URL = re.compile(
+    r"https://github\.com/([A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+)/pull/([1-9][0-9]*)/?\Z"
+)
+
+
+def close_pr_aliases(cfg: Config, ikigai: Ikigai, number: int, evidence: list[str]) -> None:
+    """Best-effort final PR names, written by the dispatcher's authenticated principal."""
+    values = list(
+        dict.fromkeys(
+            f"{match[1]}#{match[2]}" for iri in evidence if (match := GITHUB_PR_URL.fullmatch(iri))
+        )
+    )
+    if not values:
+        return
+    registered = ikigai.run(f"sink {PREFIX}iki:alias:scheme:gh", stdin="")
+    for value in values:
+        answer = registered
+        if registered.ok:
+            answer = ikigai.run(f"sink {gh_alias_resource(value)}", stdin=f"{cfg.ledger}#{number}")
+        if answer.ok:
+            print(f"Alias: gh:{value}")
+        else:
+            detail = answer.text() or f"exit {answer.code}"
+            print(f"Alias gh:{value} was refused: {detail}", file=sys.stderr)
+
+
 def cmd_close(args, cfg: Config, make_ikigai) -> int:
     need(cfg, "ledger", "target")
     note = evidence_note(args, cfg)
@@ -2229,6 +2251,8 @@ def cmd_close(args, cfg: Config, make_ikigai) -> int:
     ikigai = make_ikigai(cfg.target)
     answer = ikigai.run(command, stdin=note)
     code = show(answer)
+    if answer.ok:
+        close_pr_aliases(cfg, ikigai, args.item, args.evidence)
     held = read_claim(cfg)
     if answer.ok and held and held.get("item") == args.item:
         # Until ikigai-ledger 0.7.0 a close did not end a claim, and a machine's claim left on

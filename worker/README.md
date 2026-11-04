@@ -1301,36 +1301,18 @@ refused, having cost one agent's run.
 
 ## Pull request aliases
 
-A worker gives each PR it finds on its branch a ledger alias, for example
-`gh:ikigai-rs/ikigai-gonk-starter#123`. Dispatchers can use that spelling anywhere
-`tools/gonk.py` takes an item, including `--status-item`. Resolution uses the configured
-ledger before acting, so a PR belonging to another ledger is refused.
+The dispatcher gives a closed item each GitHub PR alias from its close evidence, for
+example `gh:ikigai-rs/ikigai-gonk-starter#123`. Workers only hand back evidence: they never
+register a scheme or write an alias, and their enrollment grants no alias capabilities.
+See [dispatcher enrollment](../README.md#dispatcher-pr-aliases) for the operator's steps.
 
-This needs gonk with **ikigai-ledger 0.18.0 or later** (default#2905). Enroll the intended
-scheme-owning worker principal with the existing gonk alias grant option:
+Dispatchers can use a gh alias anywhere `tools/gonk.py` takes an item, including
+`--status-item`. Resolution uses the configured ledger before acting, so unknown aliases
+and PRs belonging to another ledger are refused. The close command retains all evidence,
+but creates aliases only for GitHub pull request URLs, not commit URLs or other IRIs.
 
-```sh
-ikigai-gonk client add <name> --cert client.crt --worker default --alias default=gh
-```
-
-`gonk.py init` prints this enrollment command. The operator must apply it to gonk's
-configuration and distribute the refreshed bundle; printing it does not change the host.
-The `--alias default=gh` option grants `urn:cap:alias:scheme:gh`,
-`urn:cap:ledger:alias:default`, and the aliases graph's store read/write grants, alongside
-ledger read. It does not grant ownership of other schemes or permission to remove their
-aliases. See [gonk's alias grant implementation](https://github.com/ikigai-rs/ikigai-gonk/blob/main/src/grants.rs)
-and [ledger's ownership checks](https://github.com/ikigai-rs/ikigai-ledger/blob/main/src/alias.rs).
-
-The worker registers `gh` as its authenticated principal before adding an alias. Registration
-is idempotent for that principal. **A scheme has one permanent owner.** A worker with a
-different principal cannot add or remove its aliases, even with the same grant. Do not
-register the scheme as the host operator on behalf of a worker: that makes the operator
-its owner. A fleet using separate principals needs an explicitly designed shared alias
-writer in gonk; this client change does not create one or expand another worker's identity.
-
-The worker never deletes an alias or moves one between items. The ledger refuses a duplicate
-mapping to another item; retries to the same item are safe. Registration, missing grants,
-and duplicate refusals are recorded beside the PR's CI in the hand-back, while the PR URL
-remains available as evidence. A hand-back with such a refusal needs dispatcher attention;
-it does not prove deployment is complete. This repository does not deploy the gonk host
-configuration. Verify the owner, enrollment and ledger version there before closing the item.
+A successful close registers gh under the authenticated dispatcher principal and writes
+the aliases. Duplicate mappings to the same item are safe; a mapping to another item is
+refused without moving it. A registration or alias refusal is printed with its reason;
+the item remains closed and the command succeeds. Check this output: successful closing
+alone does not prove alias enrollment is complete.

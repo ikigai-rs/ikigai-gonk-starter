@@ -429,7 +429,8 @@ class Hub(unittest.TestCase):
                     "sink urn:gk:iki:ledger:acme:close item=12 reason=done author=hub-1"
                     f' evidence="{url}" evidence="{commit}"',
                     f"Evidence: {url}\nEvidence: {commit}",
-                )
+                ),
+                ("sink urn:gk:iki:alias:scheme:gh", ""),
             ],
         )
 

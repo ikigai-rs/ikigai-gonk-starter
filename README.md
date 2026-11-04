@@ -522,6 +522,41 @@ conformance claim. Every repository `tools/new.py` generates gets its own `ACCES
 grow, from `templates/library/ACCESSIBILITY.md`, and an `AGENTS.md` rule to read it before any
 change to what people see.
 
+## Dispatcher PR aliases
+
+With ikigai-ledger 0.18.0 or later, `tools/gonk.py close N --evidence
+https://github.com/owner/repo/pull/123` also names the closed item
+`gh:owner/repo#123`. Repeat `--evidence` for multiple PRs or other proof; only GitHub
+PR URLs become aliases. Alias refusals are printed and do not fail the close.
+
+The **dispatcher identity**, which already has permission to close the ledger, needs
+these exact additional lines in its existing token array in gonk's `grants.json`
+(example ledger `default`; replace that ledger name if needed):
+
+```json
+"urn:cap:alias:scheme:gh",
+"urn:cap:ledger:alias:default",
+"urn:cap:store:read:graph:urn:iki:alias:graph",
+"urn:cap:store:write:graph:urn:iki:alias:graph"
+```
+
+Keep the array valid JSON, then restart gonk to load it. An operator can instead enroll
+the dispatcher's certificate with the combined writer and alias options:
+
+```sh
+ikigai-gonk client add <dispatcher> --cert dispatcher.crt --ledger default=write --alias default=gh
+```
+
+Apply these permissions only to the dispatcher, never to a worker. This repository changes
+no deployment or grant file. The alias graph grants belong to this trusted dispatcher;
+do not assume they restrict raw graph writes to a scheme.
+
+On first close with PR evidence, the dispatcher registers `gh` as its authenticated
+principal. Registration is idempotent for its owner. A scheme has one permanent owner:
+every dispatcher writing gh aliases must use that same identity. If a worker previously
+registered gh, adding grants to a new dispatcher does not transfer ownership; an operator
+must resolve ownership before aliases will succeed. Check close output for refusals.
+
 ## License
 
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
