@@ -627,6 +627,14 @@ class Ledger:
         doc, err = self._json(f"source {self.cfg.resource(f'item:{number}')} as=application/json")
         return (doc.get("item") if doc else None), err
 
+    def pr_alias(self, number: int, slug: str, pr_number: int) -> gonk.Answer:
+        """Give this item its PR name. The ledger owns uniqueness and scheme authority."""
+        registered = self.ikigai.run(f"sink {gonk.PREFIX}iki:alias:scheme:gh", stdin="")
+        if not registered.ok:
+            return registered
+        resource = gonk.gh_alias_resource(f"{slug}#{pr_number}")
+        return self.ikigai.run(f"sink {resource}", stdin=f"{self.cfg.ledger}#{number}")
+
     def claim(self, number: int, holder: str, lease: str, renew: bool = False) -> gonk.Answer:
         """Take item `number` for `holder`, or with `renew` renew a claim it holds now:
         `renew=true` never takes, and is a `Conflict` when the claim changed hands or was
@@ -2037,6 +2045,18 @@ class Worker:
                 note += f" (The pull requests could not be listed: {pr_err})"
             self.release_if_ours(number, note)
             return Outcome(NOT_HANDED_BACK, note, prs=prs)
+
+        for pr in prs:
+            if beat.lost.is_set():
+                return Outcome(NOT_HANDED_BACK, f"claim lost before PR alias on {display}", prs=prs)
+            alias = f"gh:{repo.github}#{pr.number}"
+            answer = self.ledger.pr_alias(number, repo.github, pr.number)
+            if answer.ok:
+                lines.append(f"- Alias: {alias}")
+            else:
+                detail = answer.text() or f"exit {answer.code}"
+                lines.append(f"- Alias {alias} was refused: {detail}")
+                log(f"{display}: alias {alias} was refused: {detail}")
 
         removed = not self.wc.keep
         body = [
