@@ -65,6 +65,47 @@ class ALoopsConfiguration(unittest.TestCase):
             with self.assertRaises(gonk.ConfigError, msg=bad):
                 self.load(path)
 
+    def test_a_holder_inside_any_table_is_refused_with_a_remedy(self):
+        for table in ("repos.lib", "agent", "usage", "repos_from", "disk", "extra.nested"):
+            with self.subTest(table=table):
+                path = self.rig.configure()
+                text = path.read_text()
+                header = f"[{table}]\n"
+                if header in text:
+                    text = text.replace(header, header + 'holder = "w1-codex"\n')
+                else:
+                    text += f'\n{header}holder = "w1-codex"\n'
+                path.write_text(text)
+                with self.assertRaises(gonk.ConfigError) as caught:
+                    self.load(path)
+                message = str(caught.exception)
+                self.assertIn(str(path), message)
+                self.assertIn(f"[{table}]", message)
+                self.assertIn("holder", message)
+                self.assertIn("move the line above the first table header, beside labels", message)
+
+    def test_a_holder_in_inline_or_array_tables_is_refused(self):
+        for setting, table in (
+            ('extra = { holder = "w1-codex" }', "extra"),
+            ('[[extra]]\nholder = "w1-codex"', "extra"),
+        ):
+            with self.subTest(setting=setting):
+                path = self.rig.configure()
+                path.write_text(setting + "\n" + path.read_text())
+                with self.assertRaises(gonk.ConfigError) as caught:
+                    self.load(path)
+                self.assertIn(f"[{table}] contains holder", str(caught.exception))
+
+    def test_an_unknown_repository_key_is_refused(self):
+        path = self.rig.configure()
+        path.write_text(path.read_text().replace("[repos.lib]\n", '[repos.lib]\npoll = "1s"\n'))
+        with self.assertRaises(gonk.ConfigError) as caught:
+            self.load(path)
+        message = str(caught.exception)
+        self.assertIn("[repos.lib]", message)
+        self.assertIn("poll", message)
+        self.assertIn("known keys: remote, github, base", message)
+
     def test_a_file_name_that_is_no_loop_name_is_refused(self):
         path = self.rig.configure("worker-two words.toml", labels=CODEX)
         with self.assertRaises(gonk.ConfigError):

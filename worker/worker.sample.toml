@@ -10,6 +10,7 @@
 # Required, so a worker never takes work nobody meant for it. The dispatcher marks an item
 # ready for this machine by adding the label.
 labels = ["worker:my-worker"]
+# Keep holder above the first table header, beside labels.
 # holder = "my-worker-codex"   # this loop's holder name, over .gonk/local.toml's
 # The shared labels this loop also reads after its own, each in place of its worker:<name> and
 # keeping its agent:. The default, for a loop whose labels name an agent:, is ["worker:pool"], and
@@ -64,6 +65,11 @@ preset = "claude"
 # Codex:
 # command = ["codex", "exec", "--full-auto", "{prompt}"]
 # profile = "coder"
+
+# Review jobs (worker/README.md, "Review jobs") need no setting here. They do need more of the
+# ledger: the worker files each finding, and that takes `write` on the ledger, which a grant
+# enrolled with `--worker` does not hold. Without it the loop still runs change jobs, and hands a
+# review job back saying the ledger refused.
 
 # Usage against the plan's weekly limit, read between items at most once an hour and posted as a
 # comment on a standing status item (tools/worker_usage.py). No agent CLI documents a
