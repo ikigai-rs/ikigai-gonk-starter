@@ -673,6 +673,7 @@ class Claims(unittest.TestCase):
             [
                 "sink urn:gk:iki:ledger:acme:close item=12 reason=done author=agent-1"
                 f' evidence="{url}"',
+                "sink urn:gk:iki:alias:scheme:gh",
                 "delete urn:gk:iki:ledger:acme:claim item=12 from=agent-1",
             ],
         )
@@ -699,7 +700,8 @@ class Claims(unittest.TestCase):
                     "Evidence: https://github.com/o/r/pull/3\n"
                     "Evidence: https://github.com/o/r/commit/abc\nEvidence: urn:test:proof"
                     "\n\nChecked merged and green.",
-                )
+                ),
+                ("sink urn:gk:iki:alias:scheme:gh", ""),
             ],
         )
 

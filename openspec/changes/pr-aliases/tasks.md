@@ -1,3 +1,0 @@
-- [x] 1. Resolve gh aliases for every CLI item argument (CLI item references)
-- [x] 2. Attach PR aliases before worker hand-back and test refusals (Pull request aliases)
-- [ ] 3. Deploy the companion ikigai-gonk scheme ownership and grants after ledger 0.18.0 (Pull request aliases)

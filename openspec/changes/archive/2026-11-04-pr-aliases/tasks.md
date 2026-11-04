@@ -1,0 +1,3 @@
+- [x] 1. Resolve gh aliases for every CLI item argument (CLI item references)
+- [x] 2. Move alias writes from workers to successful dispatcher close (Pull request aliases)
+- [x] 3. Document dispatcher enrollment and test close refusals and worker isolation (Pull request aliases)
