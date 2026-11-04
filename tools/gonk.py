@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """This repository's way to reach gonk: init, seed, file, next, claim, release, report, reject,
-close, harness.
+close, findings, harness.
 
 Standard library only (Python 3.11 or later, for tomllib). Every request goes through the
 `ikigai` command line with an ALIAS mount, `--mount urn:gk:=<target>`, so a socket on this
@@ -55,6 +55,11 @@ try:
     import harness  # beside this file: the harness graph and the firing log
 except ImportError:  # a tree from before tools/harness.py: nothing recorded, nothing else changes
     harness = None
+
+try:
+    import review_findings  # beside this file: a review's findings, shared with tools/worker.py
+except ImportError:  # a tree with gonk.py alone (a hook's copy): only `findings` needs it
+    review_findings = None
 
 # The alias every request is sent under: `urn:gk:iki:ledger:…` here is `urn:iki:ledger:…`
 # on gonk. An alias rather than `--override urn:iki:ledger:=…` so that no name this tool
@@ -2244,28 +2249,88 @@ def close_pr_aliases(cfg: Config, ikigai: Ikigai, number: int, evidence: list[st
 def cmd_close(args, cfg: Config, make_ikigai) -> int:
     need(cfg, "ledger", "target")
     note = evidence_note(args, cfg)
-    command = f"sink {cfg.resource('close')} item={args.item} reason={args.reason}" + socket_author(
-        cfg
-    )
-    command += "".join(f" evidence={json.dumps(iri, ensure_ascii=False)}" for iri in args.evidence)
-    ikigai = make_ikigai(cfg.target)
+    return close_item(cfg, make_ikigai(cfg.target), args.item, args.reason, args.evidence, note)
+
+
+def close_item(
+    cfg: Config, ikigai: Ikigai, number: int, reason: str, evidence: list[str], note: str
+) -> int:
+    command = f"sink {cfg.resource('close')} item={number} reason={reason}" + socket_author(cfg)
+    command += "".join(f" evidence={json.dumps(iri, ensure_ascii=False)}" for iri in evidence)
     answer = ikigai.run(command, stdin=note)
     code = show(answer)
     if answer.ok:
-        close_pr_aliases(cfg, ikigai, args.item, args.evidence)
+        close_pr_aliases(cfg, ikigai, number, evidence)
     held = read_claim(cfg)
-    if answer.ok and held and held.get("item") == args.item:
+    if answer.ok and held and held.get("item") == number:
         # Until ikigai-ledger 0.7.0 a close did not end a claim, and a machine's claim left on
         # an item no longer in flight is what the ledger's doctor reports as orphaned. Since
         # then the close releases it, so this tree's `from=` release finds nothing to release:
         # a Conflict, and the claim is gone either way.
-        released = release_claim(ikigai, cfg, args.item, held)
+        released = release_claim(ikigai, cfg, number, held)
         if released.ok:
             code = show(released)
         elif not released.conflict:
             return show(released)
         cfg.claim_file.unlink(missing_ok=True)
     return code
+
+
+def cmd_findings(args, cfg: Config, make_ikigai) -> int:
+    """The dispatcher's end of a review job: file what its latest hand-back found, and with
+    `--close` close the job on them. The worker cannot file (its grant reads, claims and comments),
+    so it carries the findings on its hand-back, and this validates them again by the same rules:
+    anyone who can comment can write that comment. Safe to repeat: the items are keyed."""
+    need(cfg, "ledger", "target")
+    if review_findings is None:
+        raise ConfigError("`findings` needs tools/review_findings.py beside tools/gonk.py")
+    ikigai = make_ikigai(cfg.target)
+    job, err = item_json(cfg, ikigai, args.item)
+    if job is None:
+        raise ConfigError(f"could not read item {args.item}: {err}")
+    name = job.get("display") or args.item
+
+    def nothing(why: str) -> ConfigError:
+        return ConfigError(f"{name}: filed nothing: {why}")
+
+    if not review_findings.is_review_job(job):
+        raise nothing(f"it is not a review job (its kind is {job.get('kind')})")
+    is_open = job.get("status", "open") == "open"
+    if is_open and not awaiting_dispatcher(job):
+        raise nothing(
+            "it is not awaiting its dispatcher: no worker has handed it back, or the last "
+            "hand-back was answered, so there is no hand-back to file from"
+        )
+    comment = review_findings.latest_hand_back(job)
+    if comment is None:
+        raise nothing("it has no hand-back")
+    review, problems = review_findings.parse_hand_back(comment.get("text"), job.get("revision"))
+    if review is None:
+        raise nothing("its latest hand-back is malformed: " + review_findings.said(problems))
+    print(f"{name}: the hand-back by {comment.get('author')} at {comment.get('time')}")
+    filed, failure = review_findings.file_findings(ikigai, cfg, job, review)
+    for found in filed:
+        print(f"{found.number} {found.iri} ({found.outcome})")
+    if failure:
+        print(
+            f"gonk.py: {name}: stopped filing: {failure}. A rerun finds what was filed, and "
+            "the job was not closed.",
+            file=sys.stderr,
+        )
+        return 1
+    if not filed:
+        print(f"{name}: the review of {review.base}..{review.head} found nothing")
+    if not args.close:
+        return 0
+    if not is_open:
+        print(f"{name}: already closed")
+        return 0
+    evidence = [found.iri for found in filed]
+    note = (
+        "\n".join(f"Evidence: {iri}" for iri in evidence)
+        or f"Evidence: the review of {review.base}..{review.head} found nothing."
+    )
+    return close_item(cfg, ikigai, args.item, "done", evidence, note)
 
 
 def cmd_status(args, cfg: Config, make_ikigai) -> int:
@@ -2615,6 +2680,18 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--reason", default="done", choices=CLOSE_REASONS)
     s.add_argument("--note")
     s.set_defaults(run=cmd_close)
+
+    s = sub.add_parser(
+        "findings",
+        help="file the findings of a review job's latest hand-back (a dispatcher's act)",
+    )
+    s.add_argument("item", type=item_reference)
+    s.add_argument(
+        "--close",
+        action="store_true",
+        help="then close the job, with each finding's IRI as the evidence",
+    )
+    s.set_defaults(run=cmd_findings)
 
     s = sub.add_parser("status", help="does this working tree hold a live claim?")
     s.set_defaults(run=cmd_status)

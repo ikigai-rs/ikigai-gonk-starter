@@ -1,7 +1,7 @@
-"""The worker's review mode (tools/worker.py, worker/README.md "Review jobs"), hermetic: the
-in-memory ledger, a real git origin, the stub gh and a fake reviewer. Its `append` and `link` are
-modelled on ikigai-ledger 0.18.1: `about` takes absolute IRIs, `parent=` is ignored, and a held key
-files nothing."""
+"""The worker's review mode and `gonk.py findings` (tools/worker.py, tools/gonk.py,
+tools/review_findings.py, worker/README.md "Review jobs"), hermetic: the in-memory ledger, a real
+git origin, the stub gh and a fake reviewer. Its `append` and `link` are modelled on ikigai-ledger
+0.18.1: `about` takes absolute IRIs, `parent=` is ignored, and a held key files nothing."""
 
 from __future__ import annotations
 
@@ -11,8 +11,12 @@ import shlex
 import unittest
 from pathlib import Path
 
-from support import gonk
+from support import gonk, scratch_repo
+from test_gonk import run as run_gonk
+from test_gonk import wire
 from worker_support import FakeLedger, Rig, git, worker
+
+rf = gonk.review_findings
 
 MAJOR = {
     "severity": "major",
@@ -50,6 +54,7 @@ class ReviewRig:
         git("commit", "-q", "-m", "A feature", cwd=seed)
         git("push", "-q", str(self.rig.origin), "HEAD:refs/heads/feature", cwd=seed)
         self.head = git("rev-parse", "HEAD", cwd=seed).strip()
+        self.dispatcher = None
 
     def job(self, **overrides) -> int:
         settings = {
@@ -65,7 +70,25 @@ class ReviewRig:
         return self.rig.worker(self.ledger).run_once()
 
     def findings(self) -> list[dict]:
-        return [i for i in self.ledger.items.values() if i["kind"] == worker.FINDING]
+        return [i for i in self.ledger.items.values() if i["kind"] == rf.FINDING]
+
+    def writes(self) -> list[str]:
+        """The worker's calls that could file or link an item."""
+        return [c for c, _ in self.ledger.calls if ":append" in c or ":link" in c]
+
+    def findings_command(self, number: int, *flags: str) -> tuple[int, str, str]:
+        """`gonk.py findings` from a dispatcher's checkout, on the same ledger."""
+        if not self.dispatcher:
+            self.dispatcher = scratch_repo(self.test)
+            wire(self.dispatcher)
+        return run_gonk(self.dispatcher, ["findings", str(number), *flags], self.ledger)
+
+    def closed_with(self) -> list[str]:
+        command = next(c for c, _ in self.ledger.calls if ":close " in c)
+        return [w[len("evidence=") :] for w in shlex.split(command) if w.startswith("evidence=")]
+
+    def report_file(self, number: int) -> Path:
+        return self.rig.home / "work" / "lib" / f"item-{number}.report"
 
     def said(self, number: int) -> str:
         return "\n".join(c["text"] for c in self.ledger.human_comments(number))
@@ -129,14 +152,92 @@ class ARun(unittest.TestCase):
         self.assertIn(f"git diff {self.r.base}..{self.r.head}", self.r.rig.prompt(n))
 
 
-class Filing(unittest.TestCase):
+class TheHandBack(unittest.TestCase):
     def setUp(self):
         self.r = ReviewRig(self)
 
-    def test_one_item_per_finding_with_the_fields(self):
+    def test_it_carries_the_findings_block_and_the_worker_makes_no_ledger_write(self):
         n = self.r.job()
         outcome = self.r.run("--report", report(MAJOR, MINOR))
         self.assertEqual(outcome.code, worker.HANDED_BACK, outcome.summary)
+        self.assertEqual(self.r.findings(), [])
+        self.assertEqual(self.r.writes(), [])
+        job = self.r.ledger.items[n]
+        self.assertEqual(job["awaiting"], "dispatcher")
+        self.assertIsNone(job["claim"])
+        self.assertEqual(self.r.ledger.closes, [])
+        said = self.r.said(n)
+        range_ = f"{self.r.base}..{self.r.head}"
+        self.assertTrue(said.startswith(f"Evidence: the review of {range_} found 2 findings.\n"))
+        self.assertEqual(said.count("```json"), 1)
+        review, problems = rf.parse_hand_back(said)
+        self.assertEqual(problems, [])
+        self.assertEqual((review.base, review.head), (self.r.base, self.r.head))
+        self.assertEqual([f.title for f in review.findings], [MAJOR["title"], MINOR["title"]])
+
+    def test_the_hand_back_goes_out_as_a_hand_back(self):
+        self.r.job()
+        self.r.run("--report", report(MINOR))
+        sent = [c for c, _ in self.r.ledger.calls if ":comment" in c and "handback=true" in c]
+        self.assertEqual(len(sent), 1)
+
+    def test_nothing_found_carries_an_empty_block(self):
+        n = self.r.job()
+        self.r.run("--report", report())
+        review, problems = rf.parse_hand_back(self.r.said(n))
+        self.assertEqual(problems, [])
+        self.assertEqual((review.head, review.findings), (self.r.head, []))
+        self.assertEqual(self.r.writes(), [])
+
+    def test_awkward_text_survives_the_block(self):
+        tricky = {**MINOR, "problem": 'a\n```\n```json\n"quoted" \u2028 \u00e9', "title": "a ``` b"}
+        n = self.r.job()
+        self.assertEqual(self.r.run("--report", report(tricky)).code, worker.HANDED_BACK)
+        review, problems = rf.parse_hand_back(self.r.said(n))
+        self.assertEqual(problems, [])
+        self.assertEqual(review.findings[0].problem, tricky["problem"])
+
+    def test_too_large_for_one_comment_says_so_and_keeps_the_report(self):
+        n = self.r.job()
+        big = {**MINOR, "problem": "x" * rf.MAX_HAND_BACK_BYTES}
+        outcome = self.r.run("--report", report(big))
+        self.assertEqual(outcome.code, worker.NOT_HANDED_BACK, outcome.summary)
+        item = self.r.ledger.items[n]
+        self.assertIsNone(item["awaiting"])
+        self.assertIsNone(item["claim"])
+        said = self.r.said(n)
+        self.assertIn("truncates nothing", said)
+        self.assertNotIn("Evidence:", said)
+        self.assertNotIn("xxxx", said)
+        self.assertEqual(self.r.writes(), [])
+        kept = self.r.report_file(n)
+        self.assertIn(str(kept), said)
+        self.assertEqual(rf.parse_report(kept.read_text())[0][0].problem, big["problem"])
+        self.assertTrue(any(p.name == f"item-{n}" for p in self.r.worktrees()))
+
+    def test_a_refused_comment_keeps_the_report_too(self):
+        n = self.r.job()
+        self.r.ledger.refuse_comments = 1
+        outcome = self.r.run("--report", report(MINOR))
+        self.assertEqual(outcome.code, worker.NOT_HANDED_BACK, outcome.summary)
+        self.assertIsNone(self.r.ledger.items[n]["awaiting"])
+        self.assertTrue(self.r.report_file(n).exists())
+
+
+class TheDispatcherFiles(unittest.TestCase):
+    def setUp(self):
+        self.r = ReviewRig(self)
+
+    def handed_back(self, *findings: dict) -> int:
+        n = self.r.job()
+        outcome = self.r.run("--report", report(*findings))
+        self.assertEqual(outcome.code, worker.HANDED_BACK, outcome.summary)
+        return n
+
+    def test_one_item_per_finding_with_the_fields(self):
+        n = self.handed_back(MAJOR, MINOR)
+        code, out, err = self.r.findings_command(n)
+        self.assertEqual(code, 0, err)
         major, minor = self.r.findings()
         self.assertEqual(major["kind"], "https://ikigai-rs.dev/ns/ledger#Finding")
         self.assertEqual(major["revision"], self.r.head)
@@ -152,71 +253,235 @@ class Filing(unittest.TestCase):
                 [{"type": "parent", "target": {"number": n, "iri": job["iri"]}}],
             )
             self.assertRegex(found["key"], rf"^review:{n}:[0-9a-f]{{16}}$")
+            self.assertIn(f"{found['number']} {found['iri']} (filed)", out)
         self.assertEqual(minor["labels"], ["repo:lib", "severity:minor"])
         self.assertIn("README.md", minor["body"])
-        said = self.r.said(n)
-        self.assertTrue(said.startswith(f"Evidence: {major['iri']}\nEvidence: {minor['iri']}\n"))
-        self.assertEqual(job["awaiting"], "dispatcher")
-        self.assertIsNone(job["claim"])
+        self.assertEqual(job["status"], "open", "closing takes --close")
 
     def test_the_commands_quote_what_the_engine_would_read_as_a_reference(self):
-        self.r.job()
-        self.r.run("--report", report(MINOR))
+        n = self.handed_back(MINOR)
+        self.r.findings_command(n)
         sent = [c for c, _ in self.r.ledger.calls if ":append " in c]
         self.assertEqual(len(sent), 1)
-        self.assertIn(f'kind="{worker.FINDING}"', sent[0])
+        self.assertIn(f'kind="{rf.FINDING}"', sent[0])
         self.assertIn('about="urn:repo:file:lib/README.md"', sent[0])
         self.assertIn(f'revision="{self.r.head}"', sent[0])
         self.assertEqual(len(shlex.split(sent[0])), 8)
 
-    def test_a_rerun_files_no_duplicates(self):
-        n = self.r.job()
-        self.r.run("--report", report(MAJOR, MINOR))
+    def test_a_rerun_files_nothing_new(self):
+        n = self.handed_back(MAJOR, MINOR)
+        self.r.findings_command(n)
         filed = {i["number"] for i in self.r.findings()}
-        first = self.r.said(n).splitlines()[:2]
-
-        self.r.ledger.items[n]["awaiting"] = None
-        self.r.ledger.dispatch(n)
-        outcome = self.r.run("--report", report(MINOR, MAJOR))
-        self.assertEqual(outcome.code, worker.HANDED_BACK, outcome.summary)
+        code, out, err = self.r.findings_command(n)
+        self.assertEqual(code, 0, err)
         self.assertEqual({i["number"] for i in self.r.findings()}, filed)
-        last = self.r.ledger.human_comments(n)[-1]["text"].splitlines()[:2]
-        self.assertEqual(sorted(last), sorted(first))
         for found in self.r.findings():
             self.assertEqual(len(found["links"]), 1)
+            self.assertIn(f"{found['number']} {found['iri']} (existing)", out)
 
     def test_a_rerun_links_a_finding_a_stopped_run_left_without_its_parent(self):
-        n = self.r.job()
+        n = self.handed_back(MINOR)
         self.r.ledger.refuse_links = True
-        outcome = self.r.run("--report", report(MINOR))
-        self.assertEqual(outcome.code, worker.NOT_HANDED_BACK, outcome.summary)
+        code, _, err = self.r.findings_command(n, "--close")
+        self.assertEqual(code, 1)
+        self.assertIn("cannot link", err)
         self.assertEqual(self.r.findings()[0]["links"], [])
-        self.assertIsNone(self.r.ledger.items[n]["awaiting"])
+        self.assertEqual(self.r.ledger.closes, [])
 
         self.r.ledger.refuse_links = False
-        self.r.ledger.dispatch(n)
-        outcome = self.r.run("--report", report(MINOR))
-        self.assertEqual(outcome.code, worker.HANDED_BACK, outcome.summary)
+        code, _, err = self.r.findings_command(n)
+        self.assertEqual(code, 0, err)
         self.assertEqual(len(self.r.findings()), 1)
         self.assertEqual(self.r.findings()[0]["links"][0]["target"]["number"], n)
 
-    def test_the_same_finding_twice_in_one_report_is_one_item(self):
-        n = self.r.job()
-        self.r.run("--report", report(MINOR, MINOR))
+    def test_the_same_finding_twice_is_one_item(self):
+        n = self.handed_back(MINOR, MINOR)
+        code, out, _ = self.r.findings_command(n, "--close")
+        self.assertEqual(code, 0)
         self.assertEqual(len(self.r.findings()), 1)
-        self.assertEqual(self.r.said(n).count("Evidence:"), 1)
+        self.assertEqual(out.count("(filed)"), 1)
+        evidence = self.r.closed_with()
+        self.assertEqual(evidence, [self.r.findings()[0]["iri"]])
 
-    def test_a_ledger_that_refuses_hands_back_without_evidence_saying_why(self):
-        n = self.r.job()
+    def test_a_refusal_part_way_says_what_was_filed_and_does_not_close(self):
+        n = self.handed_back(MAJOR, MINOR)
         self.r.ledger.refuse_appends = True
-        outcome = self.r.run("--report", report(MINOR))
-        self.assertEqual(outcome.code, worker.NOT_HANDED_BACK, outcome.summary)
-        item = self.r.ledger.items[n]
-        self.assertIsNone(item["awaiting"])
-        self.assertIsNone(item["claim"])
-        self.assertIn("the ledger refused a finding: denied", self.r.said(n))
-        self.assertIn("--worker", self.r.said(n))
-        self.assertNotIn("Evidence:", self.r.said(n))
+        code, _, err = self.r.findings_command(n, "--close")
+        self.assertEqual(code, 1)
+        self.assertIn("stopped filing: denied", err)
+        self.assertEqual(self.r.ledger.closes, [])
+
+    def test_a_refusal_after_one_is_filed_names_it(self):
+        n = self.handed_back(MAJOR, MINOR)
+        ledger = self.r.ledger
+        real = ledger.append
+
+        def once(stdin, args):
+            answer = real(stdin, args)
+            ledger.refuse_appends = True
+            return answer
+
+        ledger.append = once
+        code, out, _ = self.r.findings_command(n)
+        self.assertEqual(code, 1)
+        self.assertEqual(len(self.r.findings()), 1)
+        self.assertIn(self.r.findings()[0]["iri"], out)
+
+    def test_close_closes_with_the_finding_iris(self):
+        n = self.handed_back(MAJOR, MINOR)
+        code, _, err = self.r.findings_command(n, "--close")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.r.ledger.closes, [n])
+        iris = [f["iri"] for f in self.r.findings()]
+        self.assertEqual(self.r.closed_with(), iris)
+        note = next(i for c, i in self.r.ledger.calls if ":close " in c)
+        self.assertEqual(note, "\n".join(f"Evidence: {iri}" for iri in iris))
+
+    def test_close_with_nothing_found_names_no_evidence_and_says_so(self):
+        n = self.handed_back()
+        code, out, err = self.r.findings_command(n, "--close")
+        self.assertEqual(code, 0, err)
+        self.assertIn("found nothing", out)
+        self.assertEqual(self.r.findings(), [])
+        self.assertEqual(self.r.ledger.closes, [n])
+        self.assertEqual(self.r.closed_with(), [])
+        note = next(i for c, i in self.r.ledger.calls if ":close " in c)
+        self.assertIn("found nothing", note)
+
+    def test_a_rerun_after_the_close_files_nothing_and_closes_nothing(self):
+        n = self.handed_back(MINOR)
+        self.r.findings_command(n, "--close")
+        # The ledger records a close's note as a comment, which also starts `Evidence:`.
+        self.r.ledger.add_comment(n, f"Evidence: {self.r.findings()[0]['iri']}", author="hub")
+        self.r.ledger.items[n]["awaiting"] = None
+        code, out, err = self.r.findings_command(n, "--close")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(self.r.findings()), 1)
+        self.assertEqual(self.r.ledger.closes, [n])
+        self.assertIn("already closed", out)
+
+    def test_it_says_whose_hand_back_it_read(self):
+        n = self.handed_back(MINOR)
+        author = self.r.ledger.human_comments(n)[-1]["author"]
+        _, out, _ = self.r.findings_command(n)
+        self.assertIn(f"the hand-back by {author}", out)
+
+
+class WhatTheDispatcherRefuses(unittest.TestCase):
+    def setUp(self):
+        self.r = ReviewRig(self)
+
+    def refused(self, n: int, *says: str, flags=("--close",)) -> None:
+        before = len(self.r.ledger.calls)
+        code, _, err = self.r.findings_command(n, *flags)
+        self.assertEqual(code, 2, err)
+        self.assertIn("filed nothing", err)
+        for text in says:
+            self.assertIn(text, err)
+        self.assertEqual(self.r.findings(), [])
+        self.assertEqual(self.r.ledger.closes, [])
+        verbs = [c for c, _ in self.r.ledger.calls[before:] if not c.startswith("source ")]
+        self.assertEqual(verbs, [], "a refusal writes nothing")
+
+    def with_hand_back(self, text: str, **overrides) -> int:
+        n = self.r.job(**overrides)
+        self.r.ledger.add_comment(n, text, author="someone")
+        self.r.ledger.items[n]["awaiting"] = "dispatcher"
+        return n
+
+    def block(self, doc: dict | str) -> str:
+        text = doc if isinstance(doc, str) else json.dumps(doc)
+        return f"Evidence: the review found 1 finding.\n\n```json\n{text}\n```\n"
+
+    def doc(self, *findings: dict, **fields) -> dict:
+        settings = {"base": self.r.base, "revision": self.r.head, "findings": list(findings)}
+        return {**settings, **fields}
+
+    def test_a_missing_block(self):
+        n = self.with_hand_back("Evidence: https://example.org/report")
+        self.refused(n, "no ```json block")
+
+    def test_a_malformed_block(self):
+        bad = {**MAJOR, "severity": "blocker"}
+        cases = [
+            ("not json", "not well-formed JSON"),
+            ("[]", 'a list under "findings"'),
+            (self.doc(bad), "findings[0]: severity"),
+            (self.doc(MINOR, {**MAJOR, "title": ""}), "findings[1]: title"),
+            (self.doc({**MAJOR, "confidence": 3}), "confidence"),
+            (self.doc({**MAJOR, "path": "a/../../etc"}), "path is outside"),
+            (self.doc({**MAJOR, "title": "\ud800"}), "title is not valid Unicode"),
+            ("[" * 200000, "not well-formed JSON"),
+            (self.doc(MINOR, extra=1), "fields the format does not: extra"),
+            (self.doc(MINOR, revision="main"), "revision is not a commit sha"),
+            (self.doc(MINOR, base=None), "base is not a commit sha"),
+            (self.doc(MINOR, revision="a" * 40), "is not the job's revision"),
+        ]
+        for text, says in cases:
+            with self.subTest(text=text):
+                self.r = ReviewRig(self)
+                self.refused(self.with_hand_back(self.block(text)), says)
+
+    def test_one_bad_finding_stops_the_good_one_too(self):
+        bad = {**MAJOR, "severity": "blocker"}
+        self.refused(self.with_hand_back(self.block(self.doc(MINOR, bad))), "findings[1]")
+
+    def test_two_blocks_and_an_unclosed_one(self):
+        one = self.block(self.doc(MINOR))
+        self.refused(self.with_hand_back(one + one), "2 ```json blocks")
+        self.refused(self.with_hand_back(one.replace("\n```\n", "\n")), "never closed")
+
+    def test_a_newer_hand_back_without_a_block_is_not_passed_over(self):
+        n = self.with_hand_back(self.block(self.doc(MINOR)))
+        self.r.ledger.add_comment(n, "Evidence: https://example.org/report", author="someone")
+        self.refused(n, "no ```json block")
+
+    def test_a_job_with_no_hand_back(self):
+        self.refused(self.r.job(), "not awaiting its dispatcher")
+
+    def test_a_rejected_hand_back(self):
+        n = self.with_hand_back(self.block(self.doc(MINOR)))
+        self.r.ledger.items[n]["awaiting"] = None
+        self.refused(n, "not awaiting its dispatcher")
+
+    def test_a_change_job(self):
+        n = self.with_hand_back(self.block(self.doc(MINOR)), kind=None)
+        self.refused(n, "not a review job")
+
+    def test_a_job_without_one_usable_repo(self):
+        for labels in (["worker:w1"], ["repo:a", "repo:b"], ['repo:a" close="true']):
+            with self.subTest(labels=labels):
+                self.r = ReviewRig(self)
+                n = self.with_hand_back(self.block(self.doc(MINOR)))
+                self.r.ledger.items[n]["labels"] = labels
+                code, _, err = self.r.findings_command(n, "--close")
+                self.assertEqual(code, 1)
+                self.assertIn("repo: label", err)
+                self.assertEqual(self.r.findings(), [])
+                self.assertEqual(self.r.ledger.closes, [])
+
+    def test_an_unreadable_item(self):
+        code, _, err = self.r.findings_command(999)
+        self.assertEqual(code, 2)
+        self.assertIn("could not read item 999", err)
+
+    def test_a_branch_as_the_revision_is_not_compared(self):
+        n = self.with_hand_back(self.block(self.doc(MINOR)), revision="feature")
+        code, _, err = self.r.findings_command(n)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(self.r.findings()), 1)
+
+
+class AnOlderLedger(unittest.TestCase):
+    def test_with_no_awaiting_state_the_prefix_is_the_hand_back(self):
+        r = ReviewRig(self)
+        r.ledger = FakeLedger(older_comment=True)
+        n = r.job()
+        outcome = r.run("--report", report(MINOR))
+        self.assertEqual(outcome.code, worker.HANDED_BACK, outcome.summary)
+        code, _, err = r.findings_command(n)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(r.findings()), 1)
 
 
 class Refusals(unittest.TestCase):
@@ -348,29 +613,27 @@ class TheReport(unittest.TestCase):
         tree = rig.tmp / "tree"
         tree.mkdir()
         (tree / "out").symlink_to(rig.tmp)
-        _, problems = worker.parse_report(report({**MINOR, "path": "out/secret"}), tree)
+        _, problems = rf.parse_report(report({**MINOR, "path": "out/secret"}), tree)
         self.assertIn("symbolic link", problems[0])
 
     def test_a_path_is_normalized_so_its_key_is_stable(self):
         rig = Rig(self)
-        one, _ = worker.parse_report(report({**MINOR, "path": "./a//b.py"}), rig.tmp)
-        two, _ = worker.parse_report(report({**MINOR, "path": "a/b.py"}), rig.tmp)
+        one, _ = rf.parse_report(report({**MINOR, "path": "./a//b.py"}), rig.tmp)
+        two, _ = rf.parse_report(report({**MINOR, "path": "a/b.py"}), rig.tmp)
         self.assertEqual(one[0].path, "a/b.py")
-        self.assertEqual(worker.finding_key(9, one[0]), worker.finding_key(9, two[0]))
+        self.assertEqual(rf.finding_key(9, one[0]), rf.finding_key(9, two[0]))
 
     def test_a_removed_file_may_be_reported(self):
         rig = Rig(self)
-        found, problems = worker.parse_report(report({**MINOR, "path": "gone.py"}), rig.tmp)
+        found, problems = rf.parse_report(report({**MINOR, "path": "gone.py"}), rig.tmp)
         self.assertEqual((len(found), problems), (1, []))
 
     def test_the_key_is_what_the_ledger_accepts(self):
         rig = Rig(self)
-        found, _ = worker.parse_report(report(MAJOR), rig.tmp)
-        self.assertRegex(worker.finding_key(12, found[0]), r"^[A-Za-z0-9._~:-]{1,256}$")
+        found, _ = rf.parse_report(report(MAJOR), rig.tmp)
+        self.assertRegex(rf.finding_key(12, found[0]), r"^[A-Za-z0-9._~:-]{1,256}$")
         self.assertIsNone(
-            gonk.parse_dispatch(
-                worker.finding_content(found[0], worker.ReviewJob("a", "b"), "lib", "acme#1")
-            )
+            gonk.parse_dispatch(rf.finding_content(found[0], "a", "b", "lib", "acme#1"))
         )
 
 

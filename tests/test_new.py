@@ -70,6 +70,7 @@ class Generate(unittest.TestCase):
         for rel in [
             "tools/worker.py",
             "tools/worker_repos.py",
+            "tools/review_findings.py",
             "worker/worker.sample.toml",
             *(f"worker/units/{name}" for name in units),
         ]:

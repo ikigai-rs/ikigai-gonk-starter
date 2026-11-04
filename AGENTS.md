@@ -193,11 +193,13 @@ items the dispatcher marks for them, and work each one in a fresh working tree o
   request, reads its CI, and hands the item back with both as the evidence. The dispatcher
   checks that evidence, then merges and closes, or answers with
   `python3 tools/gonk.py reject 12 --note "<why>"`, and the item is ready again.
-- **A review job changes nothing, and its worker files the findings.** An item of class
+- **A review job changes nothing, and its dispatcher files the findings.** An item of class
   `https://ikigai-rs.dev/ns/ledger#ReviewJob` runs in a fresh worktree at its `revision`. The
   agent writes its findings to the report file and files nothing; the worker refuses a changed
-  worktree or an invalid report, files one item per finding, and hands back with their IRIs as
-  the evidence (`worker/README.md`, "Review jobs").
+  worktree or an invalid report and hands the findings back on its comment, and its grant stays
+  read, claim and comment. The dispatcher files one item per finding with
+  `python3 tools/gonk.py findings 12`, and `--close` closes the job on them (`worker/README.md`,
+  "Review jobs").
 - **A worker runs as an account of its own.** Never as root, and only in a work root strictly
   under that account's home: not a person's checkouts, not a shared directory.
 - **A worker has a budget, and takes an item once.** An agent that runs past its wall-clock

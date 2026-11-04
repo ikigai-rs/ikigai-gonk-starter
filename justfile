@@ -41,6 +41,10 @@ reject item *flags:
 close item evidence *flags:
     python3 tools/gonk.py close {{item}} --evidence "{{evidence}}" {{flags}}
 
+# File the findings of a review job's hand-back, a rerun filing none twice: just findings 12 [--close]
+findings item *flags:
+    python3 tools/gonk.py findings {{item}} {{flags}}
+
 # Does this working tree hold a live claim?
 status:
     python3 tools/gonk.py status
