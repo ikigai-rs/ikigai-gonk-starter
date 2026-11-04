@@ -4,7 +4,11 @@ would, and does what its flags say: record its brief, sleep, edit a file, commit
 branch and "open a pull request" through the stub gh, or report evidence without one.
 
     fake_agent.py --record <dir> --gh "<argv of the stub gh>" --branch B --item N
-                  [--sleep S] [--no-pr] [--evidence URL --report-file P] [--exit N] -- <prompt>
+                  [--sleep S] [--no-pr] [--evidence URL --report-file P] [--exit N]
+                  [--report TEXT] [--dirty] [--ignored] [--commit-only] -- <prompt>
+
+The last four are a reviewer's: write TEXT to the report file, leave an untracked file, leave a
+file `.gitignore` covers, or commit and push nothing further.
 """
 
 from __future__ import annotations
@@ -36,6 +40,10 @@ def main() -> int:
     p.add_argument("--evidence")
     p.add_argument("--report-file")
     p.add_argument("--exit", type=int, default=0)
+    p.add_argument("--report")
+    p.add_argument("--dirty", action="store_true")
+    p.add_argument("--ignored", action="store_true")
+    p.add_argument("--commit-only", action="store_true")
     p.add_argument("prompt")
     args = p.parse_args()
 
@@ -46,6 +54,18 @@ def main() -> int:
     (record / f"started-{args.item}").write_text(str(time.time()))
     time.sleep(args.sleep)
 
+    head = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True)
+    (record / f"head-{args.item}").write_text(head.stdout.strip())
+    if args.report is not None:
+        Path(args.report_file).write_text(args.report)
+    if args.dirty:
+        Path("LEFT-BEHIND.txt").write_text("a reviewer changes nothing\n")
+    if args.ignored:
+        Path("build-output.tmp").write_text("output\n")
+    if args.commit_only:
+        Path("COMMITTED.txt").write_text("a reviewer commits nothing\n")
+        git("add", "COMMITTED.txt")
+        git("commit", "-q", "-m", "A reviewer's commit")
     if args.evidence:
         Path(args.report_file).write_text(f"{args.evidence}\nIt does not reproduce: see the run.\n")
     if not args.no_pr:

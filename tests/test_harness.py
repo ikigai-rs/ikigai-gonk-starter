@@ -27,6 +27,7 @@ from unittest import mock
 
 from support import ROOT, FakeIkigai, gonk, harness, load_hook, ok, scratch_repo
 from worker_support import FakeLedger, Rig, worker
+from worker_support import git as support_git
 
 spec = importlib.util.spec_from_file_location("new", ROOT / "tools" / "new.py")
 new = importlib.util.module_from_spec(spec)
@@ -629,6 +630,34 @@ class SensorsFire(unittest.TestCase):
         _, outcome = self.run_once(rig, ledger)
         self.assertEqual(outcome.code, worker.NOT_HANDED_BACK, outcome.summary)
         assert_fired(self, rig.checkout, "worker-no-evidence")
+
+    def review_job(self, ledger, rig) -> None:
+        head = support_git("rev-parse", "main", cwd=rig.origin).strip()
+        ledger.file(
+            "Review",
+            ["worker:w1", "repo:lib"],
+            body=f"Review {head}..{head}.",
+            kind=worker.REVIEW_JOB,
+            revision=head,
+        )
+
+    def test_worker_review_changes_nothing(self):
+        rig, ledger = Rig(self), FakeLedger()
+        rig.agent_flags = ["--no-pr", "--report", '{"findings": []}', "--dirty"]
+        rig.configure()
+        self.review_job(ledger, rig)
+        _, outcome = self.run_once(rig, ledger)
+        self.assertEqual(outcome.code, worker.NOT_HANDED_BACK, outcome.summary)
+        assert_fired(self, rig.checkout, "worker-review-changes-nothing")
+
+    def test_worker_review_report_valid(self):
+        rig, ledger = Rig(self), FakeLedger()
+        rig.agent_flags = ["--no-pr", "--report", "not json"]
+        rig.configure()
+        self.review_job(ledger, rig)
+        _, outcome = self.run_once(rig, ledger)
+        self.assertEqual(outcome.code, worker.NOT_HANDED_BACK, outcome.summary)
+        assert_fired(self, rig.checkout, "worker-review-report-valid")
 
     def test_worker_merged_before_exit(self):
         rig, ledger = self.worker_rig(), FakeLedger()

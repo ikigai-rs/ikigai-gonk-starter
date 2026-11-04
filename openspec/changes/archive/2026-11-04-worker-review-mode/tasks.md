@@ -1,0 +1,3 @@
+- [x] 1. Tests with the in-memory ledger and a fake reviewer, failing without the change.
+- [x] 2. The review preamble, the checks after the agent, the filing and the hand-back.
+- [x] 3. Worker documentation, the sample configuration, the workers profile and its harness.

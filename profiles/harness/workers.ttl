@@ -26,6 +26,13 @@ guide:worker-never-closes-or-merges a harness:Guide ;
     harness:direction harness:feedforward ; harness:execution harness:inferential ;
     harness:stage harness:runtime ; harness:category harness:authoritySafety .
 
+guide:worker-files-a-reviews-findings a harness:Guide ;
+    rdfs:label "a review changes nothing, and its worker files the findings" ;
+    rdfs:comment "An item of class ledger:ReviewJob runs under a preamble that forbids any change; the agent writes its findings to the report file, and the worker, never the agent, files one item for each and hands back with their IRIs." ;
+    harness:statedIn "AGENTS.md" ; harness:section "Worker machines" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:runtime ; harness:category harness:authoritySafety .
+
 guide:worker-own-account a harness:Guide ;
     rdfs:label "a worker runs as an account of its own" ;
     rdfs:comment "A worker never runs as root, and works only in a work root strictly under its own account's home: not a person's checkouts, not a shared directory." ;
@@ -164,7 +171,7 @@ ctl:worker-claim-lost a harness:Control ;
     harness:stage harness:runtime ; harness:category harness:authoritySafety ;
     harness:outcome harness:refuse ;
     harness:wiredBy "worker-config" ;
-    harness:enforcedAt "tools/worker.py#work_claimed" ;
+    harness:enforcedAt "tools/worker.py#work_claimed" , "tools/worker.py#finish_review" ;
     harness:statedBy guide:stop-when-claim-gone , guide:a-claim-is-a-lease ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_claim_lost .
 
@@ -175,7 +182,7 @@ ctl:worker-budget-overrun a harness:Control ;
     harness:stage harness:runtime ; harness:category harness:behavior ;
     harness:outcome harness:refuse ;
     harness:wiredBy "worker-config" ;
-    harness:enforcedAt "tools/worker.py#work_claimed" ;
+    harness:enforcedAt "tools/worker.py#work_claimed" , "tools/worker.py#finish_review" ;
     harness:statedBy guide:worker-budget-and-once , guide:hand-back-when-you-stop ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_budget_overrun .
 
@@ -189,6 +196,28 @@ ctl:worker-no-evidence a harness:Control ;
     harness:enforcedAt "tools/worker.py#work_claimed" ;
     harness:statedBy guide:report-with-evidence , guide:hand-back-when-you-stop ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_no_evidence .
+
+ctl:worker-review-changes-nothing a harness:Control ;
+    rdfs:label "worker: a review changes nothing" ;
+    rdfs:comment "After a review job's agent exits, the worker checks that the worktree is unchanged, with no new commits; when it is changed, it files nothing and hands the job back saying so." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:runtime ; harness:category harness:behavior ;
+    harness:outcome harness:refuse ;
+    harness:wiredBy "worker-config" ;
+    harness:enforcedAt "tools/worker.py#finish_review" ;
+    harness:statedBy guide:worker-files-a-reviews-findings ;
+    harness:firedBy test:test_harness:SensorsFire.test_worker_review_changes_nothing .
+
+ctl:worker-review-report-valid a harness:Control ;
+    rdfs:label "worker: a review's report is valid" ;
+    rdfs:comment "The worker validates a review's report (well-formed JSON, the format's fields, a known severity, a path inside the repository); an invalid report files nothing, and the job is handed back with what was wrong." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:runtime ; harness:category harness:behavior ;
+    harness:outcome harness:refuse ;
+    harness:wiredBy "worker-config" ;
+    harness:enforcedAt "tools/worker.py#finish_review" ;
+    harness:statedBy guide:worker-files-a-reviews-findings ;
+    harness:firedBy test:test_harness:SensorsFire.test_worker_review_report_valid .
 
 ctl:worker-merged-before-exit a harness:Control ;
     rdfs:label "worker: a merge while the agent ran" ;

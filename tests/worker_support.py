@@ -9,6 +9,7 @@ the same loop against a scratch gonk where `ikigai-gonk` and `ikigai` are instal
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import shutil
 import subprocess
@@ -28,6 +29,8 @@ FAKES = ROOT / "tests" / "fakes"
 # The principal every test worker trusts to route work (`routers` in Rig.configure), and the one
 # FakeLedger.file dispatches as unless told otherwise. Not a real credential id.
 DISPATCHER = "urn:iki:gonk:passkey:dispatcher-test"
+
+ABSOLUTE_IRI = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:[^\s<>\"{}|\\^`]+$")
 
 
 def iso(t: datetime) -> str:
@@ -53,6 +56,8 @@ class FakeLedger:
         self.closes: list[int] = []
         self.lock = threading.Lock()
         self.refuse_renewals = False
+        self.refuse_appends = False
+        self.refuse_links = False
         self.refuse_comments = 0  # refuse this many comments, then answer them again
         self.older_comment = older_comment  # a comment resource without handback/rejects
         self.tick = 0
@@ -61,7 +66,13 @@ class FakeLedger:
 
     # -- the test's own hands on it
     def file(
-        self, title: str, labels: list[str], body: str = "", dispatched_by: str | None = DISPATCHER
+        self,
+        title: str,
+        labels: list[str],
+        body: str = "",
+        dispatched_by: str | None = DISPATCHER,
+        kind: str | None = None,
+        revision: str | None = None,
     ) -> int:
         """File an item and, unless `dispatched_by` is None, dispatch it as that principal: the
         dispatch comment `gonk.py dispatch` writes, naming every label it was filed with."""
@@ -70,6 +81,8 @@ class FakeLedger:
             "number": number,
             "display": f"{self.name}#{number}",
             "iri": f"urn:iki:ledger:{self.name}:item:{number}",
+            "kind": kind,
+            "revision": revision,
             "title": title,
             "body": body,
             "status": "open",
@@ -142,7 +155,7 @@ class FakeLedger:
             return self.answer(command, stdin or "")
 
     def answer(self, command: str, stdin: str) -> gonk.Answer:
-        verb, resource, *words = command.split()
+        verb, resource, *words = shlex.split(command)
         args = dict(w.split("=", 1) for w in words)
         prefix = f"urn:gk:iki:ledger:{self.name}:"
         if resource == "urn:gk:iki:alias:scheme:gh" and verb == "sink":
@@ -245,10 +258,24 @@ class FakeLedger:
             item["priority"] = int(args["priority"])
             return gonk.Answer(0, "updated priority\n", "")
 
+        if verb == "sink" and name == "append":
+            return self.append(stdin, args)
+
         item = self.items.get(int(args.get("item", 0)))
         if item is None:
             return gonk.Answer(1, "", "no such item")
         display = item["display"]
+        if verb == "sink" and name == "link":
+            target = self.items.get(int(stdin.strip() or 0))
+            if target is None or self.refuse_links:
+                return gonk.Answer(1, "", f"denied: cannot link {display}")
+            link = {
+                "type": args.get("type", "related"),
+                "target": {"number": target["number"], "iri": target["iri"]},
+            }
+            if link not in item["links"]:
+                item["links"].append(link)
+            return gonk.Answer(0, f"linked {display}\n", "")
         if verb == "sink" and name == "claim":
             holder = stdin.strip()
             held = item["claim"]
@@ -318,6 +345,36 @@ class FakeLedger:
             item["status"] = "closed"
             return gonk.Answer(0, f"closed {display}\n", "")
         return gonk.Answer(1, "", f"the fake ledger does not answer {command!r}")
+
+    def append(self, stdin: str, args: dict[str, str]) -> gonk.Answer:
+        """As the ledger's `append` does: the first line is the title, an `about` must be
+        absolute IRIs, a key already held files nothing and says `existing`, and an argument it
+        does not declare (`parent`, for one) is ignored. Only `link` makes a parent."""
+        if self.refuse_appends:
+            return gonk.Answer(1, "", "denied: this capability holds neither file nor write")
+        title, _, body = stdin.strip().partition("\n")
+        about = args.get("about", "").split()
+        for target in about:
+            if not ABSOLUTE_IRI.match(target):
+                return gonk.Answer(1, "", f"invalid argument `about`: `{target}` is not an IRI")
+        key = args.get("key")
+        held = [n for n, it in self.items.items() if key and it.get("key") == key]
+        if held:
+            outcome, number = "existing", held[0]
+        else:
+            outcome = "filed"
+            number = self.file(
+                title,
+                [w for w in args.get("labels", "").split(",") if w],
+                body.strip(),
+                dispatched_by=None,
+                kind=args.get("kind"),
+                revision=args.get("revision"),
+            )
+            self.items[number].update(key=key, about=about)
+        ref = {k: self.items[number][k] for k in ("number", "display", "iri")}
+        doc = {"schema": 1, "ledger": self.name, "outcome": outcome, "item": ref, "status": "open"}
+        return gonk.Answer(0, json.dumps(doc), "")
 
 
 def git(*argv: str, cwd: Path | None = None) -> str:

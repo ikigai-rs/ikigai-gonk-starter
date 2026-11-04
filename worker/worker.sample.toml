@@ -66,6 +66,11 @@ preset = "claude"
 # command = ["codex", "exec", "--full-auto", "{prompt}"]
 # profile = "coder"
 
+# Review jobs (worker/README.md, "Review jobs") need no setting here. They do need more of the
+# ledger: the worker files each finding, and that takes `write` on the ledger, which a grant
+# enrolled with `--worker` does not hold. Without it the loop still runs change jobs, and hands a
+# review job back saying the ledger refused.
+
 # Usage against the plan's weekly limit, read between items at most once an hour and posted as a
 # comment on a standing status item (tools/worker_usage.py). No agent CLI documents a
 # non-interactive usage output, so there is no default command: without one nothing is read.
