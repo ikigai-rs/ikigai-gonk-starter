@@ -1,0 +1,2 @@
+- [x] 1. Never file a hand-back a comment's `rejects` names, and refuse when the latest trusted one is rejected (A rejected hand-back is not filed; The dispatcher files one item per finding)
+- [x] 2. Say so in the README, AGENTS.md, the harness guide and this spec (A rejected hand-back is not filed)

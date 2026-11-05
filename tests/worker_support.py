@@ -132,17 +132,29 @@ class FakeLedger:
             self.items[number]["claim"] = {"holder": holder, "kind": "machine", "expires": iso(exp)}
 
     def add_comment(
-        self, number: int, text: str, author: str = "fake", status: str | None = None
-    ) -> None:
-        """`status` is the ledger's `attribution.author_status` (0.15.0): `verified` when the
-        author is the principal the door stamped, `claimed` otherwise. None omits `attribution`,
-        as a ledger older than that does."""
+        self,
+        number: int,
+        text: str,
+        author: str = "fake",
+        status: str | None = None,
+        rejects: list[str] | None = None,
+    ) -> str:
+        """The comment's IRI, which the ledger serves as its `id`. `status` is the ledger's
+        `attribution.author_status` (0.15.0): `verified` when the author is the principal the door
+        stamped, `claimed` otherwise. None omits `attribution`, as a ledger older than that does.
+        `rejects` is the hand-backs this comment rejected (ikigai-ledger PR 87); None omits the
+        key, as the ledger does on every other comment and as a ledger older than that always
+        does."""
         self.tick += 1
         stamp = iso(datetime.now(UTC) + timedelta(microseconds=self.tick * 1000))
-        comment = {"author": author, "time": stamp, "text": text}
+        iri = f"urn:iki:ledger:{self.name}:comment:{self.tick}"
+        comment = {"id": iri, "author": author, "time": stamp, "text": text}
         if status:
             comment["attribution"] = {"author": author, "author_status": status}
+        if rejects is not None:
+            comment["rejects"] = rejects
         self.items[number]["comments"].append(comment)
+        return iri
 
     def item_json(self, number: int) -> dict:
         """The item as the ledger serves it: without `awaiting` on a pre-0.8.0 ledger."""

@@ -1287,15 +1287,36 @@ whose review jobs are to be filed hands back over QUIC, with its own enrolled cl
 
 The newest hand-back still wins, among trusted ones. A newer one by anyone else is passed over with
 a warning that names its author, so a comment can neither file findings nor stop a worker's from
-being filed. ⚠ The ledger's JSON does not say which comment rejected a hand-back. Once a job is
-rejected only a new hand-back makes `findings` read it again, and if that one is by someone
-untrusted, the rejected hand-back is what gets filed: the warning is your cue to `reject` it again.
+being filed.
+
+**A rejected hand-back is not filed.** A comment that clears a hand-back lists on its `rejects`
+every hand-back on the job that nothing had rejected yet (ikigai-ledger PR 87), and `findings`
+never files one a comment names. The newest trusted hand-back still decides: if it was rejected,
+`findings` files nothing, not even an older block, names the rejecting comment, and tells you to
+have the worker hand back again. A new hand-back by someone else does not change that.
+
+Every comment's `rejects` counts, whoever posted it. Honoring a reject can only stop a filing, never
+cause one, so a stray reject costs a re-hand-back, while ignoring one could file turned-down
+evidence. The ledger records a dispatcher's ordinary comment on an awaiting job as a reject too, so
+after "looks fine, closing soon" the worker must hand back again before `findings` files anything.
+
+⚠ What remains, from PR 87's known gaps, where `findings` can still file turned-down evidence:
+
+- **Close, then reopen.** Neither writes `rejects`, so a hand-back from before them stays unmarked
+  until a later reject names it.
+- **Rejected before the upgrade.** Those rejects carry no record, and there is nothing to backfill
+  from, so such a hand-back stays unmarked until a later reject on the job names it.
+- **A ledger older than PR 87.** It sends no `rejects` at all, and `findings` infers nothing from a
+  comment's words, so it behaves as it did before: once a job is rejected, a new hand-back by someone
+  untrusted makes the rejected one file. The passed-over warning says so; it is your cue to `reject`
+  it again. On a job with no reject yet a newer ledger sends no `rejects` either, so the warning
+  appears there too.
 
 **What the dispatcher files.** `python3 tools/gonk.py findings N` reads job N's latest trusted
 hand-back, validates its block by the worker's rules (`tools/review_findings.py`; the one rule it cannot check
 is a symbolic link, which takes the worktree), and prints each finding's number and IRI. A
 malformed or missing block files nothing and says why, and so does a job that is not a review job
-or whose hand-back has been answered. One item per finding on the job's ledger, by keyed `append`:
+or whose hand-back has been answered or rejected. One item per finding on the job's ledger, by keyed `append`:
 
 | field | value |
 | --- | --- |

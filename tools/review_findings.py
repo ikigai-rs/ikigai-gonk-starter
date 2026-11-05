@@ -189,11 +189,26 @@ def hand_backs(item: dict) -> list[dict]:
     so does the note of a close, so on a closed job only a comment carrying a block counts. Which
     of them counts is the caller's: `gonk.py findings` takes the newest by a worker it trusts,
     block or not, since an older block is a run the newer one replaced and is never fallen back
-    on."""
+    on, and refuses it when `rejections` names it."""
     comments = sorted(item.get("comments") or [], key=lambda c: c.get("time") or "")
     found = [c for c in comments if (c.get("text") or "").lstrip().startswith("Evidence:")]
     if item.get("status", "open") != "open":
         found = [c for c in found if FENCE_OPEN in (c.get("text") or "").splitlines()]
+    return found
+
+
+def rejections(item: dict) -> dict[str, dict]:
+    """Each rejected hand-back's comment IRI (a comment's `id`), and the newest comment that
+    rejected it, from the `rejects` of every comment on the item (ikigai-ledger PR 87). Every
+    comment's counts, whoever posted it: honoring a reject can only stop a filing, never cause one,
+    so a stray reject costs a re-hand-back, while ignoring one could file turned-down evidence.
+    Empty on a ledger older than PR 87, which sends no such key, and nothing is inferred from a
+    comment's words instead."""
+    found: dict[str, dict] = {}
+    for comment in sorted(item.get("comments") or [], key=lambda c: c.get("time") or ""):
+        named = comment.get("rejects")
+        for iri in named if isinstance(named, list) else []:
+            found[iri] = comment
     return found
 
 
