@@ -342,7 +342,7 @@ guide:worker-never-closes-or-merges a harness:Guide ;
 
 guide:dispatcher-files-a-reviews-findings a harness:Guide ;
     rdfs:label "a review changes nothing, and its dispatcher files the findings" ;
-    rdfs:comment "An item of class ledger:ReviewJob runs under a preamble that forbids any change; the agent writes its findings to the report file, the worker hands them back on its comment, and the dispatcher, with `gonk.py findings`, files one item for each." ;
+    rdfs:comment "An item of class ledger:ReviewJob runs under a preamble that forbids any change; the agent writes its findings to the report file, the worker hands them back on its comment, and the dispatcher, with `gonk.py findings`, files one item for each, only from a hand-back whose author gonk verified and the dispatcher lists as a worker." ;
     harness:statedIn "AGENTS.md" ; harness:section "Worker machines" ;
     harness:direction harness:feedforward ; harness:execution harness:inferential ;
     harness:stage harness:runtime ; harness:category harness:authoritySafety .

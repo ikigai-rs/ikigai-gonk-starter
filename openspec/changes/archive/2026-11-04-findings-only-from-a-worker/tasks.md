@@ -1,0 +1,2 @@
+- [x] 1. Refuse a hand-back whose author is unverified or unlisted, and pass over a newer untrusted one (Only a worker's hand-back is filed; The dispatcher files one item per finding)
+- [x] 2. Say so in the README, AGENTS.md, the harness guide and this spec (Only a worker's hand-back is filed)

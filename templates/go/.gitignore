@@ -5,6 +5,7 @@ __pycache__/
 *.pyc
 .venv/
 .ruff_cache/
+.gonk/dispatcher.toml
 .gonk/worker.toml
 
 # What Go writes here. This file repeats the starter's lines above because a target's file

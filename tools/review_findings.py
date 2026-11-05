@@ -184,16 +184,17 @@ def findings_block(findings: list[Finding], base: str, head: str) -> str:
     return "\n".join([FENCE_OPEN, json.dumps(doc, indent=2), FENCE_CLOSE])
 
 
-def latest_hand_back(item: dict) -> dict | None:
-    """The comment that is this job's latest hand-back, or None. A hand-back starts `Evidence:`,
-    and so does the note of a close, so on a closed job only a comment carrying a block counts.
-    On an open job the newest one is the answer, block or not: an older block is a run the newer
-    one replaced, and is never fallen back on."""
+def hand_backs(item: dict) -> list[dict]:
+    """This job's hand-backs, oldest first, whoever wrote them. A hand-back starts `Evidence:`, and
+    so does the note of a close, so on a closed job only a comment carrying a block counts. Which
+    of them counts is the caller's: `gonk.py findings` takes the newest by a worker it trusts,
+    block or not, since an older block is a run the newer one replaced and is never fallen back
+    on."""
     comments = sorted(item.get("comments") or [], key=lambda c: c.get("time") or "")
     found = [c for c in comments if (c.get("text") or "").lstrip().startswith("Evidence:")]
     if item.get("status", "open") != "open":
         found = [c for c in found if FENCE_OPEN in (c.get("text") or "").splitlines()]
-    return found[-1] if found else None
+    return found
 
 
 def parse_hand_back(text: str, revision: object = None) -> tuple[HandBack | None, list[str]]:

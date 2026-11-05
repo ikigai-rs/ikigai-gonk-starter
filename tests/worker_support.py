@@ -60,6 +60,7 @@ class FakeLedger:
         self.refuse_links = False
         self.refuse_comments = 0  # refuse this many comments, then answer them again
         self.older_comment = older_comment  # a comment resource without handback/rejects
+        self.handbacks_by: str | None = None  # the QUIC client a hand-back is verified as
         self.tick = 0
         self.aliases: dict[str, str] = {}
         self.refuse_aliases = False
@@ -130,10 +131,18 @@ class FakeLedger:
             exp = expires or datetime.now(UTC) + timedelta(minutes=30)
             self.items[number]["claim"] = {"holder": holder, "kind": "machine", "expires": iso(exp)}
 
-    def add_comment(self, number: int, text: str, author: str = "fake") -> None:
+    def add_comment(
+        self, number: int, text: str, author: str = "fake", status: str | None = None
+    ) -> None:
+        """`status` is the ledger's `attribution.author_status` (0.15.0): `verified` when the
+        author is the principal the door stamped, `claimed` otherwise. None omits `attribution`,
+        as a ledger older than that does."""
         self.tick += 1
         stamp = iso(datetime.now(UTC) + timedelta(microseconds=self.tick * 1000))
-        self.items[number]["comments"].append({"author": author, "time": stamp, "text": text})
+        comment = {"author": author, "time": stamp, "text": text}
+        if status:
+            comment["attribution"] = {"author": author, "author_status": status}
+        self.items[number]["comments"].append(comment)
 
     def item_json(self, number: int) -> dict:
         """The item as the ledger serves it: without `awaiting` on a pre-0.8.0 ledger."""
@@ -324,7 +333,12 @@ class FakeLedger:
             if self.refuse_comments:
                 self.refuse_comments -= 1
                 return gonk.Answer(1, "", f"error: the store refused the comment on {display}")
-            self.add_comment(item["number"], stdin.strip(), author=args.get("author", "fake"))
+            if args.get("handback") and self.handbacks_by:
+                self.add_comment(
+                    item["number"], stdin.strip(), author=self.handbacks_by, status="verified"
+                )
+            else:
+                self.add_comment(item["number"], stdin.strip(), author=args.get("author", "fake"))
             # The hand-back is the item's state (ledger 0.8.0, ledger item 1199), set or
             # cleared in the same write as the comment. A ledger older than 0.8.0 does not
             # know the argument: it writes the comment and touches no state (the `served`

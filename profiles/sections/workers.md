@@ -33,8 +33,9 @@ items the dispatcher marks for them, and work each one in a fresh working tree o
   agent writes its findings to the report file and files nothing; the worker refuses a changed
   worktree or an invalid report and hands the findings back on its comment, and its grant stays
   read, claim and comment. The dispatcher files one item per finding with
-  `python3 tools/gonk.py findings 12`, and `--close` closes the job on them (`worker/README.md`,
-  "Review jobs").
+  `python3 tools/gonk.py findings 12`, and `--close` closes the job on them. Only a worker's
+  hand-back is filed: gonk must have verified the comment's author, and the dispatcher must list
+  it in `.gonk/dispatcher.toml` (`worker/README.md`, "Review jobs").
 - **A worker runs as an account of its own.** Never as root, and only in a work root strictly
   under that account's home: not a person's checkouts, not a shared directory.
 - **A worker has a budget, and takes an item once.** An agent that runs past its wall-clock

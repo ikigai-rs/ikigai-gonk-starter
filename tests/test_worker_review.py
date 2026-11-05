@@ -18,6 +18,10 @@ from worker_support import FakeLedger, Rig, git, worker
 
 rf = gonk.review_findings
 
+WORKER = "urn:iki:host:gonk:client:" + "a" * 64
+OTHER_WORKER = "urn:iki:host:gonk:client:" + "c" * 64
+STRANGER = "urn:iki:host:gonk:client:" + "b" * 64
+
 MAJOR = {
     "severity": "major",
     "title": "The lock is dropped too early",
@@ -46,6 +50,7 @@ class ReviewRig:
         self.test = test
         self.rig = Rig(test)
         self.ledger = FakeLedger()
+        self.ledger.handbacks_by = WORKER  # a worker over QUIC: the door names its client
         seed = self.rig.tmp / "seed"
         self.base = git("rev-parse", "HEAD", cwd=seed).strip()
         (seed / ".gitignore").write_text("*.tmp\n")
@@ -81,7 +86,17 @@ class ReviewRig:
         if not self.dispatcher:
             self.dispatcher = scratch_repo(self.test)
             wire(self.dispatcher)
+            self.trust(WORKER)
         return run_gonk(self.dispatcher, ["findings", str(number), *flags], self.ledger)
+
+    def trust(self, *workers: str) -> None:
+        """The dispatcher's own list of the workers it trusts."""
+        if not self.dispatcher:
+            self.dispatcher = scratch_repo(self.test)
+            wire(self.dispatcher)
+        (self.dispatcher / ".gonk" / "dispatcher.toml").write_text(
+            f"workers = {json.dumps(list(workers))}\n"
+        )
 
     def closed_with(self) -> list[str]:
         command = next(c for c, _ in self.ledger.calls if ":close " in c)
@@ -367,6 +382,145 @@ class TheDispatcherFiles(unittest.TestCase):
         self.assertIn(f"the hand-back by {author}", out)
 
 
+class OnlyAWorkersHandBackIsFiled(unittest.TestCase):
+    """Anyone who may comment can post a hand-back with a block, and `findings` files under the
+    dispatcher's authority, so the comment's author decides (ledger item 3070)."""
+
+    def setUp(self):
+        self.r = ReviewRig(self)
+        self.n = self.r.job()
+        self.r.ledger.items[self.n]["awaiting"] = "dispatcher"
+
+    def block(self, *findings: dict) -> str:
+        doc = {"base": self.r.base, "revision": self.r.head, "findings": list(findings)}
+        return f"Evidence: a review.\n\n```json\n{json.dumps(doc)}\n```\n"
+
+    def post(self, author: str, status: str | None, *findings: dict) -> None:
+        self.r.ledger.add_comment(self.n, self.block(*findings), author=author, status=status)
+
+    def filed(self) -> list[str]:
+        return [item["title"] for item in self.r.findings()]
+
+    def refused(self, *says: str, flags=("--close",)) -> str:
+        before = len(self.r.ledger.calls)
+        code, _, err = self.r.findings_command(self.n, *flags)
+        self.assertEqual(code, 2, err)
+        self.assertIn("filed nothing", err)
+        for text in says:
+            self.assertIn(text, err)
+        self.assertEqual(self.filed(), [])
+        self.assertEqual(self.r.ledger.closes, [])
+        calls = self.r.ledger.calls[before:]
+        self.assertEqual([c for c, _ in calls if not c.startswith("source ")], [])
+        return err
+
+    def test_a_trusted_workers_block_is_filed(self):
+        self.post(WORKER, "verified", MAJOR)
+        code, out, err = self.r.findings_command(self.n)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.filed(), [MAJOR["title"]])
+        self.assertIn(f"the hand-back by {WORKER}", out)
+
+    def test_the_older_spelling_of_a_client_is_the_same_client(self):
+        self.post("urn:iki:gonk:client:" + "a" * 64, "verified", MAJOR)
+        code, _, err = self.r.findings_command(self.n)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.filed(), [MAJOR["title"]])
+
+    def test_another_identity_files_nothing_and_gets_the_line_to_add(self):
+        self.post(STRANGER, "verified", MAJOR)
+        err = self.refused(STRANGER, "not trust", ".gonk/dispatcher.toml")
+        self.assertIn("workers = " + json.dumps([WORKER, STRANGER]), err)
+
+    def test_with_no_list_at_all_the_line_is_the_whole_file(self):
+        self.r.trust(WORKER)
+        (self.r.dispatcher / ".gonk" / "dispatcher.toml").unlink()
+        self.post(WORKER, "verified", MAJOR)
+        err = self.refused(WORKER, "not trust")
+        self.assertIn("workers = " + json.dumps([WORKER]), err)
+
+    def test_the_line_it_prints_works(self):
+        self.post(STRANGER, "verified", MINOR)
+        err = self.refused(STRANGER)
+        line = re.search(r"^.*?(workers = \[.*?\])", err, re.S).group(1)
+        (self.r.dispatcher / ".gonk" / "dispatcher.toml").write_text(line + "\n")
+        code, _, err = self.r.findings_command(self.n)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.filed(), [MINOR["title"]])
+
+    def test_an_unverified_author_is_never_trusted_even_when_listed(self):
+        # Over the socket `author=` is free text, and it may spell a listed client's IRI.
+        for status in ("claimed", "claimed by a delegate", None):
+            with self.subTest(status=status):
+                self.post(WORKER, status, MAJOR)
+                err = self.refused(WORKER, "did not verify")
+                self.assertNotIn("workers = ", err)
+
+    def test_a_free_text_author_is_named_on_one_line(self):
+        self.post("mallory\nfiled: all clear", "claimed", MAJOR)
+        err = self.refused("did not verify", "mallory")
+        self.assertNotIn("\nfiled: all clear", err)
+        self.assertNotIn("workers = ", err)
+
+    def test_an_authorless_comment_says_so(self):
+        self.r.ledger.items[self.n]["comments"].append(
+            {"time": "2026-11-04T00:00:00Z", "text": self.block(MAJOR)}
+        )
+        self.refused("did not record")
+
+    def test_a_block_it_does_not_trust_is_not_even_validated(self):
+        self.r.ledger.add_comment(
+            self.n, "Evidence: nothing here", author=STRANGER, status="verified"
+        )
+        err = self.refused(STRANGER, "not trust")
+        self.assertNotIn("malformed", err)
+
+    def test_a_later_trusted_hand_back_is_filed(self):
+        self.post(STRANGER, "verified", MINOR)
+        self.post(WORKER, "verified", MAJOR)
+        code, _, err = self.r.findings_command(self.n)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.filed(), [MAJOR["title"]])
+
+    def test_a_later_untrusted_hand_back_is_passed_over_and_named(self):
+        self.post(WORKER, "verified", MAJOR)
+        self.post(STRANGER, "verified", MINOR)
+        self.post("mallory", "claimed", MINOR)
+        code, _, err = self.r.findings_command(self.n, "--close")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.filed(), [MAJOR["title"]])
+        self.assertEqual(self.r.ledger.closes, [self.n])
+        self.assertIn(STRANGER, err)
+        self.assertIn("mallory", err)
+
+    def test_the_newest_trusted_hand_back_wins_and_an_older_block_is_not_fallen_back_on(self):
+        self.r.trust(WORKER, OTHER_WORKER)
+        self.post(WORKER, "verified", MAJOR)
+        self.r.ledger.add_comment(self.n, "Evidence: none", author=OTHER_WORKER, status="verified")
+        self.refused("malformed", "no ```json block")
+
+    def test_a_closed_job_is_read_by_the_same_rule(self):
+        self.post(STRANGER, "verified", MAJOR)
+        self.r.ledger.items[self.n]["status"] = "closed"
+        self.refused(STRANGER, "not trust")
+
+    def test_a_bad_list_files_nothing_and_says_where(self):
+        self.post(WORKER, "verified", MAJOR)
+        for text, says in (
+            ('workers = "x"', "a list"),
+            ('workers = ["hub"]', "'hub'"),
+            ('workers = ["urn:iki:host:gonk:client:<fingerprint>"]', "<fingerprint>"),
+            ("workers = [", "dispatcher.toml"),
+        ):
+            with self.subTest(text=text):
+                self.r.trust(WORKER)
+                (self.r.dispatcher / ".gonk" / "dispatcher.toml").write_text(text + "\n")
+                code, _, err = self.r.findings_command(self.n)
+                self.assertEqual(code, 2, err)
+                self.assertIn(says, err)
+                self.assertEqual(self.filed(), [])
+
+
 class WhatTheDispatcherRefuses(unittest.TestCase):
     def setUp(self):
         self.r = ReviewRig(self)
@@ -385,7 +539,7 @@ class WhatTheDispatcherRefuses(unittest.TestCase):
 
     def with_hand_back(self, text: str, **overrides) -> int:
         n = self.r.job(**overrides)
-        self.r.ledger.add_comment(n, text, author="someone")
+        self.r.ledger.add_comment(n, text, author=WORKER, status="verified")
         self.r.ledger.items[n]["awaiting"] = "dispatcher"
         return n
 
@@ -433,7 +587,9 @@ class WhatTheDispatcherRefuses(unittest.TestCase):
 
     def test_a_newer_hand_back_without_a_block_is_not_passed_over(self):
         n = self.with_hand_back(self.block(self.doc(MINOR)))
-        self.r.ledger.add_comment(n, "Evidence: https://example.org/report", author="someone")
+        self.r.ledger.add_comment(
+            n, "Evidence: https://example.org/report", author=WORKER, status="verified"
+        )
         self.refused(n, "no ```json block")
 
     def test_a_job_with_no_hand_back(self):
@@ -476,12 +632,24 @@ class AnOlderLedger(unittest.TestCase):
     def test_with_no_awaiting_state_the_prefix_is_the_hand_back(self):
         r = ReviewRig(self)
         r.ledger = FakeLedger(older_comment=True)
+        r.ledger.handbacks_by = WORKER
         n = r.job()
         outcome = r.run("--report", report(MINOR))
         self.assertEqual(outcome.code, worker.HANDED_BACK, outcome.summary)
         code, _, err = r.findings_command(n)
         self.assertEqual(code, 0, err)
         self.assertEqual(len(r.findings()), 1)
+
+    def test_with_no_attribution_nothing_is_verified_so_nothing_is_filed(self):
+        r = ReviewRig(self)
+        r.ledger = FakeLedger(older_comment=True)
+        n = r.job()
+        outcome = r.run("--report", report(MINOR))
+        self.assertEqual(outcome.code, worker.HANDED_BACK, outcome.summary)
+        code, _, err = r.findings_command(n)
+        self.assertEqual(code, 2, err)
+        self.assertIn("did not verify", err)
+        self.assertEqual(r.findings(), [])
 
 
 class Refusals(unittest.TestCase):
