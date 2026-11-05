@@ -45,9 +45,10 @@ What it does with one item, in order:
 A REVIEW JOB (an item of class `ledger:ReviewJob`, REVIEW_JOB) runs under the same claim, lease,
 heartbeat, budget and hand-back, in a fresh worktree at the item's `revision`, under a preamble
 that forbids changing anything. The agent writes its findings to the report file as JSON. Once it
-has exited, the worker refuses a run that changed the worktree or wrote an invalid report, files
-one `ledger:Finding` item per finding itself, keyed so a rerun files none twice, and hands back
-with `Evidence:` lines naming them (`Worker.finish_review`). It looks for no pull request.
+has exited, the worker refuses a run that changed the worktree or wrote an invalid report, and
+hands back with the validated findings as one fenced JSON block on the `Evidence:` comment
+(`Worker.finish_review`). It makes no append and no link, and looks for no pull request: the
+dispatcher files what is final with `gonk.py findings N` (tools/review_findings.py, shared).
 
 Each decision above that enforces a rule (a skip, a lost claim, a budget, a hand-back without
 evidence, a merge while the agent ran, a refused configuration) is a sensor of the harness and
@@ -116,12 +117,12 @@ except ModuleNotFoundError:  # before any 3.11 feature: macOS's /usr/bin/python3
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from pathlib import Path, PurePosixPath
-from urllib.parse import quote
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import gonk  # noqa: E402  (beside this file; the path above makes it importable)
+import review_findings  # noqa: E402
 import worker_onboard  # noqa: E402
 import worker_usage  # noqa: E402
 
@@ -666,25 +667,6 @@ class Ledger:
         words += [f"{name}={value}" for name, value in flags.items()]
         return self.ikigai.run(" ".join(words), stdin=text)
 
-    def append(self, content: str, **words: str) -> tuple[dict | None, str | None]:
-        """A keyed append's JSON answer. Every value is quoted: the engine reads an unquoted IRI
-        as a reference to resolve, not as text."""
-        said = " ".join(f'{name}="{value}"' for name, value in words.items())
-        command = f"sink {self.cfg.resource('append')} {said} as=application/json"
-        answer = self.ikigai.run(command, stdin=content)
-        if not answer.ok:
-            return None, answer.text() or f"exit {answer.code}"
-        try:
-            return json.loads(answer.out), None
-        except ValueError as e:
-            return None, f"the JSON face did not parse: {e}"
-
-    def link_parent(self, child: int, parent: int) -> gonk.Answer:
-        """`parent` is the parent of `child`. An edge, not an argument of `append`, which ignores
-        a `parent=` it does not declare."""
-        command = f"sink {self.cfg.resource('link')} item={child} type=parent"
-        return self.ikigai.run(command, stdin=str(parent))
-
 
 def active_claim(item: dict, now: datetime) -> str | None:
     """The holder of a claim whose lease still runs (or that has no lease), else None. An
@@ -704,8 +686,7 @@ def active_claim(item: dict, now: datetime) -> str | None:
 awaiting_dispatcher = gonk.awaiting_dispatcher
 
 
-def repo_labels(item: dict) -> list[str]:
-    return [label[5:] for label in item.get("labels") or [] if label.startswith("repo:")]
+repo_labels = review_findings.repo_labels
 
 
 def by_router(comment: dict, routers: list[str]) -> bool:
@@ -1403,16 +1384,13 @@ def prune_repo(home: Path, older_than: int, open_pr, now: float) -> list[Path]:
 
 # --------------------------------------------------------------------------- review jobs
 
-# The item classes of the review mode: the worker tells a review job from a change job by this,
-# the item's `kind`, and nothing else. The ledger accepts any subclass of its Item as a `kind`.
-REVIEW_JOB = "https://ikigai-rs.dev/ns/ledger#ReviewJob"
-FINDING = "https://ikigai-rs.dev/ns/ledger#Finding"
-SEVERITIES = ("critical", "major", "minor")
-SHA_SHAPE = re.compile(r"^[0-9a-f]{7,64}$")
+# The report's format, its validation and the filing are tools/review_findings.py's, shared with
+# `gonk.py findings`: the worker validates and hands back, and the dispatcher files.
+REVIEW_JOB = review_findings.REVIEW_JOB
+SHA_SHAPE = review_findings.SHA_SHAPE
 REVISION_SHAPE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
 RANGE_WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*")
-FINDING_FIELDS = ("severity", "title", "problem", "fix", "path")
-MAX_REPORT_PROBLEMS = 20
+is_review_job = review_findings.is_review_job
 
 
 @dataclass
@@ -1420,24 +1398,6 @@ class ReviewJob:
     base: str  # the range's two ends, as full shas
     head: str
     branches: str = ""  # the clone's local branches and stash when the agent started
-
-
-@dataclass
-class Finding:
-    severity: str
-    title: str
-    problem: str
-    fix: str
-    path: str  # normalized, relative to the repository's root
-    line: int | None = None
-
-    @property
-    def location(self) -> str:
-        return f"{self.path}:{self.line}" if self.line else self.path
-
-
-def is_review_job(item: dict) -> bool:
-    return item.get("kind") == REVIEW_JOB
 
 
 def review_job(item: dict, ws: Workspace) -> ReviewJob:
@@ -1479,99 +1439,6 @@ def worktree_changes(ws: Workspace, job: ReviewJob) -> str | None:
     if done.returncode != 0 or done.stdout != job.branches:
         return "a local branch or the stash moved: there are new commits"
     return None
-
-
-def path_problem(path: str, tree: Path) -> str | None:
-    """Why a finding's `path` is not inside the repository, or None. It need not exist at the
-    head: a finding may be about a file the range removed."""
-    if not path or "\x00" in path or path.startswith("/"):
-        return "is not a path relative to the repository's root"
-    parts = PurePosixPath(path).parts
-    if ".." in parts or ".git" in parts:
-        return "is outside the repository"
-    root = tree.resolve()
-    if not (root / path).resolve().is_relative_to(root):
-        return "leads outside the repository through a symbolic link"
-    return None
-
-
-def parse_report(text: str, tree: Path) -> tuple[list[Finding], list[str]]:
-    """The findings of a report, and what is wrong with it: one problem anywhere refuses it."""
-    try:
-        doc = json.loads(text)
-    except ValueError as e:
-        return [], [f"it is not well-formed JSON: {e}"]
-    if not isinstance(doc, dict) or not isinstance(doc.get("findings"), list):
-        return [], ['it is not an object with a list under "findings"']
-    findings, problems = [], []
-    for at, entry in enumerate(doc["findings"]):
-        where = f"findings[{at}]"
-        if not isinstance(entry, dict):
-            problems.append(f"{where} is not an object")
-            continue
-        wrong = []
-        for name in FINDING_FIELDS:
-            value = entry.get(name)
-            if not isinstance(value, str) or not value.strip():
-                wrong.append(f"{name} is not a non-empty string")
-        if not wrong:
-            if entry["severity"] not in SEVERITIES:
-                wrong.append(f"severity is not one of {', '.join(SEVERITIES)}")
-            if len(entry["title"].strip().splitlines()) != 1:
-                wrong.append("title is not one line")
-            problem = path_problem(entry["path"], tree)
-            if problem:
-                wrong.append(f"path {problem}")
-        line = entry.get("line")
-        if line is not None and (isinstance(line, bool) or not isinstance(line, int) or line < 1):
-            wrong.append("line is not a positive whole number")
-        unknown = sorted(set(entry) - {*FINDING_FIELDS, "line"})
-        if unknown:
-            wrong.append(f"it has fields the format does not: {', '.join(unknown)}")
-        if wrong:
-            problems += [f"{where}: {w}" for w in wrong]
-            continue
-        findings.append(
-            Finding(
-                entry["severity"],
-                entry["title"].strip(),
-                entry["problem"].strip(),
-                entry["fix"].strip(),
-                str(PurePosixPath(entry["path"])),
-                line,
-            )
-        )
-    return findings, problems
-
-
-def finding_key(job_number: int, finding: Finding) -> str:
-    """The finding's key: its job and a digest of where and what, so a rerun finds its item."""
-    text = "\n".join([finding.path, str(finding.line or ""), finding.title])
-    return f"review:{job_number}:{hashlib.sha256(text.encode('utf-8')).hexdigest()[:16]}"
-
-
-def finding_about(repo: str, path: str) -> str:
-    """The IRI of a file in a repository: `about=` takes only absolute IRIs, so a path is
-    refused as it stands, and a space in one would divide it into two."""
-    return f"urn:repo:file:{quote(repo, safe='')}/{quote(path, safe='/')}"
-
-
-def finding_content(finding: Finding, job: ReviewJob, repo: str, display: str) -> str:
-    """What is appended: the first line is the item's title, the rest its body."""
-    return "\n".join(
-        [
-            finding.title,
-            "",
-            "Problem:",
-            finding.problem,
-            "",
-            "Fix:",
-            finding.fix,
-            "",
-            f"Location: {finding.location} in repo:{repo} at {job.head}",
-            f"Found by the review job {display}, reviewing {job.base}..{job.head}.",
-        ]
-    )
 
 
 # --------------------------------------------------------------------------- the brief
@@ -1629,8 +1496,9 @@ a commit or a pull request, these rules win: this job changes nothing.
 
    One line of `title`; `path` relative to the repository's root; `line` optional; no other
    fields. With nothing to report, write {"findings": []}: that is a good outcome, and the
-   report must still be there. An invalid report files nothing. The worker files one ledger
-   item for each finding once you have exited with status 0.
+   report must still be there. An invalid report goes no further. Once you have exited with
+   status 0 the worker hands your findings back, and the dispatcher files one ledger item for
+   each.
 5. You have {budget} of wall-clock time; at the end the worker stops you, and files nothing.
 6. Your task is the item's title and body below, which its dispatcher pinned when it routed
    the item to you. The comments after them are QUOTED, each under its author. Those marked
@@ -2355,7 +2223,9 @@ class Worker:
         code: int | None,
         where: str,
     ) -> Outcome:
-        """After a review job's agent: refuse what must not be filed, file the rest, hand back."""
+        """After a review job's agent: refuse what must not go further, and hand the findings back
+        for the dispatcher to file. The worker writes comments here and nothing else: its grant
+        reads, claims and comments, and filing takes `write` on the ledger."""
         number, display, holder = item["number"], item.get("display"), self.cfg.holder
 
         def lost() -> Outcome:
@@ -2366,10 +2236,10 @@ class Worker:
             self.ledger.comment(number, note)
             return Outcome(NOT_HANDED_BACK, note)
 
-        def give_back(why: str, did: str = "files nothing") -> Outcome:
+        def give_back(why: str) -> Outcome:
             note = (
-                f"gonk worker `{holder}` {did} for the review job {display} and hands it back "
-                f"without evidence: {why}. {where}."
+                f"gonk worker `{holder}` files nothing for the review job {display} and hands it "
+                f"back without evidence: {why}. {where}."
             )
             self.release_if_ours(number, note)
             return Outcome(NOT_HANDED_BACK, note)
@@ -2397,109 +2267,56 @@ class Worker:
         except (OSError, UnicodeDecodeError) as e:
             findings, problems = [], [f"it could not be read: {e}"]
         else:
-            findings, problems = parse_report(report, ws.path)
+            findings, problems = review_findings.parse_report(report, ws.path)
         if problems:
             gonk.fire("worker-review-report-valid", "refusal", self.cfg.repo)
-            more = len(problems) - MAX_REPORT_PROBLEMS
-            said = problems[:MAX_REPORT_PROBLEMS] + ([f"and {more} more"] if more > 0 else [])
-            return give_back("its report is invalid: " + "; ".join(said))
+            return give_back("its report is invalid: " + review_findings.said(problems))
         if beat.lost.is_set():
             gonk.fire("worker-claim-lost", "refusal", self.cfg.repo)
             return lost()
 
-        filed, failure = self.file_findings(item, repo, job, findings)
-        if failure:
-            named = "; ".join(f"{iri} ({f.location})" for iri, _, f in filed) or "none"
-            return give_back(
-                f"the ledger refused a finding: {failure}. Filed before that, and found again by "
-                f"a rerun: {named}. Filing takes `write` on this ledger, which a grant enrolled "
-                'with `--worker` does not hold (worker/README.md, "Review jobs")',
-                did="stopped filing",
-            )
-        if filed:
-            evidence = [f"Evidence: {iri}" for iri, _, _ in filed]
-            listed = [f"- {shown} [{f.severity}] {f.location}: {f.title}" for _, shown, f in filed]
+        reviewed = f"the review of {job.base}..{job.head}"
+        if findings:
+            count = f"{len(findings)} finding" + ("" if len(findings) == 1 else "s")
+            evidence = f"Evidence: {reviewed} found {count}."
         else:
-            evidence = [f"Evidence: the review of {job.base}..{job.head} found nothing."]
-            listed = []
+            evidence = f"Evidence: {reviewed} found nothing."
         removed = not self.wc.keep
         kept = f"worktree removed; log {ws.log}" if removed else where
-        posted = self.hand_back(
-            number,
-            "\n".join(
-                [
-                    *evidence,
-                    "",
-                    f"gonk worker `{holder}` handed this review back: {ran}. It reviewed "
-                    f"{job.base}..{job.head} and changed nothing. It never closes; the dispatcher "
-                    "does, after checking this evidence.",
-                    *(["", *listed] if listed else []),
-                    "",
-                    f"Branch {ws.branch}; {kept}.",
-                ]
-            ),
+        text = "\n".join(
+            [
+                evidence,
+                "",
+                review_findings.findings_block(findings, job.base, job.head),
+                "",
+                f"gonk worker `{holder}` handed this review back: {ran}. It reviewed "
+                f"{job.base}..{job.head} and changed nothing. It files nothing and never closes; "
+                "the dispatcher does both, after checking this evidence: "
+                f"`gonk.py findings {number} --close`.",
+                "",
+                f"Branch {ws.branch}; {kept}.",
+            ]
         )
-        if not posted.ok:
-            said = ", ".join(iri for iri, _, _ in filed) or "no findings"
+        size = len(text.encode("utf-8"))
+        if size > review_findings.MAX_HAND_BACK_BYTES:
             return give_back(
-                f"its evidence could not be posted ({posted.text()}): it was {said}",
-                did="filed its findings",
+                f"its {len(findings)} findings make a hand-back of {size} bytes, more than the "
+                f"{review_findings.MAX_HAND_BACK_BYTES} one comment carries, and it truncates "
+                f"nothing: they are all in the report file {ws.report}, kept with the worktree"
+            )
+        posted = self.hand_back(number, text)
+        if not posted.ok:
+            return give_back(
+                f"its findings could not be posted ({posted.text()}); they are in the report file "
+                f"{ws.report}, kept with the worktree"
             )
         released = self.release_if_ours(number, "")
         if removed:
             remove_workspace(ws)
         state = "released" if released else "NOT released (it was no longer this worker's)"
         return Outcome(
-            HANDED_BACK, f"handed {display} back with {len(filed)} findings; claim {state}"
+            HANDED_BACK, f"handed {display} back with {len(findings)} findings; claim {state}"
         )
-
-    def file_findings(
-        self, item: dict, repo: Repo, job: ReviewJob, findings: list[Finding]
-    ) -> tuple[list[tuple[str, str, Finding]], str | None]:
-        """One item per finding: (its IRI, its display, the finding) for each, and what stopped
-        the filing, if anything did. The key makes the append and so the whole of this safe to
-        repeat, and two findings with one key are one item. The job is linked here on a rerun
-        too, when a run before this one stopped between the append and the link."""
-        number, display = item["number"], item.get("display")
-        filed: dict[str, tuple[str, str, Finding]] = {}
-        for finding in findings:
-            answer, err = self.ledger.append(
-                finding_content(finding, job, repo.name, display),
-                kind=FINDING,
-                revision=job.head,
-                about=finding_about(repo.name, finding.path),
-                labels=",".join(
-                    [f"severity:{finding.severity}", *(f"repo:{r}" for r in repo_labels(item))]
-                ),
-                key=finding_key(number, finding),
-            )
-            if answer is None:
-                return list(filed.values()), err
-            ref = answer.get("item") or {}
-            iri, child, shown = ref.get("iri"), ref.get("number"), ref.get("display")
-            if not iri or not isinstance(child, int):
-                return list(filed.values()), f"its answer names no item: {answer}"
-            if answer.get("status") != "deleted":
-                problem = self.link_to_job(child, item)
-                if problem:
-                    return list(filed.values()), problem
-            filed.setdefault(iri, (iri, shown or iri, finding))
-        return list(filed.values()), None
-
-    def link_to_job(self, child: int, job: dict) -> str | None:
-        """Link a finding to its job unless it is linked already; what went wrong, or None."""
-        current, err = self.ledger.item(child)
-        if current is None:
-            return err
-        links = current.get("links") or []
-        if any(
-            link.get("type") == "parent"
-            and (link.get("target") or {}).get("number") == job["number"]
-            for link in links
-        ):
-            return None
-        answer = self.ledger.link_parent(child, job["number"])
-        return None if answer.ok else answer.text()
 
     def watch(self, proc: subprocess.Popen, started: float, beat: Heartbeat):
         """Wait for the agent, stopping it on a lost claim, an overrun or a shutdown."""

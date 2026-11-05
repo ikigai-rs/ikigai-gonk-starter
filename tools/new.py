@@ -66,6 +66,7 @@ STARTER_FILES = [
     "skills/skimmable-text/sets.py",
     "tools/gonk.py",
     "tools/harness.py",
+    "tools/review_findings.py",
     "hooks/claude/README.md",
     "hooks/claude/require-claim.py",
     "hooks/claude/settings.sample.json",

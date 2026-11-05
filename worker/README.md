@@ -1212,8 +1212,9 @@ section).
 
 A review job asks an agent to read a range of commits and say what is wrong with it. It has the
 same claim, lease, heartbeat, budget and hand-back as a change job, and the same routing
-(`worker:pool`, `agent:*`, `repo:*`, a router's dispatch). The agent files nothing: it writes a
-report, and the worker files the items, so the rule that agents never file items holds.
+(`worker:pool`, `agent:*`, `repo:*`, a router's dispatch). The agent files nothing and neither does
+the worker: the agent writes a report, the worker validates it and carries it on its hand-back, and
+the dispatcher, who already closes with the evidence, files what is final.
 
 **What a review job is.** An item whose class (its `kind`) is
 `https://ikigai-rs.dev/ns/ledger#ReviewJob`, whose `revision` is the head, and whose body names
@@ -1240,8 +1241,8 @@ around it; change nothing, commit nothing, push nothing, open no pull request, f
 exist at the head, since a finding may be about a file the range removed. An empty list means the
 review found nothing. The report must be there either way.
 
-**What the worker refuses.** Each of these files nothing, keeps the worktree, and hands the job
-back without evidence, saying why in a comment:
+**What the worker refuses.** Each of these keeps the worktree and hands the job back without
+evidence or findings, saying why in a comment:
 
 - a job with no usable `revision`, or whose body names no range ending at it (before any agent runs);
 - an agent that ran out of budget, was stopped, or exited other than 0: a report written before a
@@ -1256,7 +1257,23 @@ These checks read what is on this machine. A push straight to a URL, or a write 
 through the machine's own identity, leaves nothing here to see: as with never merging, the
 preamble forbids them, and only the repository's and the grant's own limits can stop them.
 
-**What the worker files.** One item per finding on the job's ledger, by keyed `append`:
+**The hand-back.** As for a change job (`handback=true`), with no pull request expected and none
+looked for, and the worktree removed. The comment starts with one `Evidence:` line, saying how many
+findings there are or `Evidence: the review of <base>..<head> found nothing.`, followed by one fenced
+`json` block in the report's format, with the range, and an empty list when there is nothing:
+
+    {"base": "<base's full sha>", "revision": "<head's full sha>", "findings": [...]}
+
+The worker makes no append and no link. A hand-back over 64 KiB, this tool's own bound, is never
+truncated: the job goes back without evidence, saying so, and the report file stays with the kept
+worktree. So does a comment the ledger refuses. The prune removes both once they age out
+(`[disk] prune_after`).
+
+**What the dispatcher files.** `python3 tools/gonk.py findings N` reads job N's latest hand-back,
+validates its block by the worker's rules (`tools/review_findings.py`; the one rule it cannot check
+is a symbolic link, which takes the worktree), and prints each finding's number and IRI. A
+malformed or missing block files nothing and says why, and so does a job that is not a review job
+or whose hand-back has been answered. One item per finding on the job's ledger, by keyed `append`:
 
 | field | value |
 | --- | --- |
@@ -1271,19 +1288,19 @@ preamble forbids them, and only the repository's and the grant's own limits can 
 
 A rerun appends the same keys, so it finds the existing items and files none twice; it also links
 one that a stopped run left without its parent. Two findings with the same path, line and title
-are one item.
+are one item. If the ledger refuses a finding part way, the command prints what was filed, says what
+stopped it, exits 1 and does not close; a rerun finds those.
 
-**The hand-back.** As for a change job (`handback=true`), with one `Evidence:` line per finding
-naming its item's IRI, or `Evidence: the review of <base>..<head> found nothing.`, and the worktree
-removed. No pull request is expected and none is looked for. If the ledger refuses a finding part
-way, the job goes back without evidence, naming what was filed; a rerun finds those.
+`--close` then closes the job with reason `done` and `--evidence` naming each finding's IRI. A review
+that found nothing has no IRI to name, so its close carries no structured evidence and the note says
+it found nothing. The block is what the job's hand-back says, and anyone who can comment on the job
+can write such a comment, so the command prints whose hand-back it read: check it, as with any
+evidence, before you file.
 
-**The grant.** `append` and `link` both take `urn:cap:ledger:write:<ledger>`, and a certificate
-enrolled with `--worker <ledger>` holds only the claim and comment verbs, so the ledger refuses
-its findings. A loop that takes review jobs needs a grant with `write`, which also lets it close
-and relabel, and the agent runs under the same identity. Decide that per machine before routing
-review jobs there; until then, a job sent to a `--worker` machine comes back saying the ledger
-refused, having cost one agent's run.
+**The grant.** A worker's grant is unchanged: `--worker <ledger>` reads, claims and comments, and
+that is all a review job needs of it. `append` and `link` take `urn:cap:ledger:write:<ledger>`, which
+would also let a worker close and relabel, so they stay with the dispatcher, whose identity already
+holds it for closing. The same decision as for pull request aliases.
 
 ## Files
 

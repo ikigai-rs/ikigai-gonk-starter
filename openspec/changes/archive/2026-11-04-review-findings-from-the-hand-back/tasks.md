@@ -1,0 +1,3 @@
+- [x] 1. Carry validated findings on the review hand-back, with no ledger write (A review hands back with its findings on the comment)
+- [x] 2. Add `gonk.py findings N [--close]` over a shared validator (The dispatcher files one item per finding; The dispatcher closes a review on its findings)
+- [x] 3. Say who files in the README, AGENTS.md, the harness guide and this spec (A review hands back with its findings on the comment)
