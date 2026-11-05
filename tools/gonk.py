@@ -2340,8 +2340,12 @@ def cmd_findings(args, cfg: Config, make_ikigai) -> int:
     write that comment, and this files under the dispatcher's authority, so a hand-back counts only
     when gonk verified its author and that author is in `trusted_workers`; the block is then
     validated again by the same rules. A newer hand-back by anyone else is passed over and named,
-    so a comment can neither file findings nor stop a worker's being filed. Safe to repeat: the
-    items are keyed."""
+    so a comment can neither file findings nor stop a worker's being filed. A reject can stop it,
+    and anyone's counts (`review_findings.rejections`): a hand-back a comment's `rejects` names is
+    never filed, and since an older block is never fallen back on, a rejected latest trusted
+    hand-back files nothing until the worker hands back again. That holds after a dispatcher's
+    ordinary comment on an awaiting job too, which the ledger records as a reject. Safe to repeat:
+    the items are keyed."""
     need(cfg, "ledger", "target")
     if review_findings is None:
         raise ConfigError("`findings` needs tools/review_findings.py beside tools/gonk.py")
@@ -2357,22 +2361,43 @@ def cmd_findings(args, cfg: Config, make_ikigai) -> int:
     if not review_findings.is_review_job(job):
         raise nothing(f"it is not a review job (its kind is {job.get('kind')})")
     is_open = job.get("status", "open") == "open"
-    if is_open and not awaiting_dispatcher(job):
-        raise nothing(
-            "it is not awaiting its dispatcher: no worker has handed it back, or the last "
-            "hand-back was answered, so there is no hand-back to file from"
-        )
+    not_awaiting = nothing(
+        "it is not awaiting its dispatcher: no worker has handed it back, or the last "
+        "hand-back was answered, so there is no hand-back to file from"
+    )
+    answered = is_open and not awaiting_dispatcher(job)
+    rejected = review_findings.rejections(job)
+    if answered and not rejected:
+        raise not_awaiting
     workers = trusted_workers(cfg)
     found = review_findings.hand_backs(job)
+    trusted = [at for at, c in enumerate(found) if verified_author(c) in workers]
+    rejecter = rejected.get(found[trusted[-1]].get("id")) if trusted else None
+    if rejecter:
+        raise nothing(
+            f"its latest trusted hand-back was rejected by the comment {rejecter.get('id')}, by "
+            f"{json.dumps(rejecter.get('author'))} at {rejecter.get('time')}; have the worker "
+            "hand back again"
+        )
+    if answered:
+        raise not_awaiting
     if not found:
         raise nothing("it has no hand-back")
-    trusted = [at for at, c in enumerate(found) if verified_author(c) in workers]
     if not trusted:
         raise nothing("its latest hand-back " + why_untrusted(found[-1], workers))
     comment = found[trusted[-1]]
+    cannot_tell = (
+        ""
+        if rejected
+        else "; a ledger older than ikigai-ledger PR 87 cannot tell rejected hand-backs apart "
+        "until it is upgraded, so check that you did not reject the one filed"
+    )
     for newer in found[trusted[-1] + 1 :]:
         why = why_untrusted(newer, workers)
-        print(f"warning: {name}: passed over a newer hand-back, which {why}", file=sys.stderr)
+        print(
+            f"warning: {name}: passed over a newer hand-back, which {why}{cannot_tell}",
+            file=sys.stderr,
+        )
     review, problems = review_findings.parse_hand_back(comment.get("text"), job.get("revision"))
     if review is None:
         raise nothing(

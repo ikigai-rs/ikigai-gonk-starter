@@ -521,6 +521,172 @@ class OnlyAWorkersHandBackIsFiled(unittest.TestCase):
                 self.assertEqual(self.filed(), [])
 
 
+class ARejectedHandBackIsNotFiled(unittest.TestCase):
+    """A reject records the hand-backs it turned down (`rejects`, ikigai-ledger PR 87), and a new
+    hand-back makes the job read as awaiting again, whoever posts it (ledger item 3158)."""
+
+    def setUp(self):
+        self.r = ReviewRig(self)
+        self.n = self.r.job()
+
+    def hand_back(self, author: str, *findings: dict, status: str = "verified") -> str:
+        doc = {"base": self.r.base, "revision": self.r.head, "findings": list(findings)}
+        text = f"Evidence: a review.\n\n```json\n{json.dumps(doc)}\n```\n"
+        self.r.ledger.items[self.n]["awaiting"] = "dispatcher"
+        return self.r.ledger.add_comment(self.n, text, author=author, status=status)
+
+    def reject(self, *named: str, author: str = "urn:dispatcher", status="verified") -> str:
+        self.r.ledger.items[self.n]["awaiting"] = None
+        return self.r.ledger.add_comment(
+            self.n, "That is not it.", author=author, status=status, rejects=list(named)
+        )
+
+    def filed(self) -> list[str]:
+        return [item["title"] for item in self.r.findings()]
+
+    def refused(self, flags=("--close",)) -> str:
+        before = len(self.r.ledger.calls)
+        code, _, err = self.r.findings_command(self.n, *flags)
+        self.assertEqual(code, 2, err)
+        self.assertEqual(self.filed(), [])
+        self.assertEqual(self.r.ledger.closes, [])
+        calls = self.r.ledger.calls[before:]
+        self.assertEqual([c for c, _ in calls if not c.startswith("source ")], [])
+        return err
+
+    def test_a_rejected_block_followed_by_someone_elses_hand_back_is_not_filed(self):
+        rejecter = self.reject(self.hand_back(WORKER, MAJOR))
+        self.hand_back(STRANGER, MINOR)
+        err = self.refused()
+        self.assertIn(rejecter, err)
+
+    def test_a_rejected_block_followed_by_the_workers_new_hand_back_files_the_new_one(self):
+        self.reject(self.hand_back(WORKER, MAJOR))
+        self.hand_back(WORKER, MINOR)
+        code, _, err = self.r.findings_command(self.n)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.filed(), [MINOR["title"]])
+
+    def test_a_reject_naming_two_hand_backs_skips_both(self):
+        self.r.trust(WORKER, OTHER_WORKER)
+        rejecter = self.reject(self.hand_back(WORKER, MAJOR), self.hand_back(OTHER_WORKER, MINOR))
+        self.hand_back(STRANGER, MINOR)
+        self.assertIn(rejecter, self.refused())
+
+    def test_an_ordinary_comment_that_recorded_rejects_blocks_filing_until_a_new_hand_back(self):
+        rejecter = self.reject(self.hand_back(WORKER, MAJOR))
+        self.r.ledger.items[self.n]["comments"][-1]["text"] = "Looks fine, closing soon."
+        self.assertIn(rejecter, self.refused())
+        self.hand_back(WORKER, MAJOR)
+        code, _, err = self.r.findings_command(self.n, "--close")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.filed(), [MAJOR["title"]])
+        self.assertEqual(self.r.ledger.closes, [self.n])
+
+    def test_the_refusal_is_one_plain_sentence(self):
+        rejecter = self.reject(self.hand_back(WORKER, MAJOR))
+        when = self.r.ledger.items[self.n]["comments"][-1]["time"]
+        self.hand_back(STRANGER, MINOR)
+        display = self.r.ledger.items[self.n]["display"]
+        self.assertEqual(
+            self.refused().strip(),
+            f"gonk.py: {display}: filed nothing: its latest trusted hand-back was rejected by the "
+            f'comment {rejecter}, by "urn:dispatcher" at {when}; have the worker hand back again',
+        )
+
+    def test_it_says_the_same_with_no_new_hand_back(self):
+        # The plainest case: rejected, and nothing since, so the job is not awaiting either.
+        rejecter = self.reject(self.hand_back(WORKER, MAJOR))
+        err = self.refused()
+        self.assertIn(rejecter, err)
+        self.assertIn("have the worker hand back again", err)
+
+    def test_a_reject_counts_whoever_posted_it(self):
+        # It can only stop a filing, so a stray one costs a re-hand-back and nothing more.
+        for who, status in ((STRANGER, "verified"), ("mallory\nall clear", "claimed")):
+            with self.subTest(who=who):
+                self.r = ReviewRig(self)
+                self.n = self.r.job()
+                rejecter = self.reject(self.hand_back(WORKER, MAJOR), author=who, status=status)
+                self.hand_back(STRANGER, MINOR)
+                err = self.refused()
+                self.assertIn(rejecter, err)
+                self.assertEqual(len(err.strip().splitlines()), 1, err)
+
+    def test_a_reject_of_someone_elses_hand_back_stops_nothing_of_the_workers(self):
+        self.reject(self.hand_back(STRANGER, MINOR))
+        self.hand_back(WORKER, MAJOR)
+        code, _, err = self.r.findings_command(self.n)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.filed(), [MAJOR["title"]])
+
+    def test_a_job_whose_only_hand_backs_are_rejected_and_untrusted_names_their_author(self):
+        self.reject(self.hand_back(STRANGER, MINOR))
+        self.hand_back(STRANGER, MINOR)
+        self.assertIn("not trust", self.refused())
+
+    def test_an_older_block_is_not_fallen_back_on_when_the_newer_one_was_rejected(self):
+        # PR 87's gap: a hand-back nobody held, written before its mark, is one no reject names.
+        self.hand_back(WORKER, MINOR)
+        rejecter = self.reject(self.hand_back(WORKER, MAJOR))
+        self.hand_back(STRANGER, MINOR)
+        self.assertIn(rejecter, self.refused())
+
+    def test_a_closed_job_is_read_by_the_same_rule(self):
+        rejecter = self.reject(self.hand_back(WORKER, MAJOR))
+        self.r.ledger.items[self.n]["status"] = "closed"
+        self.assertIn(rejecter, self.refused())
+
+    def test_the_warning_says_nothing_of_upgrading_once_the_ledger_has_shown_rejects(self):
+        self.reject(self.hand_back(WORKER, MINOR))
+        self.hand_back(WORKER, MAJOR)
+        self.hand_back(STRANGER, MINOR)
+        code, _, err = self.r.findings_command(self.n)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.filed(), [MAJOR["title"]])
+        self.assertIn("passed over a newer hand-back", err)
+        self.assertNotIn("upgraded", err)
+
+
+class ALedgerWithNoRejects(unittest.TestCase):
+    """Older than ikigai-ledger PR 87, no comment has the key: as before, and the warning says so
+    (ledger item 3158). Nothing is inferred from a comment's words."""
+
+    def setUp(self):
+        self.r = ReviewRig(self)
+        self.n = self.r.job()
+
+    def post(self, author: str, *findings: dict) -> None:
+        doc = {"base": self.r.base, "revision": self.r.head, "findings": list(findings)}
+        text = f"Evidence: a review.\n\n```json\n{json.dumps(doc)}\n```\n"
+        self.r.ledger.add_comment(self.n, text, author=author, status="verified")
+        self.r.ledger.items[self.n]["awaiting"] = "dispatcher"
+
+    def test_the_newest_trusted_block_is_filed_and_the_warning_says_what_it_cannot_tell(self):
+        self.post(WORKER, MAJOR)
+        self.r.ledger.add_comment(self.n, "Rejected: that is not it.", author="urn:dispatcher")
+        self.post(STRANGER, MINOR)
+        code, _, err = self.r.findings_command(self.n)
+        self.assertEqual(code, 0, err)
+        self.assertEqual([i["title"] for i in self.r.findings()], [MAJOR["title"]])
+        self.assertIn("passed over a newer hand-back", err)
+        self.assertIn(STRANGER, err)
+        self.assertIn("cannot tell rejected hand-backs apart until it is upgraded", err)
+
+    def test_with_nothing_passed_over_there_is_no_warning(self):
+        self.post(WORKER, MAJOR)
+        code, _, err = self.r.findings_command(self.n)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(err, "")
+
+    def test_a_job_not_awaiting_is_refused_as_before(self):
+        self.post(WORKER, MAJOR)
+        self.r.ledger.items[self.n]["awaiting"] = None
+        code, _, err = self.r.findings_command(self.n)
+        self.assertEqual(code, 2, err)
+        self.assertIn("not awaiting its dispatcher", err)
+
+
 class WhatTheDispatcherRefuses(unittest.TestCase):
     def setUp(self):
         self.r = ReviewRig(self)
