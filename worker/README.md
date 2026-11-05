@@ -1269,8 +1269,30 @@ truncated: the job goes back without evidence, saying so, and the report file st
 worktree. So does a comment the ledger refuses. The prune removes both once they age out
 (`[disk] prune_after`).
 
-**What the dispatcher files.** `python3 tools/gonk.py findings N` reads job N's latest hand-back,
-validates its block by the worker's rules (`tools/review_findings.py`; the one rule it cannot check
+**Only a worker's hand-back is filed.** Anyone who may comment on a job can post a comment that
+looks like a hand-back, and `findings` files under the dispatcher's authority, so it files a block
+only when gonk verified the comment's author and the dispatcher lists that author as a worker. The
+list is the dispatcher's own, in `.gonk/dispatcher.toml`, git-ignored like `.gonk/local.toml`, so a
+pull request cannot widen it:
+
+    workers = ["urn:iki:host:gonk:client:<sha256 fingerprint>"]
+
+No door of gonk says which clients are workers (`ikigai-gonk client list`, on gonk's own machine,
+shows the fingerprints and their grants), so the list is kept by hand. A refused hand-back files
+nothing and names its author; when gonk verified that author, the refusal prints the `workers` line
+to use, which is also how a new worker gets on the list once you have checked that it is yours. An
+author gonk did not verify is never trusted, whatever it spells and whatever the list says: a
+free-text author, as over the owner's socket, or a delegate's or an importer's claim. So a worker
+whose review jobs are to be filed hands back over QUIC, with its own enrolled client.
+
+The newest hand-back still wins, among trusted ones. A newer one by anyone else is passed over with
+a warning that names its author, so a comment can neither file findings nor stop a worker's from
+being filed. ⚠ The ledger's JSON does not say which comment rejected a hand-back. Once a job is
+rejected only a new hand-back makes `findings` read it again, and if that one is by someone
+untrusted, the rejected hand-back is what gets filed: the warning is your cue to `reject` it again.
+
+**What the dispatcher files.** `python3 tools/gonk.py findings N` reads job N's latest trusted
+hand-back, validates its block by the worker's rules (`tools/review_findings.py`; the one rule it cannot check
 is a symbolic link, which takes the worktree), and prints each finding's number and IRI. A
 malformed or missing block files nothing and says why, and so does a job that is not a review job
 or whose hand-back has been answered. One item per finding on the job's ledger, by keyed `append`:

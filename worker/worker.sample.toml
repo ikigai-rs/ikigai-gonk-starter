@@ -68,7 +68,8 @@ preset = "claude"
 
 # Review jobs (worker/README.md, "Review jobs") need no setting here, and no more of the ledger
 # than change jobs: the worker hands the findings back on a comment, and the dispatcher files them
-# with `gonk.py findings N`. A grant enrolled with `--worker` is enough.
+# with `gonk.py findings N`. A grant enrolled with `--worker` is enough. The dispatcher lists this
+# worker's client in its own .gonk/dispatcher.toml, not here.
 
 # Usage against the plan's weekly limit, read between items at most once an hour and posted as a
 # comment on a standing status item (tools/worker_usage.py). No agent CLI documents a

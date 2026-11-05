@@ -14,6 +14,8 @@ Configuration is files and flags, never environment variables:
                       generated it with; `init` and `status` report them
   .gonk/local.toml    per working tree, git-ignored: how this machine reaches gonk, and
                       the holder name this working tree claims under
+  .gonk/dispatcher.toml  per working tree, git-ignored: the workers whose hand-backs
+                      `findings` files
   .gonk/state/        per working tree, git-ignored: the claim this tree holds, and the
                       harness firing log (tools/harness.py)
   .gonk/harness/      committed: this process's harness graph and its vocabulary
@@ -2276,11 +2278,70 @@ def close_item(
     return code
 
 
+DISPATCHER_TOML = Path(".gonk") / "dispatcher.toml"
+
+
+def trusted_workers(cfg: Config) -> list[str]:
+    """The `workers` of `.gonk/dispatcher.toml`: the principals whose hand-backs `findings` files.
+    The dispatcher's own list, because no door of gonk lists its enrolled clients or their
+    authority: `ikigai-gonk client list` reads files on gonk's own machine. Not `.gonk/local.toml`,
+    which `init` rewrites, and not committed, so a pull request cannot widen it."""
+    where = cfg.repo / DISPATCHER_TOML
+    entries = read_toml(where).get("workers", [])
+    if not isinstance(entries, list) or not all(isinstance(e, str) for e in entries):
+        raise ConfigError(f"{where}: workers is a list of principal IRIs")
+    workers = []
+    for entry in entries:
+        form = principal_form(entry)
+        if form is None:
+            raise ConfigError(
+                f"{where}: workers has {entry!r}, which is not a principal gonk names "
+                f"({', '.join(p + '…' for p in PRINCIPAL_PREFIXES)})"
+            )
+        workers.append(form)
+    return list(dict.fromkeys(workers))
+
+
+def verified_author(comment: dict) -> str | None:
+    """The comment's author as a principal, when the ledger says it is the principal the door
+    stamped (`attribution.author_status`, ikigai-ledger 0.15.0), or None. The shape alone proves
+    nothing: over the socket `author=` is free text, which may spell any client's IRI, and a
+    delegate's or an importer's author is a claim."""
+    attribution = comment.get("attribution")
+    if not isinstance(attribution, dict) or attribution.get("author_status") != "verified":
+        return None
+    return principal_form(comment.get("author") or "")
+
+
+def why_untrusted(comment: dict, workers: list[str]) -> str:
+    """Who posted a hand-back that is not filed, why, and how to trust it if it should be. The
+    author of an unverified comment is anyone's text, so it is quoted onto one line; a verified
+    one is a principal, whose shape holds nothing that could break the line printed to copy."""
+    author = verified_author(comment)
+    if author is not None:
+        line = "workers = " + json.dumps([*workers, author])
+        return (
+            f"was posted by {author}, which this dispatcher does not trust as a worker; if it is "
+            f"one, make this the `workers` line of {DISPATCHER_TOML.as_posix()}: {line}"
+        )
+    named = comment.get("author")
+    who = json.dumps(named) if named else "an author the ledger did not record"
+    return (
+        f"was posted by {who}, and gonk did not verify that author, so it is never trusted; if "
+        "it is a worker, have it hand back over QUIC with its own enrolled client, which gonk "
+        f"then names, and list that client in {DISPATCHER_TOML.as_posix()}"
+    )
+
+
 def cmd_findings(args, cfg: Config, make_ikigai) -> int:
-    """The dispatcher's end of a review job: file what its latest hand-back found, and with
-    `--close` close the job on them. The worker cannot file (its grant reads, claims and comments),
-    so it carries the findings on its hand-back, and this validates them again by the same rules:
-    anyone who can comment can write that comment. Safe to repeat: the items are keyed."""
+    """The dispatcher's end of a review job: file what the latest hand-back by a trusted worker
+    found, and with `--close` close the job on them. The worker cannot file (its grant reads,
+    claims and comments), so it carries the findings on its hand-back. Anyone who can comment can
+    write that comment, and this files under the dispatcher's authority, so a hand-back counts only
+    when gonk verified its author and that author is in `trusted_workers`; the block is then
+    validated again by the same rules. A newer hand-back by anyone else is passed over and named,
+    so a comment can neither file findings nor stop a worker's being filed. Safe to repeat: the
+    items are keyed."""
     need(cfg, "ledger", "target")
     if review_findings is None:
         raise ConfigError("`findings` needs tools/review_findings.py beside tools/gonk.py")
@@ -2301,12 +2362,22 @@ def cmd_findings(args, cfg: Config, make_ikigai) -> int:
             "it is not awaiting its dispatcher: no worker has handed it back, or the last "
             "hand-back was answered, so there is no hand-back to file from"
         )
-    comment = review_findings.latest_hand_back(job)
-    if comment is None:
+    workers = trusted_workers(cfg)
+    found = review_findings.hand_backs(job)
+    if not found:
         raise nothing("it has no hand-back")
+    trusted = [at for at, c in enumerate(found) if verified_author(c) in workers]
+    if not trusted:
+        raise nothing("its latest hand-back " + why_untrusted(found[-1], workers))
+    comment = found[trusted[-1]]
+    for newer in found[trusted[-1] + 1 :]:
+        why = why_untrusted(newer, workers)
+        print(f"warning: {name}: passed over a newer hand-back, which {why}", file=sys.stderr)
     review, problems = review_findings.parse_hand_back(comment.get("text"), job.get("revision"))
     if review is None:
-        raise nothing("its latest hand-back is malformed: " + review_findings.said(problems))
+        raise nothing(
+            "its latest trusted hand-back is malformed: " + review_findings.said(problems)
+        )
     print(f"{name}: the hand-back by {comment.get('author')} at {comment.get('time')}")
     filed, failure = review_findings.file_findings(ikigai, cfg, job, review)
     for found in filed:
