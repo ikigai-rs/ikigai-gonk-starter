@@ -1284,8 +1284,34 @@ def need(cfg: Config, *what: str) -> None:
         raise ConfigError("\n".join(missing))
 
 
+# The ikigai-gonk revision that first serves a deployment's own pages (`gonk.face`,
+# ikigai-gonk PR 295, ledger item 3199). faces/README.md says what a face may do.
+FACES_GONK_REVISION = "e08ac9f"
+
+
+def face_line(repo: Path, name: str) -> str:
+    """The `gonk.face` line for gonk's config.toml serving faces/<name> of this repository."""
+    root = repo / "faces"
+    known = (
+        sorted(d.name for d in root.iterdir() if (d / "index.html").is_file())
+        if root.is_dir()
+        else []
+    )
+    if name not in known:
+        raise ConfigError(
+            f"no face {name!r} in {root}: this repository has {', '.join(known) or 'none'}"
+        )
+    return f'gonk.face = "{name} {(root / name).resolve()}"'
+
+
 def cmd_init(args, cfg: Config, make_ikigai) -> int:
     repo = cfg.repo
+    if getattr(args, "face", None):
+        print(
+            f"add to gonk's config.toml (ikigai-gonk {FACES_GONK_REVISION} or later), "
+            "then restart gonk:"
+        )
+        print(f"  {face_line(repo, args.face)}")
     # 1. Write what the flags say, before anything is checked, so a re-run converges.
     if args.ledger is not None:
         problem = ledger_problem(args.ledger)
@@ -2674,6 +2700,7 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--quic", help="a remote gonk's QUIC door, quic://host:port")
     s.add_argument("--cert-dir", help="this machine's client certificate and gonk's server.crt")
     s.add_argument("--holder", help="the name this working tree claims under")
+    s.add_argument("--face", help="print the gonk.face line serving faces/<name> (faces/README.md)")
     s.set_defaults(run=cmd_init)
 
     s = sub.add_parser("file", help="file a ledger item")

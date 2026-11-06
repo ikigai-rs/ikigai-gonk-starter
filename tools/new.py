@@ -15,6 +15,7 @@ The result is a repository that works the way this starter teaches: AGENTS.md an
   .gonk/queries/          saved SPARQL over the ledger and the spec graph
   .gonk/scripts/          a workflow script (a plan): next, for one artifact
   .gonk/harness/          the process's rules and sensors as a graph (tools/harness.py)
+  faces/                  a deployment's own pages for gonk: a template and four samples
   tools/worker.py         the worker loop, for a machine that takes items unattended
   ACCESSIBILITY.md        what the project shows people and how it is tested, to grow with it
 
@@ -393,6 +394,9 @@ def generate(dest: Path, target: str, process: list[str] | None = None) -> list[
         raise SystemExit(f"new.py: {dest} exists and is not empty; name a new directory")
     target_dir = TEMPLATES / target
     plan: dict[Path, Path] = {Path(rel): ROOT / rel for rel in STARTER_FILES}
+    # The faces (faces/README.md): the template and every sample, which AGENTS.md points at.
+    for rel in files_under(ROOT / "faces"):
+        plan[Path("faces") / rel] = ROOT / "faces" / rel
     for name in names:
         data = profile(name)
         for rel in data.get("starter_files", []):
@@ -457,6 +461,11 @@ def main(argv: list[str] | None = None) -> int:
         f"comma-separated (default: {','.join(cat['default'])})",
     )
     p.add_argument(
+        "--face",
+        help="print the gonk.face line serving this sample of faces/ "
+        "(template, board, flight, project, claims; faces/README.md)",
+    )
+    p.add_argument(
         "--sync-starter",
         action="store_true",
         help="rewrite this starter's AGENTS.md and .gonk/process.toml from the default process",
@@ -470,6 +479,8 @@ def main(argv: list[str] | None = None) -> int:
         p.error("name the directory to write")
     process = [n.strip() for n in args.process.split(",") if n.strip()] if args.process else None
     dest = Path(args.dir).expanduser().resolve()
+    if args.face and not (ROOT / "faces" / args.face / "index.html").is_file():
+        p.error(f"no face {args.face!r} under faces/")
     written = generate(dest, args.target, process)
     names = resolve(process)
     print(
@@ -490,6 +501,12 @@ def main(argv: list[str] | None = None) -> int:
         "python3 tools/gonk.py next                   what to do first, and why",
     ]
     print("\nnext, in that directory:\n" + "".join(f"  {s}\n" for s in steps))
+    if args.face:
+        print(
+            "add to gonk's config.toml (ikigai-gonk e08ac9f or later), then restart gonk:\n"
+            f'  gonk.face = "{args.face} {dest / "faces" / args.face}"\n'
+            f"  (or later: python3 tools/gonk.py init --face {args.face})\n"
+        )
     print("AGENTS.md holds this process's rules; README.md walks through the sample.")
     return 0
 

@@ -1,0 +1,58 @@
+/* app.css: one stylesheet every sample shares (copied unchanged; tests/test_faces.py checks).
+   Light and dark follow the viewer's setting. No style attributes anywhere: the door's CSP
+   refuses them, so every look is a class here. Text colors meet 4.5:1 on their background. */
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --surface: #f3f4f6;
+  --fg: #111827;
+  --muted: #4b5563;
+  --accent: #1d4ed8;
+  --line: #d1d5db;
+  --warn: #92400e;
+  --ok: #166534;
+  --focus: #b45309;
+  --gap: 1rem;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111827;
+    --surface: #1f2937;
+    --fg: #f9fafb;
+    --muted: #d1d5db;
+    --accent: #93c5fd;
+    --line: #4b5563;
+    --warn: #fcd34d;
+    --ok: #86efac;
+    --focus: #fbbf24;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  padding: var(--gap);
+  background: var(--bg);
+  color: var(--fg);
+  font: 1rem/1.5 system-ui, sans-serif;
+  overflow-wrap: anywhere;
+}
+main { max-width: 72rem; margin: 0 auto; }
+a { color: var(--accent); }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+h1 { font-size: 1.5rem; margin: 0 0 0.5rem; }
+h2 { font-size: 1.15rem; margin: 1rem 0 0.5rem; }
+.muted { color: var(--muted); }
+.warn { color: var(--warn); font-weight: 600; }
+.ok { color: var(--ok); font-weight: 600; }
+.next { border-left: 4px solid var(--accent); padding-left: 0.5rem; }
+form { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: end; }
+label { display: flex; flex-direction: column; font-size: 0.9rem; }
+input, select, button { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line); padding: 0.25rem 0.5rem; max-width: 100%; }
+ul.items, ol.items { padding-left: 1.25rem; }
+.columns { display: grid; gap: var(--gap); grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); }
+.columns > section { background: var(--surface); border: 1px solid var(--line); padding: 0.5rem; min-width: 0; }
+progress, meter { width: 100%; max-width: 24rem; }
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; border-bottom: 1px solid var(--line); padding: 0.25rem 0.5rem; vertical-align: top; }
+.table-wrap { overflow-x: auto; }
+.tags { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; padding: 0; list-style: none; }
