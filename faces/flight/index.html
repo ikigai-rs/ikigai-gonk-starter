@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flight plan</title>
+  <link rel="stylesheet" href="app.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <main>
+    <h1>Flight plan</h1>
+    <p class="muted">A record item's children and related items as a plan's steps, in the order they can land, with the next one that can land marked.</p>
+    <form id="pick">
+      <label>Ledger <input name="ledger" value="default" autocomplete="off"></label>
+      <label>Record item number <input name="record" inputmode="numeric" required></label>
+      <button type="submit">Show plan</button>
+    </form>
+    <p role="status" aria-live="polite"></p>
+    <div id="out"></div>
+  </main>
+</body>
+</html>

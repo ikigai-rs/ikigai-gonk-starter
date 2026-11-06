@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Project view</title>
+  <link rel="stylesheet" href="app.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <main>
+    <h1>Project view</h1>
+    <p class="muted">Open items across a project's ledgers, filtered by labels. The address carries the filter, so a bookmark is a saved view.</p>
+    <form id="pick">
+      <label>Project <select name="project"></select></label>
+      <label>With labels (comma-separated) <input name="labels" autocomplete="off"></label>
+      <label>Without labels <input name="without" autocomplete="off"></label>
+      <button type="submit">Show</button>
+    </form>
+    <p role="status" aria-live="polite"></p>
+    <div id="out"></div>
+  </main>
+</body>
+</html>

@@ -1,0 +1,66 @@
+// The flight plan: a record item's children and `related` items are a plan's steps; list them
+// in the order they can land (topological by `blocks`, ties by priority then number) and mark
+// the first step that can land now.
+import { el, item, paths, pool, stateOf, announce, query, setQuery } from "./kit.js";
+import { plan, stepNumbers } from "./plan.js";
+
+const form = document.getElementById("pick");
+const out = document.getElementById("out");
+
+// The steps, from the record's own `item.children` and `related` links, each read once.
+async function steps(ledger, record) {
+  const items = await pool(stepNumbers(record), (n) => item(ledger, n));
+  return items.filter((it) => it && !it.error);
+}
+
+const WORDS = {
+  done: "done",
+  awaiting: "handed back",
+  claimed: "claimed",
+  expired: "claimed, lease expired",
+  open: "open",
+};
+
+async function show(ledger, number) {
+  announce(`Reading record ${number}…`);
+  out.replaceChildren();
+  try {
+    const record = await item(ledger, number);
+    const items = await steps(ledger, record);
+    const now = Date.now();
+    const { order, cycle, next } = plan(items, now);
+    const row = (it, extra) =>
+      el(
+        "li",
+        { class: it === next ? "next" : null },
+        it === next ? el("strong", {}, "Next to land: ") : null,
+        el("a", { href: paths.itemPage(ledger, it.number) }, `${ledger}#${it.number}`),
+        ` ${it.title || ""} `,
+        el("span", { class: stateOf(it, now) === "expired" ? "warn" : "muted" }, `(${WORDS[stateOf(it, now)]}${it.priority != null ? `, priority ${it.priority}` : ""}${extra || ""})`),
+      );
+    out.append(
+      el("h2", {}, el("a", { href: paths.itemPage(ledger, number) }, `${ledger}#${number}`), ` ${record.title || ""}`),
+      el("h3", {}, `Landing order (${order.length} steps)`),
+      order.length ? el("ol", { class: "items" }, order.map((it) => row(it))) : el("p", { class: "muted" }, "No steps."),
+      cycle.length ? el("h3", {}, "In a blocking cycle (cannot land until it is broken)") : null,
+      cycle.length ? el("ul", { class: "items" }, cycle.map((it) => row(it, ", in a cycle"))) : null,
+    );
+    announce(next ? `Next to land: ${ledger}#${next.number}.` : "No step can land now.");
+  } catch (error) {
+    out.append(el("p", { class: "warn" }, `Could not read the record: ${error.message}`));
+    announce(`Could not read record ${number}.`);
+  }
+}
+
+form.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const ledger = form.ledger.value.trim() || "default";
+  setQuery({ ledger, record: form.record.value.trim() });
+  show(ledger, form.record.value.trim());
+});
+const q = query();
+if (q.get("record")) {
+  form.ledger.value = q.get("ledger") || "default";
+  form.record.value = q.get("record");
+  show(form.ledger.value, form.record.value);
+}

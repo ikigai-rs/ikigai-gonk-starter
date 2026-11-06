@@ -22,7 +22,10 @@ how it is tested, and how to report a barrier. It is not a conformance claim. Ad
   whose client prints plain text and whose service answers JSON, and gives that repository an
   `ACCESSIBILITY.md` of its own to grow (`templates/library/ACCESSIBILITY.md`) and an
   `AGENTS.md` rule that points every agent at it.
-- No web page, no HTML and no picture.
+- **Faces** (`faces/`): a template and four sample web pages (`board`, `flight`, `project`,
+  `claims`) that gonk serves as a deployment's own pages. They are HTML, CSS and JavaScript,
+  copied into every generated repository.
+- No other web page, HTML or picture.
 
 Not this repository's: the ledger and review pages a generated repository works with are
 [ikigai-gonk's](https://github.com/ikigai-rs/ikigai-gonk/blob/main/ACCESSIBILITY.md), and each
@@ -36,12 +39,27 @@ agent's own interface is its maker's.
   carries `ACCESSIBILITY.md` and the `AGENTS.md` rule that says to read it before any change to
   what people see.
 
+- **Faces**: real headings (one `h1`, then `h2`/`h3` per section); every control has a visible
+  `<label>`; status is announced politely through one `role="status" aria-live="polite"`
+  region, never by moving focus; state is said in words ("lease expired", "Next to land"),
+  never by color alone; progress is a `<progress>` with its count in text; light and dark
+  follow the system setting, with text colors chosen for 4.5:1; a wide table scrolls in its
+  own box so the page does not scroll sideways at 320 px.
+
 ## How it is tested
 
 - `tests/test_new.py` and `tests/test_profiles.py` check that every generated repository, for
   each target and each profile, carries that `ACCESSIBILITY.md`, with its target and no
   conformance claim, and the `AGENTS.md` rule. That is a check that the file is there, not of
   accessibility.
+- `tests/test_faces.py` checks every face's HTML for what the door's CSP refuses (inline
+  script, `<style>`, `style=` and `on…=` attributes), that each page has `lang`, an `h1` and
+  the polite status region, and that only servable extensions are present. That is a static
+  check of the markup, not of accessibility. Its Deno test (`tests/faces/logic_test.js`)
+  checks which column or step each recorded item lands in; it renders nothing.
+- The faces have NOT been opened in a browser by this repository: no keyboard pass, no 320 px
+  check, no light/dark check and no axe run has been done; `faces/README.md` lists those
+  checks for whoever deploys one.
 - No automated accessibility checker, no browser and no assistive technology has been used on
   any of this output. **No screen reader, screen magnifier, speech-input or switch-access
   software has been used to test this repository.**
