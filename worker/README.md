@@ -1052,6 +1052,47 @@ claim that is no longer its own.
 - **Never merging is an instruction to the agent**, which holds a token that could merge.
   What enforces it is the repository's branch protection (required checks and reviews).
 
+### 9. AgentsView, as `agent` (optional)
+
+[AgentsView](https://www.agentsview.io) archives the sessions of the agents this worker runs
+(Claude Code, Codex, Hermes) and serves them in a browser: each session's transcript, tokens,
+cost and time. The hub's gonk can link each hand-back's session to its page here. Nothing is
+copied off the worker: the archive stays in agent's home, and the hub only links to it.
+
+**Decide what the archive keeps, before the first sync.** `archive_content` is `"full"` (every
+tool input and result), `"transcripts"` (message text and tool names, but no tool inputs or
+results), or `"usage"` (metadata and numbers only, no text). Use `"transcripts"`: it keeps
+search and the transcript view, and drops the tool payloads, which are most of the size and
+where a token or a file's contents would land. If these sessions ever read shared layers, use
+`"usage"`: a layer's text must never sit in plaintext on disk. Count the session files that
+mention one (a count, never their text):
+
+    sudo -u agent -H sh -c 'grep -rlE "mcp__ikigai-layers|urn:iki:layer|ik:body" ~/.claude/projects ~/.codex/sessions ~/.hermes 2>/dev/null | wc -l'
+
+**Install it pinned, in a virtual environment** (the exact version, so every worker runs the
+same one; AgentsView's own installer is `curl … | bash` of the latest):
+
+    sudo -u agent -H python3 -m venv ~agent/.agentsview-venv     # on macOS: /opt/homebrew/bin/python3
+    sudo -u agent -H ~agent/.agentsview-venv/bin/pip install 'agentsview==0.46.1'
+
+**Configure it** in `~agent/.agentsview/config.toml` (LAN, behind a bearer token; AgentsView
+refuses a non-loopback `host` from its config without `require_auth`):
+
+    archive_content = "transcripts"
+    host = "0.0.0.0"
+    require_auth = true
+    disable_update_check = true
+
+**Run it as a service**, telemetry off: [`units/agentsview.service`](units/agentsview.service)
+(Linux, a systemd user unit as agent) or
+[`units/dev.ikigai-rs.agentsview.plist`](units/dev.ikigai-rs.agentsview.plist) (macOS, a launchd
+daemon as agent); install steps are in each file's header. On first start it writes a random
+`auth_token` into the config file; keep it in a password manager, and paste it once into each
+browser that opens the page. macOS's firewall asks once to allow incoming connections.
+
+**Check it:** `sudo -u agent -H ~agent/.agentsview-venv/bin/agentsview serve status`, then open
+`http://<worker>:8080` from the hub's machine. Give the hub that URL for its links.
+
 ## Windows (WSL2)
 
 A Windows machine is a worker through **WSL2**: a Linux distribution in a small VM, set up as
@@ -1356,6 +1397,7 @@ holds it for closing. The same decision as for pull request aliases.
 | [`worker.sample.toml`](worker.sample.toml) | copied to `.gonk/worker.toml`, or by `init-agents` to `.gonk/worker-<agent>.toml` | the loop's configuration, commented |
 | [`units/gonk-worker@.service`](units/gonk-worker@.service) | as agent, by systemd | a loop per agent, `gonk-worker@<agent>` |
 | [`units/gonk-worker.service`](units/gonk-worker.service), [`units/dev.ikigai-rs.gonk-worker.plist`](units/dev.ikigai-rs.gonk-worker.plist) | as agent, by systemd or launchd | the single loop as a service, with its PATH; the plist is also what `worker.py plist` generates each agent's daemon from |
+| [`units/agentsview.service`](units/agentsview.service), [`units/dev.ikigai-rs.agentsview.plist`](units/dev.ikigai-rs.agentsview.plist) | as agent, by systemd or launchd | AgentsView on the LAN behind its token (step 9) |
 | [`tests/probe-test.sh`](tests/probe-test.sh), [`tests/setup-test.sh`](tests/setup-test.sh) | anywhere, no root | the hermetic tests, run by `scripts/gates.sh` |
 | [`tests/ci-linux.sh`](tests/ci-linux.sh), [`tests/ci-macos.sh`](tests/ci-macos.sh) | on throwaway CI runners only | the boundary, end to end |
 
