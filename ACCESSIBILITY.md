@@ -55,7 +55,8 @@ agent's own interface is its maker's.
 - `tests/test_faces.py` checks every face's HTML for what the door's CSP refuses (inline
   script, `<style>`, `style=` and `on…=` attributes), that each page has `lang`, an `h1` and
   the polite status region, and that only servable extensions are present. That is a static
-  check of the markup, not of accessibility.
+  check of the markup, not of accessibility. Its Deno test (`tests/faces/logic_test.js`)
+  checks which column or step each recorded item lands in; it renders nothing.
 - The faces have NOT been opened in a browser by this repository: no keyboard pass, no 320 px
   check, no light/dark check and no axe run has been done; `faces/README.md` lists those
   checks for whoever deploys one.

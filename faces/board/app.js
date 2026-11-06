@@ -1,35 +1,14 @@
 // The epic board: which of an epic's children can be worked now, and how far along it is.
-import { el, item, listAll, paths, pool, linked, numberOf, stateOf, announce, query, setQuery } from "./kit.js";
+import { el, item, paths, pool, stateOf, announce, query, setQuery } from "./kit.js";
+import { COLUMNS, board, childNumbers } from "./board.js";
 
-const COLUMNS = [
-  ["blocked", "Blocked by an open sibling"],
-  ["ready", "Ready"],
-  ["flight", "In flight"],
-  ["awaiting", "Awaiting the dispatcher"],
-  ["done", "Done"],
-];
 const form = document.getElementById("pick");
 const out = document.getElementById("out");
 
-// The epic's children: what it links to as a child, and what links to it as its parent.
+// The epic's children, from the epic's own `item.children` (closed ones too), each read once.
 async function children(ledger, epic) {
-  const numbers = new Set(linked(epic, "child"));
-  const all = await listAll(ledger, {}).catch(() => []);
-  for (const it of all) {
-    if (linked(it, "parent").includes(epic.number)) numbers.add(it.number);
-  }
-  const items = await pool([...numbers], (n) => item(ledger, n));
+  const items = await pool(childNumbers(epic), (n) => item(ledger, n));
   return items.filter((it) => it && !it.error);
-}
-
-// Which column: done and awaiting are the ledger's own state; a claim is in flight; an open
-// unclaimed item is blocked while an open sibling `blocks` it, and ready otherwise.
-function column(it, siblings, now) {
-  const state = stateOf(it, now);
-  if (state === "done" || state === "awaiting") return state;
-  if (state === "claimed" || state === "expired") return "flight";
-  const blocked = siblings.some((s) => stateOf(s, now) !== "done" && linked(s, "blocks").includes(it.number));
-  return blocked ? "blocked" : "ready";
 }
 
 function card(ledger, it, now) {
@@ -50,13 +29,9 @@ async function show(ledger, number) {
   out.replaceChildren();
   try {
     const epic = await item(ledger, number);
-    const kids = (await children(ledger, epic)).sort((a, b) => a.number - b.number);
+    const kids = await children(ledger, epic);
     const now = Date.now();
-    const by = Object.fromEntries(COLUMNS.map(([key]) => [key, []]));
-    for (const it of kids) by[column(it, kids, now)].push(it);
-    const done = by.done.length;
-    const tally = new Map();
-    for (const it of kids) for (const l of it.labels || []) tally.set(l, (tally.get(l) || 0) + 1);
+    const { by, done, tally } = board(kids, now);
     out.append(
       el("h2", {}, el("a", { href: paths.itemPage(ledger, number) }, `${ledger}#${number}`), ` ${epic.title || ""}`),
       el("p", {}, el("label", {}, `${done} of ${kids.length} done `, el("progress", { max: kids.length || 1, value: done }))),
@@ -78,9 +53,7 @@ async function show(ledger, number) {
       el(
         "ul",
         { class: "tags" },
-        [...tally]
-          .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-          .map(([l, n]) => el("li", {}, el("a", { href: paths.labelPage(ledger, l) }, l), ` ${n}`)),
+        tally.map(([l, n]) => el("li", {}, el("a", { href: paths.labelPage(ledger, l) }, l), ` ${n}`)),
       ),
     );
     announce(`Epic ${number}: ${kids.length} children, ${done} done.`);

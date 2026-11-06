@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import io
 import json
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -131,6 +133,38 @@ class FacesTest(unittest.TestCase):
         for name, ledgers in projects.items():
             self.assertIsInstance(name, str)
             self.assertTrue(ledgers and all(isinstance(x, str) for x in ledgers))
+
+
+class FaceLogicTest(unittest.TestCase):
+    """The board's and flight's logic (board.js, plan.js, kit.js) against a recorded item.
+
+    tests/faces/logic_test.js runs under Deno, which scripts/gates.sh provisions; run alone
+    without Deno on PATH, this test skips and says so.
+    """
+
+    def test_board_and_flight_against_the_recorded_item(self):
+        deno = shutil.which("deno")
+        if not deno:
+            self.skipTest("no deno on PATH (scripts/gates.sh provisions one)")
+        run = subprocess.run(
+            [deno, "test", "--no-config", "--no-lock", "--quiet", "tests/faces/"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+
+    def test_no_face_lists_a_ledger_to_find_members(self):
+        # An item listing answers open items only: a scan for `parent` links misses every
+        # closed child. Members come from `item.children` and `item.links`.
+        for name in ["board", "flight"]:
+            for js in (FACES / name).glob("*.js"):
+                if js.name == "kit.js":
+                    continue
+                with self.subTest(file=str(js.relative_to(ROOT))):
+                    self.assertNotIn("listAll", js.read_text(encoding="utf-8"))
+                    self.assertNotIn('"child"', js.read_text(encoding="utf-8"))
 
 
 class FaceLineTest(unittest.TestCase):

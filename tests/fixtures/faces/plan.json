@@ -1,0 +1,279 @@
+{
+  "_about": "The JSON faces of one epic/record item and its members, in the shapes gonk answers GET /iki/ledger/{ledger}/item/{n} with Accept: application/json. Generic data. `now` is the instant the tests read it at.",
+  "now": "2026-11-06T12:00:00Z",
+  "record": {
+    "schema": "urn:iki:ledger:schema:item",
+    "ledger": "example",
+    "item": {
+      "number": 40,
+      "display": "example#40",
+      "iri": "urn:iki:ledger:example:item:40",
+      "title": "Export widgets as CSV",
+      "status": "open",
+      "closed_reason": null,
+      "state": "filed",
+      "priority": 2,
+      "labels": [
+        "epic"
+      ],
+      "links": [
+        {
+          "type": "parent",
+          "target": {
+            "number": 39,
+            "display": "example#39",
+            "iri": "urn:iki:ledger:example:item:39"
+          }
+        },
+        {
+          "type": "blocks",
+          "target": {
+            "number": 50,
+            "display": "example#50",
+            "iri": "urn:iki:ledger:example:item:50"
+          }
+        },
+        {
+          "type": "related",
+          "target": {
+            "number": 45,
+            "display": "example#45",
+            "iri": "urn:iki:ledger:example:item:45"
+          }
+        }
+      ],
+      "children": [
+        {
+          "number": 41,
+          "display": "example#41",
+          "iri": "urn:iki:ledger:example:item:41"
+        },
+        {
+          "number": 42,
+          "display": "example#42",
+          "iri": "urn:iki:ledger:example:item:42"
+        },
+        {
+          "number": 43,
+          "display": "example#43",
+          "iri": "urn:iki:ledger:example:item:43"
+        },
+        {
+          "number": 44,
+          "display": "example#44",
+          "iri": "urn:iki:ledger:example:item:44"
+        },
+        {
+          "number": 46,
+          "display": "example#46",
+          "iri": "urn:iki:ledger:example:item:46"
+        }
+      ],
+      "claim": null,
+      "awaiting": null
+    }
+  },
+  "members": {
+    "41": {
+      "schema": "urn:iki:ledger:schema:item",
+      "ledger": "example",
+      "item": {
+        "number": 41,
+        "display": "example#41",
+        "iri": "urn:iki:ledger:example:item:41",
+        "title": "Define the CSV columns",
+        "status": "closed",
+        "closed_reason": "completed",
+        "state": "closed",
+        "priority": 1,
+        "labels": [
+          "format"
+        ],
+        "links": [
+          {
+            "type": "parent",
+            "target": {
+              "number": 40,
+              "display": "example#40",
+              "iri": "urn:iki:ledger:example:item:40"
+            }
+          },
+          {
+            "type": "blocks",
+            "target": {
+              "number": 43,
+              "display": "example#43",
+              "iri": "urn:iki:ledger:example:item:43"
+            }
+          }
+        ],
+        "children": [],
+        "claim": null,
+        "awaiting": null
+      }
+    },
+    "42": {
+      "schema": "urn:iki:ledger:schema:item",
+      "ledger": "example",
+      "item": {
+        "number": 42,
+        "display": "example#42",
+        "iri": "urn:iki:ledger:example:item:42",
+        "title": "Document the export",
+        "status": "open",
+        "closed_reason": null,
+        "state": "filed",
+        "priority": 2,
+        "labels": [
+          "docs"
+        ],
+        "links": [
+          {
+            "type": "parent",
+            "target": {
+              "number": 40,
+              "display": "example#40",
+              "iri": "urn:iki:ledger:example:item:40"
+            }
+          }
+        ],
+        "children": [],
+        "claim": null,
+        "awaiting": null
+      }
+    },
+    "43": {
+      "schema": "urn:iki:ledger:schema:item",
+      "ledger": "example",
+      "item": {
+        "number": 43,
+        "display": "example#43",
+        "iri": "urn:iki:ledger:example:item:43",
+        "title": "Write the exporter",
+        "status": "open",
+        "closed_reason": null,
+        "state": "filed",
+        "priority": 2,
+        "labels": [
+          "format"
+        ],
+        "links": [
+          {
+            "type": "parent",
+            "target": {
+              "number": 40,
+              "display": "example#40",
+              "iri": "urn:iki:ledger:example:item:40"
+            }
+          },
+          {
+            "type": "blocks",
+            "target": {
+              "number": 42,
+              "display": "example#42",
+              "iri": "urn:iki:ledger:example:item:42"
+            }
+          }
+        ],
+        "children": [],
+        "claim": {
+          "holder": "worker-a",
+          "kind": "lease",
+          "expires": "2026-11-06T13:00:00Z",
+          "lease": "PT30M",
+          "principal": "urn:iki:host:example:client:a",
+          "purpose": null
+        },
+        "awaiting": null
+      }
+    },
+    "44": {
+      "schema": "urn:iki:ledger:schema:item",
+      "ledger": "example",
+      "item": {
+        "number": 44,
+        "display": "example#44",
+        "iri": "urn:iki:ledger:example:item:44",
+        "title": "Add an export button",
+        "status": "open",
+        "closed_reason": null,
+        "state": "filed",
+        "priority": 3,
+        "labels": [
+          "ui"
+        ],
+        "links": [
+          {
+            "type": "parent",
+            "target": {
+              "number": 40,
+              "display": "example#40",
+              "iri": "urn:iki:ledger:example:item:40"
+            }
+          }
+        ],
+        "children": [],
+        "claim": null,
+        "awaiting": "reviewer"
+      }
+    },
+    "45": {
+      "schema": "urn:iki:ledger:schema:item",
+      "ledger": "example",
+      "item": {
+        "number": 45,
+        "display": "example#45",
+        "iri": "urn:iki:ledger:example:item:45",
+        "title": "Agree the file name",
+        "status": "open",
+        "closed_reason": null,
+        "state": "filed",
+        "priority": 3,
+        "labels": [],
+        "links": [
+          {
+            "type": "related",
+            "target": {
+              "number": 40,
+              "display": "example#40",
+              "iri": "urn:iki:ledger:example:item:40"
+            }
+          }
+        ],
+        "children": [],
+        "claim": null,
+        "awaiting": null
+      }
+    },
+    "46": {
+      "schema": "urn:iki:ledger:schema:item",
+      "ledger": "example",
+      "item": {
+        "number": 46,
+        "display": "example#46",
+        "iri": "urn:iki:ledger:example:item:46",
+        "title": "Test a large export",
+        "status": "open",
+        "closed_reason": null,
+        "state": "filed",
+        "priority": 4,
+        "labels": [
+          "format"
+        ],
+        "links": [
+          {
+            "type": "parent",
+            "target": {
+              "number": 40,
+              "display": "example#40",
+              "iri": "urn:iki:ledger:example:item:40"
+            }
+          }
+        ],
+        "children": [],
+        "claim": null,
+        "awaiting": null
+      }
+    }
+  }
+}

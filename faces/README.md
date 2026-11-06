@@ -65,9 +65,10 @@ an allowed extension.
 | `paths.item / items` | gonk's mechanical JSON paths for an item and a listing, default or named ledger |
 | `paths.itemPage / labelPage` | gonk's own pages, for links: an item, and `/l/{ledger}?labels=` |
 | `item(ledger, n)` | one item's JSON face |
-| `listAll(ledger, params)` | every item of a listing, paging until a short page |
+| `listAll(ledger, params)` | every item of a listing (open only unless `status` says), paging by `total` |
 | `pool(inputs, task, limit)` | runs tasks with at most `limit` in flight |
-| `linked(item, type)`, `stateOf(item)` | links by type; open, claimed, expired, awaiting or done |
+| `children(item)` | an item's children from `item.children`, closed ones included |
+| `linked(item, type)`, `stateOf(item)` | links by type (`blocks`, `parent`, `related`); open, claimed, expired, awaiting or done |
 | `announce(text)` | says it in the page's polite `role=status` region |
 | `query()`, `setQuery(params)` | the address as the face's state |
 
@@ -75,6 +76,14 @@ The paths follow gonk's mechanical rule (`docs/ui-conventions.md`, D10: path `/a
 `urn:a:b:c`): an item of the default ledger is `/iki/ledger/item/{n}`, of ledger `acme`
 `/iki/ledger/acme/item/{n}`, and a listing `/iki/ledger/{ledger}/items`. If your gonk answers
 them elsewhere, change `paths` in `template/kit.js` and copy it to every face.
+
+The shapes kit.js reads: an item's JSON face is `{schema, ledger, item}`, where `item.children`
+is `[{number, display, iri}]`, `item.links` is `[{type, target: {number, display, iri}}]` (types
+`blocks`, `parent`, `related`; there is no `child` link), `item.claim` is null or
+`{holder, kind, expires, lease, principal, purpose}`, `item.awaiting` is null or whose turn it
+is (`"dispatcher"`, ...), and `item.status` is `open` or `closed`. A listing is
+`{schema, ledger, count, total, offset, items, unreadable}`, and answers open items unless
+asked otherwise: **find an item's members from its own face, never by listing the ledger.**
 
 ## Checking one in a browser
 

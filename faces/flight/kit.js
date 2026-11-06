@@ -63,15 +63,19 @@ export async function item(ledger, number) {
   return (await read(paths.item(ledger, number))).item;
 }
 
-// Every item of a listing, a page at a time, until a page comes back short.
-// `params` are the listing's named arguments (labels=, status=, ...).
+// Every item of a listing, a page at a time. A listing answers
+// {schema, ledger, count, total, offset, items, unreadable}; paging stops at `total`, not at a
+// short page. `params` are the listing's named arguments (labels=, status=, ...). gonk's listing
+// answers OPEN items unless `status` says otherwise: never list a ledger to find an item's
+// children (they include closed ones); read `item.children` instead (`children` below).
 export async function listAll(ledger, params = {}, pageSize = 200, maxPages = 50) {
   const all = [];
   for (let page = 0; page < maxPages; page++) {
-    const doc = await read(paths.items(ledger), { ...params, limit: pageSize, offset: page * pageSize });
+    const doc = await read(paths.items(ledger), { ...params, limit: pageSize, offset: all.length });
     const items = doc.items || [];
     all.push(...items);
-    if (items.length < pageSize) return all;
+    const total = Number.isInteger(doc.total) ? doc.total : null;
+    if (items.length === 0 || (total !== null ? all.length >= total : items.length < pageSize)) return all;
   }
   return all;
 }
@@ -102,7 +106,8 @@ export function numberOf(target) {
   return Number.isInteger(Number(n)) ? Number(n) : null;
 }
 
-// The numbers an item links to with a link of `type` ("blocks", "related", "parent", ...).
+// The numbers an item links to with a link of `type`: "blocks", "related" or "parent".
+// `item.links` is [{type, target: {number, display, iri}}]; there is no "child" link type.
 export function linked(it, type) {
   return (it.links || [])
     .filter((l) => l.type === type)
@@ -110,10 +115,18 @@ export function linked(it, type) {
     .filter((n) => n !== null);
 }
 
-// What state an open item is in, as words a person reads (color is never the only signal).
+// An item's children, open and closed alike: its JSON face carries them as `item.children`,
+// [{number, display, iri}]. One read of the parent, never a scan of the ledger.
+export function children(it) {
+  return (it.children || []).map(numberOf).filter((n) => n !== null);
+}
+
+// What state an item is in, as words a person reads (color is never the only signal).
+// `status` is "open" or "closed"; any non-null `awaiting` ("dispatcher", ...) is a hand-back;
+// `claim` is null or {holder, kind, expires, lease, principal, purpose}.
 export function stateOf(it, now = Date.now()) {
   if ((it.status || "open") !== "open") return "done";
-  if (it.awaiting === "dispatcher") return "awaiting";
+  if (it.awaiting !== null && it.awaiting !== undefined && it.awaiting !== "") return "awaiting";
   const claim = it.claim;
   if (claim && claim.holder) {
     return claim.expires && Date.parse(claim.expires) < now ? "expired" : "claimed";
