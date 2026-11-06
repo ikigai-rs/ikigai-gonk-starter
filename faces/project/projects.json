@@ -1,0 +1,4 @@
+{
+  "example-web": ["web-frontend", "web-api"],
+  "example-tools": ["default", "build-tools"]
+}

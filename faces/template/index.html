@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Template face</title>
+  <link rel="stylesheet" href="app.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <main>
+    <h1>Template face</h1>
+    <p class="muted">The smallest working face: it reads one item through gonk's JSON route and shows it.</p>
+    <form id="pick">
+      <label>Ledger <input name="ledger" value="default" autocomplete="off"></label>
+      <label>Item number <input name="item" inputmode="numeric" required></label>
+      <button type="submit">Show</button>
+    </form>
+    <p role="status" aria-live="polite"></p>
+    <section id="out" aria-labelledby="out-h">
+      <h2 id="out-h">Item</h2>
+    </section>
+  </main>
+</body>
+</html>
