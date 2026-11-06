@@ -27,8 +27,8 @@ async function show(ledger, number) {
   try {
     const record = await item(ledger, number);
     const items = await steps(ledger, record);
-    const now = Date.now();
-    const { order, cycle, next } = plan(items, now);
+    // No viewer clock: each step's lease is judged by the door's time for its own answer.
+    const { order, cycle, next } = plan(items);
     const row = (it, extra) =>
       el(
         "li",
@@ -36,7 +36,7 @@ async function show(ledger, number) {
         it === next ? el("strong", {}, "Next to land: ") : null,
         el("a", { href: paths.itemPage(ledger, it.number) }, `${ledger}#${it.number}`),
         ` ${it.title || ""} `,
-        el("span", { class: stateOf(it, now) === "expired" ? "warn" : "muted" }, `(${WORDS[stateOf(it, now)]}${it.priority != null ? `, priority ${it.priority}` : ""}${extra || ""})`),
+        el("span", { class: stateOf(it) === "expired" ? "warn" : "muted" }, `(${WORDS[stateOf(it)]}${it.priority != null ? `, priority ${it.priority}` : ""}${extra || ""})`),
       );
     out.append(
       el("h2", {}, el("a", { href: paths.itemPage(ledger, number) }, `${ledger}#${number}`), ` ${record.title || ""}`),

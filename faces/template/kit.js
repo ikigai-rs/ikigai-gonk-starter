@@ -40,7 +40,35 @@ export async function read(path, params = {}) {
     error.status = answer.status;
     throw error;
   }
-  return answer.json();
+  const doc = await answer.json();
+  stamp(doc, doorTime(answer));
+  return doc;
+}
+
+// The door's clock. Whether a lease has run out is judged against the time of the answer that
+// carried the item, from that answer's Date header (same origin, so a face can read it), never
+// against the viewer's own clock, which may be skewed on another machine. `answeredAt(x)` is
+// that time in milliseconds for a document `read` answered, an item `item` or `listAll`
+// answered, or null when the answer carried no readable Date header.
+const answered = new WeakMap();
+function doorTime(answer) {
+  const header = answer.headers && answer.headers.get("Date");
+  const time = header ? Date.parse(header) : NaN;
+  return Number.isFinite(time) ? time : null;
+}
+function stamp(value, time) {
+  if (time !== null && value && typeof value === "object") answered.set(value, time);
+  return value;
+}
+export function answeredAt(value) {
+  return value && typeof value === "object" && answered.has(value) ? answered.get(value) : null;
+}
+// "Now" for an item: the door's time for the answer that carried it. Only when that answer had
+// no Date header (or the item was not read through `read`) does this fall back to the viewer's
+// clock, which is the one a skewed machine gets wrong.
+export function nowFor(it) {
+  const time = answeredAt(it);
+  return time !== null ? time : Date.now();
 }
 
 // gonk's mechanical paths (docs/ui-conventions.md D10: path /a/b/c is IRI urn:a:b:c). The
@@ -60,7 +88,8 @@ export const paths = {
 
 // One item's JSON face: the `item` object of {"item": {...}}.
 export async function item(ledger, number) {
-  return (await read(paths.item(ledger, number))).item;
+  const doc = await read(paths.item(ledger, number));
+  return stamp(doc.item, answeredAt(doc));
 }
 
 // Every item of a listing, a page at a time. A listing answers
@@ -73,6 +102,7 @@ export async function listAll(ledger, params = {}, pageSize = 200, maxPages = 50
   for (let page = 0; page < maxPages; page++) {
     const doc = await read(paths.items(ledger), { ...params, limit: pageSize, offset: all.length });
     const items = doc.items || [];
+    for (const it of items) stamp(it, answeredAt(doc));
     all.push(...items);
     const total = Number.isInteger(doc.total) ? doc.total : null;
     if (items.length === 0 || (total !== null ? all.length >= total : items.length < pageSize)) return all;
@@ -123,8 +153,9 @@ export function children(it) {
 
 // What state an item is in, as words a person reads (color is never the only signal).
 // `status` is "open" or "closed"; any non-null `awaiting` ("dispatcher", ...) is a hand-back;
-// `claim` is null or {holder, kind, expires, lease, principal, purpose}.
-export function stateOf(it, now = Date.now()) {
+// `claim` is null or {holder, kind, expires, lease, principal, purpose}. `now` is the door's
+// time for the answer that carried the item (`nowFor`); pass one only to judge at a set time.
+export function stateOf(it, now = nowFor(it)) {
   if ((it.status || "open") !== "open") return "done";
   if (it.awaiting !== null && it.awaiting !== undefined && it.awaiting !== "") return "awaiting";
   const claim = it.claim;
