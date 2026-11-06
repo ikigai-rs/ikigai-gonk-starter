@@ -610,6 +610,54 @@ class Ledger:
     def __init__(self, cfg: gonk.Config, ikigai) -> None:
         self.cfg = cfg
         self.ikigai = ikigai
+        # The epoch each claim this worker holds was granted at (the claim's fencing token,
+        # ledger #3205), presented as `epoch=` on every write about that item; and the items
+        # whose lane was taken over, about which this worker writes nothing more.
+        self.epochs: dict[int, int] = {}
+        self.fenced: dict[int, str] = {}
+        self.guard = threading.Lock()
+
+    def epoch_words(self, number: int) -> list[str]:
+        with self.guard:
+            epoch = self.epochs.get(number)
+        return [f"epoch={epoch}"] if epoch is not None else []
+
+    def forget(self, number: int) -> None:
+        """The run on item `number` is over: its epoch and its fence go with it."""
+        with self.guard:
+            self.epochs.pop(number, None)
+            self.fenced.pop(number, None)
+
+    def fenced_why(self, number: int) -> str | None:
+        with self.guard:
+            return self.fenced.get(number)
+
+    def fence(self, number: int, why: str) -> None:
+        """The lane on item `number` was taken over: say so once, and write nothing more."""
+        with self.guard:
+            if number in self.fenced:
+                return
+            self.fenced[number] = why
+        log(
+            f"STOP: item {number}: {why}. The lane was taken over; this worker makes no further "
+            "write about it"
+        )
+
+    def written(self, number: int, answer: gonk.Answer) -> gonk.Answer:
+        """A Conflict naming an epoch newer than the one presented fences the item."""
+        with self.guard:
+            mine = self.epochs.get(number)
+        newer = stale_epoch(answer, mine)
+        if newer is not None:
+            self.fence(number, f"gonk refused epoch {mine}: the claim is at epoch {newer}")
+        return answer
+
+    def refused(self, number: int) -> gonk.Answer | None:
+        why = self.fenced_why(number)
+        if why is None:
+            return None
+        log(f"item {number}: not writing, the lane was taken over ({why})")
+        return gonk.Answer(1, "", f"conflict: not written: {why}")
 
     def _json(self, command: str) -> tuple[dict | None, str | None]:
         answer = self.ikigai.run(command)
@@ -634,7 +682,13 @@ class Ledger:
 
     def item(self, number: int):
         doc, err = self._json(f"source {self.cfg.resource(f'item:{number}')} as=application/json")
-        return (doc.get("item") if doc else None), err
+        item = doc.get("item") if doc else None
+        with self.guard:
+            mine = self.epochs.get(number)
+        epoch = gonk.claim_epoch(item)
+        if mine is not None and epoch is not None and epoch > mine:
+            self.fence(number, f"the item's claim is at epoch {epoch}, past this claim's {mine}")
+        return item, err
 
     def claim(self, number: int, holder: str, lease: str, renew: bool = False) -> gonk.Answer:
         """Take item `number` for `holder`, or with `renew` renew a claim it holds now:
@@ -642,8 +696,23 @@ class Ledger:
         released (ikigai-ledger 0.7.0, ledger item 1178)."""
         command = f"sink {self.cfg.resource('claim')} item={number} lease={lease}"
         if renew:
-            command += " renew=true"
-        return self.ikigai.run(command, stdin=holder)
+            stop = self.refused(number)
+            if stop is not None:
+                return stop
+            command = " ".join([command, "renew=true", *self.epoch_words(number)])
+            return self.written(number, self.ikigai.run(command, stdin=holder))
+        answer = self.ikigai.run(command, stdin=holder)
+        if answer.ok:
+            # A take grants a new epoch: this run's, until the item is forgotten. A ledger
+            # with no epoch names none, and nothing is presented to it.
+            epoch = (gonk.parse_claimed(answer.out) or {}).get("epoch")
+            with self.guard:
+                self.fenced.pop(number, None)
+                if epoch is None:
+                    self.epochs.pop(number, None)
+                else:
+                    self.epochs[number] = epoch
+        return answer
 
     def release(self, number: int, holder: str) -> gonk.Answer:
         """Release the claim only if `holder` still holds it: `from=` makes the DELETE a
@@ -651,8 +720,12 @@ class Ledger:
         carries no note. The cli gives a batch's stdin only to a content-less SINK, never to a
         DELETE, so a note piped here never reached the item (ledger item 1229): post a note
         with `comment` first."""
-        command = f"delete {self.cfg.resource('claim')} item={number} from={holder}"
-        return self.ikigai.run(command, stdin="")
+        stop = self.refused(number)
+        if stop is not None:
+            return stop
+        words = [f"delete {self.cfg.resource('claim')} item={number} from={holder}"]
+        command = " ".join([*words, *self.epoch_words(number)])
+        return self.written(number, self.ikigai.run(command, stdin=""))
 
     def comment(self, number: int, text: str, **flags: str) -> gonk.Answer:
         """A comment on an item, with any flags the ledger's `comment` resource takes.
@@ -663,9 +736,28 @@ class Ledger:
         does not know the argument and ignores it, writing the comment — the `Evidence:` prefix
         in the text is the hand-back there, which is why it stays.
         """
+        stop = self.refused(number)
+        if stop is not None:
+            return stop
         words = [f"sink {self.cfg.resource('comment')} item={number}"]
         words += [f"{name}={value}" for name, value in flags.items()]
-        return self.ikigai.run(" ".join(words), stdin=text)
+        words += self.epoch_words(number)
+        return self.written(number, self.ikigai.run(" ".join(words), stdin=text))
+
+
+EPOCH_NAMED = re.compile(r"\bepoch[\s=:]*(\d+)", re.IGNORECASE)
+
+
+def stale_epoch(answer: gonk.Answer, mine: int | None) -> int | None:
+    """The newer epoch a Conflict names, when this worker presented `mine`; else None.
+
+    The ledger refuses a write that presents a stale epoch as a Conflict and writes nothing
+    (ledger #3205). Its wording is read for the epochs it names, and one newer than `mine`
+    means the lane was taken over since this worker's claim was granted."""
+    if mine is None or not answer.conflict:
+        return None
+    newer = [int(n) for n in EPOCH_NAMED.findall(answer.text()) if int(n) > mine]
+    return max(newer) if newer else None
 
 
 def active_claim(item: dict, now: datetime) -> str | None:
@@ -921,6 +1013,10 @@ class Heartbeat(threading.Thread):
             return True
         held = (item.get("claim") or {}).get("holder")
         display = item.get("display", self.number)
+        fenced = self.ledger.fenced_why(self.number)
+        if fenced:
+            self.why = fenced
+            return False
         if item.get("status") != "open":
             self.why = f"item {display} is {item.get('status')}"
             return False
@@ -933,6 +1029,10 @@ class Heartbeat(threading.Thread):
             self.renewals += 1
             return True
         text = answer.text()
+        fenced = self.ledger.fenced_why(self.number)
+        if fenced:
+            self.why = f"the renewal was refused: {fenced}"
+            return False
         if "claimed by" in text or "takeover" in text or "conflict" in text.lower():
             self.why = f"the renewal was refused: {text}"
             return False
@@ -2003,11 +2103,14 @@ class Worker:
                 number,
                 claim_refused=answer.conflict,
             )
-        log(f"claimed {display} for `{holder}` on a {self.wc.lease} lease (repo:{repo.name})")
+        epoch = self.ledger.epoch_words(number)
+        at = f" at {epoch[0].replace('=', ' ')}" if epoch else ""
+        log(f"claimed {display} for `{holder}`{at} on a {self.wc.lease} lease (repo:{repo.name})")
         other = self.repo_holder(repo.name, gonk.iso_now(), exclude=number)
         if other:
             self.fire_skip(gonk.sensor("worker-one-agent-per-repository"), number)
             self.ledger.release(number, holder)
+            self.ledger.forget(number)
             return Outcome(NOTHING, f"backed off {display}: repo:{repo.name} is busy: {other}")
         # The item as it is NOW, after the claim: the dispatch is checked again on this read,
         # and the brief is built from it, so an edit or a label between `next` and the claim
@@ -2026,6 +2129,7 @@ class Worker:
         if problem:
             self.fire_skip(gonk.sensor("worker-dispatched-by-a-router"), number)
             self.ledger.release(number, holder)
+            self.ledger.forget(number)
             return Outcome(NOTHING, f"backed off {display}: {problem}")
         item = fresh
         beat = Heartbeat(self.ledger, number, holder, self.wc.lease, self.wc.renew_every)
@@ -2040,6 +2144,7 @@ class Worker:
             outcome = Outcome(ERROR, note, number)
         finally:
             beat.stop()
+            self.ledger.forget(number)
         outcome.number, outcome.renewals = number, beat.renewals
         self.attempts.record(self.cfg.ledger, number, outcome_word(outcome, beat))
         log(outcome.summary)

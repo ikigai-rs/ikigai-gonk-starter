@@ -51,6 +51,13 @@ commands. An agent that speaks MCP has the same actions as tools (`ledger-next__
   it except by a **takeover** (`claim 12 --takeover-from <holder>`), which succeeds only if
   that holder still has it and the lease has really run out. Take over only work that is
   clearly abandoned, and say so in a comment.
+- **A claim has an epoch.** Each time a claim is granted (a claim or a takeover, never a
+  renewal) the ledger raises the item's epoch, and says it: `#12 claimed by me at epoch 3`.
+  The epoch is the claim's fencing token. `gonk.py` records it and presents it (`epoch=`) on
+  every write it makes about the item: the renewal, the comment, the report, the release and
+  the close. A write that presents a stale epoch is refused as a Conflict and writes nothing,
+  so a holder whose lane was taken over, even by a holder of the same name, cannot write over
+  the new one. A ledger with no epoch is presented none.
 - **If your claim is gone, stop.** If someone took it over, `status` says you no longer
   hold it, or a renewal, `report` or `release` exits 3 (the ledger's conflict), stop
   writing. Put what you have on a branch, say where in a comment, and claim something else.

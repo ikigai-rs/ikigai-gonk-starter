@@ -1171,7 +1171,42 @@ def parse_instant(text: str) -> datetime:
     return datetime.fromisoformat(text.replace("Z", "+00:00"))
 
 
-CLAIMED = re.compile(r"(?:claimed by|renewed by|taken over from \S+ by) (\S+)(?: until (\S+))?")
+CLAIMED = re.compile(
+    r"(?:claimed by|renewed by|taken over from \S+ by) (\S+)(?: at epoch (\d+))?(?: until (\S+))?"
+)
+
+
+def parse_claimed(text: str) -> dict | None:
+    """The holder, the claim's epoch and its lease's end, from the ledger's claim answer.
+
+    Both shapes parse: `#1 claimed by w1 until <time>` (a ledger before the claim's fencing
+    epoch, ledger #3205) and `#1 claimed by w1 at epoch 3 until <time>`. The epoch is None on
+    the old shape, and the until is None for a claim with no lease."""
+    m = CLAIMED.search(text)
+    if not m:
+        return None
+    return {
+        "holder": m.group(1),
+        "epoch": int(m.group(2)) if m.group(2) else None,
+        "until": m.group(3),
+    }
+
+
+def claim_epoch(item: dict | None) -> int | None:
+    """`claim.epoch` of an item's JSON face, or None (no claim, or a ledger with no epoch)."""
+    epoch = ((item or {}).get("claim") or {}).get("epoch")
+    return epoch if type(epoch) is int else None
+
+
+def epoch_word(held: dict | None, number: int) -> str:
+    """` epoch=N` when this tree holds item `number` at a known epoch, else nothing.
+
+    The epoch is the claim's fencing token: every grant of a claim (a take or a takeover, not a
+    renewal) raises it, and a write that presents an older one is refused as a Conflict and
+    writes nothing. A ledger with no epoch never gave one, so nothing is presented to it."""
+    if held and held.get("item") == number and isinstance(held.get("epoch"), int):
+        return f" epoch={held['epoch']}"
+    return ""
 
 
 def read_claim(cfg: Config) -> dict | None:
@@ -1247,6 +1282,14 @@ def check_claim(cfg: Config, ikigai: Ikigai, now: datetime | None = None) -> tup
             f"item {item.get('display', number)} is held {who}, not `{claim.get('holder')}`: "
             "the claim was released or taken over. Stop writing; claim another item"
         )
+    epoch = claim_epoch(item)
+    mine = claim.get("epoch")
+    if epoch is not None and isinstance(mine, int) and epoch != mine:
+        return False, (
+            f"item {item.get('display', number)} is at epoch {epoch}, and this tree's claim was "
+            f"granted at epoch {mine}: the claim was taken again since. Stop writing; claim "
+            "another item"
+        )
     if item.get("status") != "open":
         return False, f"item {item.get('display', number)} is {item.get('status')}"
     expires = (item.get("claim") or {}).get("expires")
@@ -1257,7 +1300,8 @@ def check_claim(cfg: Config, ikigai: Ikigai, now: datetime | None = None) -> tup
             f"`python3 tools/gonk.py claim {number}`"
         )
     until = f" until {expires}" if expires else " (no lease)"
-    return True, f"item {item.get('display', number)} is held by `{held}`{until}"
+    at = f" at epoch {epoch}" if epoch is not None else ""
+    return True, f"item {item.get('display', number)} is held by `{held}`{at}{until}"
 
 
 # --------------------------------------------------------------------------- commands
@@ -1727,7 +1771,7 @@ def release_claim(ikigai: Ikigai, cfg: Config, number: int, held: dict | None) -
     released without `from=`, which for someone else's claim is the dispatcher's override."""
     command = f"delete {cfg.resource('claim')} item={number}"
     if held and held.get("item") == number and held.get("holder"):
-        command += f" from={held['holder']}"
+        command += f" from={held['holder']}" + epoch_word(held, number)
     return ikigai.run(command, stdin="")
 
 
@@ -1796,6 +1840,9 @@ def cmd_claim(args, cfg: Config, make_ikigai) -> int:
     words = ["sink", cfg.resource("claim"), f"item={args.item}", f"lease={args.lease}"]
     if renew:
         words.append("renew=true")
+        # A renewal presents the epoch its claim was granted at, so one after a takeover is
+        # refused even when the new holder has this tree's name.
+        words += epoch_word(held, args.item).split()
     if args.takeover_from:
         problem = holder_problem(args.takeover_from)
         if problem:
@@ -1808,10 +1855,16 @@ def cmd_claim(args, cfg: Config, make_ikigai) -> int:
         if renew and answer.conflict:
             claim_gone(cfg, args.item)
     if answer.ok:
-        m = CLAIMED.search(answer.out)
+        claimed = parse_claimed(answer.out) or {}
         state = {"ledger": cfg.ledger, "item": args.item, "holder": cfg.holder}
-        if m and m.group(2):
-            state["expires"] = m.group(2)
+        epoch = claimed.get("epoch")
+        if epoch is None and renew and held and isinstance(held.get("epoch"), int):
+            epoch = held["epoch"]  # a renewal keeps the epoch its claim was granted at
+        if epoch is not None:
+            state["epoch"] = epoch
+            print(f"gonk.py: item {args.item} is held at epoch {epoch}")
+        if claimed.get("until"):
+            state["expires"] = claimed["until"]
         cfg.claim_file.parent.mkdir(parents=True, exist_ok=True)
         cfg.claim_file.write_text(
             "\n".join(
@@ -1870,9 +1923,12 @@ def cmd_release(args, cfg: Config, make_ikigai) -> int:
         # cli gives a batch's stdin only to a content-less SINK, never to a DELETE, so a note
         # piped to the release never reached the item (ledger item 1229).
         key = comment_key(cfg, number, "release", args.note)
+        epoch = epoch_word(held, number)
         posted = ikigai.run(
-            f"sink {cfg.resource('comment')} item={number} key={key}", stdin=args.note
+            f"sink {cfg.resource('comment')} item={number} key={key}{epoch}", stdin=args.note
         )
+        if posted.conflict and epoch:
+            claim_gone(cfg, number)
         if not posted.ok:
             return show(posted)
     answer = release_claim(ikigai, cfg, number, held)
@@ -1919,7 +1975,14 @@ def socket_author(cfg: Config) -> str:
 
 
 def comment_flag(
-    ikigai: Ikigai, cfg: Config, number: int, note: str, flag: str, author: str = "", key=None
+    ikigai: Ikigai,
+    cfg: Config,
+    number: int,
+    note: str,
+    flag: str,
+    author: str = "",
+    key=None,
+    epoch: str = "",
 ) -> Answer:
     """Post `note` with `flag=true` (and `author`, as `socket_author` gives it, and `key`, as
     `comment_key` gives it).
@@ -1931,7 +1994,8 @@ def comment_flag(
     """
     keyed = f" key={key}" if key else ""
     return ikigai.run(
-        f"sink {cfg.resource('comment')} item={number} {flag}=true{author}{keyed}", stdin=note
+        f"sink {cfg.resource('comment')} item={number} {flag}=true{author}{keyed}{epoch}",
+        stdin=note,
     )
 
 
@@ -1950,11 +2014,16 @@ def cmd_report(args, cfg: Config, make_ikigai) -> int:
     note = evidence_note(args, cfg)
     ikigai = make_ikigai(cfg.target)
     key = comment_key(cfg, args.item, "report", note)
-    answer = comment_flag(ikigai, cfg, args.item, note, "handback", socket_author(cfg), key)
+    held = read_claim(cfg)
+    epoch = epoch_word(held, args.item)
+    if epoch:
+        print(f"gonk.py: reporting item {args.item} at epoch {held['epoch']}")
+    answer = comment_flag(ikigai, cfg, args.item, note, "handback", socket_author(cfg), key, epoch)
     code = show(answer)
     if not answer.ok:
+        if answer.conflict and epoch:
+            claim_gone(cfg, args.item)
         return code
-    held = read_claim(cfg)
     if held and held.get("item") == args.item:
         released = release_claim(ikigai, cfg, args.item, held)
         code = show(released)
@@ -2259,11 +2328,17 @@ def close_item(
 ) -> int:
     command = f"sink {cfg.resource('close')} item={number} reason={reason}" + socket_author(cfg)
     command += "".join(f" evidence={json.dumps(iri, ensure_ascii=False)}" for iri in evidence)
+    held = read_claim(cfg)
+    # This tree's own claim on the item fences its close; the dispatcher's close of an item it
+    # does not hold presents no epoch (it is the override, as a release without `from=` is).
+    epoch = epoch_word(held, number)
+    if epoch:
+        command += epoch
+        print(f"gonk.py: closing item {number} at epoch {held['epoch']}")
     answer = ikigai.run(command, stdin=note)
     code = show(answer)
     if answer.ok:
         close_pr_aliases(cfg, ikigai, number, evidence)
-    held = read_claim(cfg)
     if answer.ok and held and held.get("item") == number:
         # Until ikigai-ledger 0.7.0 a close did not end a claim, and a machine's claim left on
         # an item no longer in flight is what the ledger's doctor reports as orphaned. Since

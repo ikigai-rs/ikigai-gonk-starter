@@ -427,6 +427,14 @@ and hands the item back: the pull request it opened and that pull request's CI, 
 `Evidence:` comment, then the claim released. **It never closes and never merges**: the
 dispatcher checks the evidence and does both.
 
+**The claim's epoch fences the worker.** A ledger that numbers its claims (ledger #3205)
+answers a claim with `at epoch N` and serves `claim.epoch` on the item. The worker records the
+epoch its claim was granted at and presents it as `epoch=` on every write it makes about that
+item: each renewal, each comment, the hand-back and the release. When gonk refuses one as a
+Conflict naming a newer epoch, or the item reads at a newer epoch, the lane was taken over: the
+worker logs a `STOP:` line, stops the agent, and writes nothing more about the item. Against a
+ledger with no epoch it presents none, and works as before.
+
 **A label is not a dispatch.** The ledger records no setter for a label, and anyone who can
 write to it can label an item, so a worker takes an item only when its newest **dispatch** by
 a principal in the worker's `routers` names the worker's labels and the item's `repo:`, and
