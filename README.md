@@ -71,6 +71,7 @@ AGENTS.md                the rules, for every agent and every person
 CLAUDE.md                `@AGENTS.md`: Claude Code imports the same rules (not a symlink; see below)
 ACCESSIBILITY.md         what this repository shows people, how it is tested, how to report a barrier
 openspec/                specs (what the system does now) and changes (what is proposed)
+faces/                   a deployment's own pages for gonk: a template and four samples (faces/README.md)
 artifacts/<name>/        one directory per deployable thing, any language each
 .gonk/                   which ledger, how to reach gonk, and where everything lives
   layout.toml            the spec format(s), the artifacts root, queries, scripts
