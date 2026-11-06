@@ -17,7 +17,7 @@ export function childNumbers(epic) {
 
 // Which column: done and awaiting are the ledger's own state; a claim is in flight; an open
 // unclaimed item is blocked while an open sibling `blocks` it, and ready otherwise.
-export function column(it, siblings, now = Date.now()) {
+export function column(it, siblings, now) {
   const state = stateOf(it, now);
   if (state === "done" || state === "awaiting") return state;
   if (state === "claimed" || state === "expired") return "flight";
@@ -25,9 +25,11 @@ export function column(it, siblings, now = Date.now()) {
   return blocked ? "blocked" : "ready";
 }
 
+// `now` is left out in use: each child is then judged by the door's time for the answer that
+// carried it (kit.js `nowFor`); a test passes one to judge every child at a set time.
 // The whole board for the children read: each column's items (by number), how many are done,
 // and the label tally ([label, count], most first).
-export function board(kids, now = Date.now()) {
+export function board(kids, now) {
   const sorted = [...kids].sort((a, b) => a.number - b.number);
   const by = Object.fromEntries(COLUMNS.map(([key]) => [key, []]));
   for (const it of sorted) by[column(it, sorted, now)].push(it);

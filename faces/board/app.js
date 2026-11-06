@@ -11,8 +11,8 @@ async function children(ledger, epic) {
   return items.filter((it) => it && !it.error);
 }
 
-function card(ledger, it, now) {
-  const state = stateOf(it, now);
+function card(ledger, it) {
+  const state = stateOf(it);
   const holder = it.claim && it.claim.holder;
   const note = holder ? ` (${holder}${state === "expired" ? ", lease expired" : ""})` : "";
   return el(
@@ -30,8 +30,8 @@ async function show(ledger, number) {
   try {
     const epic = await item(ledger, number);
     const kids = await children(ledger, epic);
-    const now = Date.now();
-    const { by, done, tally } = board(kids, now);
+    // No viewer clock: each child's lease is judged by the door's time for its own answer.
+    const { by, done, tally } = board(kids);
     out.append(
       el("h2", {}, el("a", { href: paths.itemPage(ledger, number) }, `${ledger}#${number}`), ` ${epic.title || ""}`),
       el("p", {}, el("label", {}, `${done} of ${kids.length} done `, el("progress", { max: kids.length || 1, value: done }))),
@@ -44,7 +44,7 @@ async function show(ledger, number) {
             { "aria-labelledby": `col-${key}` },
             el("h3", { id: `col-${key}` }, `${name} (${by[key].length})`),
             by[key].length
-              ? el("ul", { class: "items" }, by[key].map((it) => card(ledger, it, now)))
+              ? el("ul", { class: "items" }, by[key].map((it) => card(ledger, it)))
               : el("p", { class: "muted" }, "None."),
           ),
         ),

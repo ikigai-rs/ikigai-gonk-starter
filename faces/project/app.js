@@ -31,8 +31,9 @@ async function show(projects, name, labels, without) {
     return;
   }
   announce(`Reading ${ledgers.length} ledgers…`);
+  // Each item is kept (not copied), so stateOf still judges it by the door's time for its answer.
   const lists = await pool(ledgers, (ledger) =>
-    listAll(ledger, { status: "open", labels: labels.join(",") }).then((items) => items.map((it) => ({ ...it, ledger }))),
+    listAll(ledger, { status: "open", labels: labels.join(",") }).then((items) => items.map((it) => Object.assign(it, { ledger }))),
   );
   const failed = ledgers.filter((_, i) => lists[i].error);
   const items = lists

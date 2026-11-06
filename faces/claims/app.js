@@ -26,12 +26,12 @@ async function show(ledger) {
   announce("Reading open items…");
   out.replaceChildren();
   try {
-    const now = Date.now();
+    // No viewer clock: each item's lease is judged by the door's time for the page that carried it.
     const items = (await listAll(ledger, { status: "open" })).filter((it) => (it.status || "open") === "open");
     const holders = new Map();
     const turns = new Map();
     for (const it of items) {
-      const state = stateOf(it, now);
+      const state = stateOf(it);
       if (state === "claimed" || state === "expired") {
         const h = it.claim.holder;
         if (!holders.has(h)) holders.set(h, []);
@@ -42,12 +42,12 @@ async function show(ledger) {
         turns.get(t).push(it);
       }
     }
-    const expiredCount = (list) => list.filter((it) => stateOf(it, now) === "expired").length;
+    const expiredCount = (list) => list.filter((it) => stateOf(it) === "expired").length;
     const holderOrder = [...holders].sort((a, b) => expiredCount(b[1]) - expiredCount(a[1]) || a[0].localeCompare(b[0]));
     out.append(el("h2", {}, `Claimed (${[...holders.values()].flat().length})`));
     if (!holderOrder.length) out.append(el("p", { class: "muted" }, "Nothing is claimed."));
     for (const [holder, list] of holderOrder) {
-      list.sort((a, b) => (stateOf(b, now) === "expired") - (stateOf(a, now) === "expired") || a.number - b.number);
+      list.sort((a, b) => (stateOf(b) === "expired") - (stateOf(a) === "expired") || a.number - b.number);
       const expired = expiredCount(list);
       out.append(
         el("h3", {}, `${holder}: ${list.length} held${expired ? `, ${expired} with an expired lease` : ""}`),
@@ -55,7 +55,7 @@ async function show(ledger) {
           "ul",
           { class: "items" },
           list.map((it) =>
-            stateOf(it, now) === "expired"
+            stateOf(it) === "expired"
               ? line(ledger, it, `lease expired ${it.claim.expires}`, true)
               : line(ledger, it, it.claim.expires ? `lease until ${it.claim.expires}` : "claimed", false),
           ),

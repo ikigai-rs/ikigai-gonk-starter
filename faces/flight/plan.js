@@ -39,14 +39,16 @@ export function landingOrder(items) {
 }
 
 // Whether a step can land now: open, not handed back, and nothing open in the plan blocks it.
-export function canLand(it, items, now = Date.now()) {
+export function canLand(it, items, now) {
   const state = stateOf(it, now);
   if (state === "done" || state === "awaiting") return false;
   return !items.some((s) => s !== it && stateOf(s, now) !== "done" && linked(s, "blocks").includes(it.number));
 }
 
+// `now` is left out in use: each step is then judged by the door's time for the answer that
+// carried it (kit.js `nowFor`); a test passes one to judge every step at a set time.
 // The plan for the steps read: the landing order, the cycle, and the next step to land.
-export function plan(items, now = Date.now()) {
+export function plan(items, now) {
   const { order, cycle } = landingOrder(items);
   return { order, cycle, next: order.find((it) => canLand(it, items, now)) || null };
 }
