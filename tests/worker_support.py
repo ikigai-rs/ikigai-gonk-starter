@@ -49,8 +49,16 @@ class FakeLedger:
     state, and serves no `awaiting` field (which is exactly what the worker's fallback reads).
     """
 
-    def __init__(self, name: str = "acme", older_comment: bool = False) -> None:
+    def __init__(
+        self, name: str = "acme", older_comment: bool = False, epochs: bool = False
+    ) -> None:
+        """`epochs` makes it a ledger with the claim's fencing epoch (ledger #3205): each grant
+        of a claim raises the item's epoch, the claim answer says `at epoch N`, the JSON claim
+        carries `epoch`, and a write presenting a stale `epoch=` is a Conflict that writes
+        nothing. Without it, a ledger before the epoch: none is said, served or checked."""
         self.name = name
+        self.epochs = epochs
+        self.granted: dict[int, int] = {}  # the epoch each item's last grant reached
         self.items: dict[int, dict] = {}
         self.calls: list[tuple[str, str | None]] = []
         self.closes: list[int] = []
@@ -129,7 +137,28 @@ class FakeLedger:
         """What a takeover, or a dispatcher's release and re-claim, leaves behind."""
         with self.lock:
             exp = expires or datetime.now(UTC) + timedelta(minutes=30)
-            self.items[number]["claim"] = {"holder": holder, "kind": "machine", "expires": iso(exp)}
+            claim = {"holder": holder, "kind": "machine", "expires": iso(exp)}
+            if self.epochs:
+                claim["epoch"] = self.grant(number)
+            self.items[number]["claim"] = claim
+
+    def grant(self, number: int) -> int:
+        self.granted[number] = self.granted.get(number, 0) + 1
+        return self.granted[number]
+
+    def stale(self, item: dict, args: dict[str, str]) -> gonk.Answer | None:
+        """The Conflict for a write presenting an epoch the claim is no longer at."""
+        if not self.epochs or "epoch" not in args:
+            return None
+        current = (item["claim"] or {}).get("epoch")
+        if current is not None and str(current) == args["epoch"]:
+            return None
+        return gonk.Answer(
+            1,
+            "",
+            f"conflict: {item['display']}: epoch {args['epoch']} is stale; the claim is at "
+            f"epoch {current if current is not None else self.granted.get(item['number'], 0)}",
+        )
 
     def add_comment(
         self,
@@ -316,16 +345,26 @@ class FakeLedger:
                 return gonk.Answer(
                     1, "", f"conflict: {display} is no longer held by {holder}: it was released"
                 )
+            if renew and (refused := self.stale(item, args)):
+                return refused
             lease = worker.seconds(args.get("lease", "30m"), "lease")
             expires = iso(now + timedelta(seconds=lease))
-            item["claim"] = {"holder": holder, "kind": "machine", "expires": expires}
+            claim = {"holder": holder, "kind": "machine", "expires": expires}
+            at = ""
+            if self.epochs:
+                epoch = held["epoch"] if renew or held else self.grant(item["number"])
+                claim["epoch"] = epoch
+                at = f" at epoch {epoch}"
+            item["claim"] = claim
             verb_done = "renewed" if renew else "claimed"
-            return gonk.Answer(0, f"{display} {verb_done} by {holder} until {expires}\n", "")
+            return gonk.Answer(0, f"{display} {verb_done} by {holder}{at} until {expires}\n", "")
         if verb == "delete" and name == "claim":
             # No note, whatever is piped: the cli gives a batch's stdin only to a content-less
             # SINK, never to a DELETE, so gonk's ledger never sees one (ledger item 1229). An
             # earlier fake recorded it as a comment, and hid exactly that defect.
             held = item["claim"]
+            if refused := self.stale(item, args):
+                return refused
             if "from" in args:
                 if held is None:
                     return gonk.Answer(1, "", f"conflict: {display} is not claimed")
@@ -342,6 +381,8 @@ class FakeLedger:
                 return gonk.Answer(
                     1, "", "invalid argument `rejects`: `handback=true` and `rejects=true` together"
                 )
+            if refused := self.stale(item, args):
+                return refused
             if self.refuse_comments:
                 self.refuse_comments -= 1
                 return gonk.Answer(1, "", f"error: the store refused the comment on {display}")
