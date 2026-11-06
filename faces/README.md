@@ -30,18 +30,26 @@ python3 tools/new.py <dir> --face board      # a new repository carrying faces/,
 ```
 
 Add the printed line to gonk's `config.toml`, restart gonk, and open
-`http://127.0.0.1:1062/<face name>/` (the door gonk serves the face on). The face's form takes
+`http://127.0.0.1:1062/face/name/<name>/` (the door gonk serves the face on), replacing
+`<name>` with the configured face name, for example `board`. Keep the trailing slash so
+relative script and style paths resolve inside the face's directory. The face's form takes
 the ledger and item; the address carries them, so a bookmark reopens the same view.
 
 ## What a face may do, and may not
 
-- **May**: serve `.html`, `.js` (ES modules), `.css`, `.json`, `.svg`, `.png`, `.ico`, `.txt`
-  and `.md` from its own directory; `fetch` gonk's JSON routes on the same origin with
-  `Accept: application/json`; keep its state in the query string.
+- **May**: serve `.html`, `.css`, `.js`, `.mjs`, `.json`, `.jsonld`, `.ttl`, `.txt`, `.svg`,
+  `.png`, `.jpg`, `.webp`, `.ico` and `.woff2` from its own directory; `fetch` gonk's JSON
+  routes on the same origin with `Accept: application/json`; keep its state in the query
+  string.
 - **May not**: reach a file outside its directory (so each face carries its own copy of
   `kit.js` and `app.css`, and `tests/test_faces.py` keeps the copies identical to
   `template/`); write anything (no sink, no claim, no comment: a face is for looking); load
   a script or style from another origin; read anything the viewer could not.
+
+The served types match `MEDIA_TYPES` in
+[gonk's `src/face.rs` at e08ac9f](https://github.com/ikigai-rs/ikigai-gonk/blob/e08ac9f/src/face.rs).
+Markdown READMEs document the source directories; gonk refuses to serve them.
+`tests/test_faces.py` checks that the list above matches its allowed extensions.
 
 ## The CSP rules
 
@@ -53,8 +61,8 @@ The door's default CSP is `script-src 'self'` with no `'unsafe-inline'` for scri
   `kit.el` refuses a `style` attribute rather than let the browser drop it silently.
 - A bar is a `<progress>` or `<meter>` with its value, never a width set from script.
 
-`tests/test_faces.py` checks the first two for every HTML file, and that every face file has
-an allowed extension.
+`tests/test_faces.py` checks the first two for every HTML file, and that every face asset has
+an allowed extension (source `README.md` files are excluded).
 
 ## kit.js
 

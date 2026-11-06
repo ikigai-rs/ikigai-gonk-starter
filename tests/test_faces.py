@@ -1,4 +1,4 @@
-"""faces/: every file servable, nothing the door's CSP would refuse, the shared kit identical.
+"""faces/: every asset servable, nothing the door's CSP would refuse, the shared kit identical.
 
 gonk serves a face from one directory under `script-src 'self'` with no inline script or style
 (faces/README.md). A browser drops what that CSP refuses without failing the page, so the
@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -26,7 +27,24 @@ sys.path.insert(0, str(ROOT / "tools"))
 import gonk  # noqa: E402
 import new  # noqa: E402
 
-ALLOWED = {".html", ".js", ".css", ".json", ".svg", ".png", ".ico", ".txt", ".md"}
+# Copied from ikigai-gonk src/face.rs MEDIA_TYPES at e08ac9f.
+# https://github.com/ikigai-rs/ikigai-gonk/blob/e08ac9f/src/face.rs
+ALLOWED = {
+    ".html",
+    ".css",
+    ".js",
+    ".mjs",
+    ".json",
+    ".jsonld",
+    ".ttl",
+    ".txt",
+    ".svg",
+    ".png",
+    ".jpg",
+    ".webp",
+    ".ico",
+    ".woff2",
+}
 SAMPLES = ["template", "board", "flight", "project", "claims"]
 SHARED = ["kit.js", "app.css"]
 
@@ -84,8 +102,22 @@ class FacesTest(unittest.TestCase):
             for f in ["index.html", "app.js", "README.md", *SHARED]:
                 self.assertTrue((FACES / name / f).is_file(), f"faces/{name}/{f} is missing")
 
+    def test_readme_lists_exactly_the_allowed_extensions(self):
+        readme = (FACES / "README.md").read_text(encoding="utf-8")
+        may = readme.split("- **May**:", 1)[1].split("- **May not**:", 1)[0]
+        self.assertEqual(set(re.findall(r"`(\.[a-z0-9]+)`", may)), ALLOWED)
+
+    def test_readme_uses_the_face_route_with_a_trailing_slash(self):
+        readme = (FACES / "README.md").read_text(encoding="utf-8")
+        self.assertIn("`http://127.0.0.1:1062/face/name/<name>/`", readme)
+
     def test_only_allowed_extensions(self):
-        bad = [str(p.relative_to(ROOT)) for p in self.files() if p.suffix not in ALLOWED]
+        # READMEs document the source directories; gonk does not serve them.
+        bad = [
+            str(p.relative_to(ROOT))
+            for p in self.files()
+            if p.name != "README.md" and p.suffix not in ALLOWED
+        ]
         self.assertEqual(bad, [], f"a face serves only {sorted(ALLOWED)}")
 
     def test_no_html_carries_what_the_csp_refuses(self):
