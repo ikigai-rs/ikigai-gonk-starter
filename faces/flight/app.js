@@ -35,7 +35,7 @@ async function show(ledger, number) {
       );
     out.append(
       el("h2", {}, el("a", { href: paths.itemPage(ledger, number) }, `${ledger}#${number}`), ` ${record.title || ""}`),
-      unreadableNote(unreadable, "step", "steps"),
+      unreadableNote(unreadable, "step", "steps") ?? "",
       el("h3", {}, `Landing order (${order.length} steps)`),
       order.length ? el("ol", { class: "items" }, order.map((it) => row(it))) : el("p", { class: "muted" }, "No steps."),
       cycle.length ? el("h3", {}, "In a blocking cycle (cannot land until it is broken)") : null,

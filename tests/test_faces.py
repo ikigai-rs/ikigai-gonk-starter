@@ -159,6 +159,15 @@ class FacesTest(unittest.TestCase):
                 self.assertNotIn("http://", text)
                 self.assertNotIn("https://", text)
 
+    def test_an_absent_unreadable_note_is_never_appended_as_null(self):
+        # `unreadableNote` answers null when everything was read, and DOM `append(null)` writes
+        # the text "null" on the page (it did, on every board and flight with nothing hidden).
+        for js in FACES.rglob("app.js"):
+            text = js.read_text(encoding="utf-8")
+            with self.subTest(file=str(js.relative_to(ROOT))):
+                for call in re.findall(r"unreadableNote\([^)]*\)[^,\n]*", text):
+                    self.assertIn('?? ""', call)
+
     def test_projects_json_parses_to_names_and_ledgers(self):
         projects = json.loads((FACES / "project" / "projects.json").read_text(encoding="utf-8"))
         self.assertTrue(projects)

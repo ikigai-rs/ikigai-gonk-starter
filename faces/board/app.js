@@ -30,7 +30,7 @@ async function show(ledger, number) {
     const { by, done, tally } = board(kids);
     out.append(
       el("h2", {}, el("a", { href: paths.itemPage(ledger, number) }, `${ledger}#${number}`), ` ${epic.title || ""}`),
-      unreadableNote(unreadable, "child item", "child items"),
+      unreadableNote(unreadable, "child item", "child items") ?? "",
       el("p", {}, el("label", {}, `${done} of ${kids.length} done `, el("progress", { max: kids.length || 1, value: done }))),
       el(
         "div",
