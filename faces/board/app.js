@@ -1,24 +1,20 @@
 // The epic board: which of an epic's children can be worked now, and how far along it is.
-import { el, item, paths, pool, stateOf, announce, query, setQuery } from "./kit.js";
-import { COLUMNS, board, childNumbers } from "./board.js";
+// The epic is read in the ledger the address names (`?ledger=`); each child is read by its IRI
+// from its own ledger, and shown as `{ledger}#{number}`.
+import { el, item, labelOf, paths, stateOf, announce, query, setQuery } from "./kit.js";
+import { COLUMNS, board, readChildren } from "./board.js";
 
 const form = document.getElementById("pick");
 const out = document.getElementById("out");
 
-// The epic's children, from the epic's own `item.children` (closed ones too), each read once.
-async function children(ledger, epic) {
-  const items = await pool(childNumbers(epic), (n) => item(ledger, n));
-  return items.filter((it) => it && !it.error);
-}
-
-function card(ledger, it) {
+function card(it) {
   const state = stateOf(it);
   const holder = it.claim && it.claim.holder;
   const note = holder ? ` (${holder}${state === "expired" ? ", lease expired" : ""})` : "";
   return el(
     "li",
     {},
-    el("a", { href: paths.itemPage(ledger, it.number) }, `${ledger}#${it.number}`),
+    el("a", { href: paths.itemPage(it.ledger, it.number) }, labelOf(it)),
     ` ${it.title || ""}`,
     note ? el("span", { class: state === "expired" ? "warn" : "muted" }, note) : null,
   );
@@ -29,7 +25,7 @@ async function show(ledger, number) {
   out.replaceChildren();
   try {
     const epic = await item(ledger, number);
-    const kids = await children(ledger, epic);
+    const kids = await readChildren(epic);
     // No viewer clock: each child's lease is judged by the door's time for its own answer.
     const { by, done, tally } = board(kids);
     out.append(
@@ -44,7 +40,7 @@ async function show(ledger, number) {
             { "aria-labelledby": `col-${key}` },
             el("h3", { id: `col-${key}` }, `${name} (${by[key].length})`),
             by[key].length
-              ? el("ul", { class: "items" }, by[key].map((it) => card(ledger, it)))
+              ? el("ul", { class: "items" }, by[key].map((it) => card(it)))
               : el("p", { class: "muted" }, "None."),
           ),
         ),

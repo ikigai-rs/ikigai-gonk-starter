@@ -1,15 +1,21 @@
-// The board's and the flight plan's logic against a recorded item (tests/fixtures/faces/plan.json):
-// an epic whose JSON face carries `item.children` (one of them closed) and links of each type.
+// The board's and the flight plan's logic against recorded items. tests/fixtures/faces/plan.json
+// is an epic whose JSON face carries `item.children` (one of them closed) and links of each
+// type; tests/fixtures/faces/cross-ledger.json is a record whose steps are items of two OTHER
+// ledgers, their link targets carrying `number: null` and IRIs ending in an opaque id, two of
+// them sharing a number.
 // Run by tests/test_faces.py with Deno (the gates provision it): deno test tests/faces/
 import fixture from "../fixtures/faces/plan.json" with { type: "json" };
-import { board, childNumbers } from "../../faces/board/board.js";
-import { plan, stepNumbers } from "../../faces/flight/plan.js";
-import { answeredAt, children, item, listAll, stateOf } from "../../faces/template/kit.js";
+import cross from "../fixtures/faces/cross-ledger.json" with { type: "json" };
+import { board, childTargets, readChildren } from "../../faces/board/board.js";
+import { plan, readSteps, stepTargets } from "../../faces/flight/plan.js";
+import { answeredAt, children, item, labelOf, listAll, paths, stateOf } from "../../faces/template/kit.js";
 
 const now = Date.parse(fixture.now);
 const record = fixture.record.item;
-const member = (n) => fixture.members[String(n)].item;
+const byIri = new Map(Object.values(fixture.members).map((d) => [d.item.iri, d.item]));
+const member = (iri) => byIri.get(iri);
 const numbers = (items) => items.map((it) => it.number);
+const labels = (items) => items.map(labelOf);
 
 function equal(actual, expected, what) {
   const a = JSON.stringify(actual);
@@ -19,11 +25,11 @@ function equal(actual, expected, what) {
 
 Deno.test("children come from item.children, the closed one included", () => {
   equal(children(record), [41, 42, 43, 44, 46], "children");
-  equal(childNumbers(record), [41, 42, 43, 44, 46], "board's children");
+  equal(childTargets(record).map((iri) => member(iri).number), [41, 42, 43, 44, 46], "board's children");
 });
 
 Deno.test("the board puts the closed child in Done and counts it", () => {
-  const b = board(childNumbers(record).map(member), now);
+  const b = board(childTargets(record).map(member), now);
   equal(numbers(b.by.done), [41], "done");
   equal(numbers(b.by.blocked), [42], "blocked (43 is open and blocks it)");
   equal(numbers(b.by.flight), [43], "in flight");
@@ -34,8 +40,8 @@ Deno.test("the board puts the closed child in Done and counts it", () => {
 });
 
 Deno.test("flight keeps the closed child as a landed step, with the related item", () => {
-  equal(stepNumbers(record).sort((a, b) => a - b), [41, 42, 43, 44, 45, 46], "steps");
-  const p = plan(stepNumbers(record).map(member), now);
+  equal(stepTargets(record).map((iri) => member(iri).number).sort((a, b) => a - b), [41, 42, 43, 44, 45, 46], "steps");
+  const p = plan(stepTargets(record).map(member), now);
   equal(numbers(p.order), [41, 43, 42, 44, 45, 46], "landing order");
   equal(stateOf(p.order[0], now), "done", "the landed step");
   equal(p.cycle, [], "no cycle");
@@ -43,7 +49,7 @@ Deno.test("flight keeps the closed child as a landed step, with the related item
 });
 
 Deno.test("an expired lease reads as expired; any awaiting as awaiting", () => {
-  equal(stateOf(member(43), Date.parse("2026-11-06T14:00:00Z")), "expired", "expired");
+  equal(stateOf(fixture.members["43"].item, Date.parse("2026-11-06T14:00:00Z")), "expired", "expired");
   equal(stateOf({ status: "open", awaiting: "dispatcher" }), "awaiting", "dispatcher");
   equal(stateOf({ status: "open", awaiting: null, claim: null }), "open", "open");
 });
@@ -131,5 +137,65 @@ Deno.test("with no Date header the viewer's clock is the fallback", async () => 
     const it = await item("default", 7);
     equal(answeredAt(it), null, "no door time recorded");
     equal(stateOf(it), "expired", "judged by the viewer's clock");
+  });
+});
+
+// The steps in other ledgers, served as gonk answers each IRI's mechanical path, every path
+// asked recorded. A path for the record's ledger (`runs`) answers 404: no step lives there.
+async function serveCross(run) {
+  globalThis.location = { origin: "http://gonk.test" };
+  const realFetch = globalThis.fetch;
+  const asked = [];
+  const byPath = new Map(Object.entries(cross.members).map(([iri, doc]) => [paths.itemByIri(iri), doc]));
+  globalThis.fetch = (url) => {
+    const path = new URL(url).pathname;
+    asked.push(path);
+    const doc = byPath.get(path);
+    return Promise.resolve(doc ? new Response(JSON.stringify(doc)) : new Response("{}", { status: 404 }));
+  };
+  try {
+    await run(asked);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+Deno.test("an item IRI reads by the mechanical rule, in its own ledger; anything else is refused", () => {
+  equal(paths.itemByIri("urn:iki:ledger:alpha:item:01M6SJ5GCY0000000000000A03"), "/iki/ledger/alpha/item/01M6SJ5GCY0000000000000A03", "named");
+  equal(paths.itemByIri("urn:iki:ledger:item:12"), "/iki/ledger/item/12", "default ledger");
+  for (const bad of ["https://evil.test/x", "urn:iki:ledger:alpha:comment:1", "urn:other:item:1", "", null, "urn:iki:ledger::item:1"]) {
+    let threw = false;
+    try {
+      paths.itemByIri(bad);
+    } catch {
+      threw = true;
+    }
+    equal(threw, true, `refuses ${bad}`);
+  }
+});
+
+Deno.test("flight: a record whose steps are in two other ledgers reads each from its own", async () => {
+  const rec = cross.record.item;
+  equal(stepTargets(rec).length, 4, "no step dropped for `number: null`");
+  await serveCross(async (asked) => {
+    const steps = await readSteps(rec);
+    equal(labels(steps).sort(), ["alpha#3", "alpha#5", "beta#1", "beta#3"], "every step, by its own ledger");
+    equal(asked.filter((p) => !p.startsWith("/iki/ledger/alpha/") && !p.startsWith("/iki/ledger/beta/")), [], "nothing read in the record's ledger");
+    const p = plan(steps, Date.parse(cross.now));
+    // beta#1 blocks alpha#3, which blocks alpha#5; beta#3 shares alpha#3's number and is blocked by nothing.
+    equal(labels(p.order), ["beta#3", "beta#1", "alpha#3", "alpha#5"], "landing order by `blocks`, keyed by IRI");
+    equal(p.cycle, [], "no cycle");
+    equal(p.next && labelOf(p.next), "beta#3", "next to land: not held back by the edge into alpha#3");
+  });
+});
+
+Deno.test("board: siblings that share a number across ledgers are told apart", async () => {
+  await serveCross(async () => {
+    const kids = await readChildren(cross.record.item);
+    equal(labels(kids), ["alpha#3", "beta#3", "alpha#5"], "the epic's children, each from its own ledger");
+    const all = Object.values(cross.members).map((d) => ({ ...d.item, ledger: d.ledger }));
+    const b = board(all, Date.parse(cross.now));
+    equal(labels(b.by.blocked), ["alpha#3", "alpha#5"], "blocked: only alpha#3 (by beta#1) and alpha#5 (by alpha#3)");
+    equal(labels(b.by.ready), ["beta#1", "beta#3"], "ready: beta#3, though beta#1 blocks a #3 elsewhere");
   });
 });

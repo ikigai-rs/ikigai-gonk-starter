@@ -1,0 +1,188 @@
+{
+  "_about": "A record in one ledger (runs) whose steps are items in two others (alpha, beta): its child and `related` link targets carry `number: null`, their IRIs end in an opaque id, and alpha#3 and beta#3 share a number. `members` are the steps' JSON faces keyed by IRI, as gonk answers each IRI's mechanical path. Generic data.",
+  "now": "2026-11-06T12:00:00Z",
+  "record": {
+    "schema": "urn:iki:ledger:schema:item",
+    "ledger": "runs",
+    "item": {
+      "number": 7,
+      "display": "runs#7",
+      "iri": "urn:iki:ledger:runs:item:01M6SJ5GCY0000000000000R07",
+      "title": "Release 1.4 across repositories",
+      "status": "open",
+      "closed_reason": null,
+      "state": "filed",
+      "priority": 2,
+      "labels": [
+        "epic"
+      ],
+      "links": [
+        {
+          "type": "related",
+          "target": {
+            "number": null,
+            "display": null,
+            "iri": "urn:iki:ledger:beta:item:01M6SJ5GCY0000000000000B01"
+          }
+        }
+      ],
+      "children": [
+        {
+          "number": null,
+          "display": null,
+          "iri": "urn:iki:ledger:alpha:item:01M6SJ5GCY0000000000000A03"
+        },
+        {
+          "number": null,
+          "display": null,
+          "iri": "urn:iki:ledger:beta:item:01M6SJ5GCY0000000000000B03"
+        },
+        {
+          "number": null,
+          "display": null,
+          "iri": "urn:iki:ledger:alpha:item:01M6SJ5GCY0000000000000A05"
+        }
+      ],
+      "claim": null,
+      "awaiting": null
+    }
+  },
+  "members": {
+    "urn:iki:ledger:alpha:item:01M6SJ5GCY0000000000000A03": {
+      "schema": "urn:iki:ledger:schema:item",
+      "ledger": "alpha",
+      "item": {
+        "number": 3,
+        "display": "alpha#3",
+        "iri": "urn:iki:ledger:alpha:item:01M6SJ5GCY0000000000000A03",
+        "title": "Tag alpha",
+        "status": "open",
+        "closed_reason": null,
+        "state": "filed",
+        "priority": 3,
+        "labels": [
+          "release"
+        ],
+        "links": [
+          {
+            "type": "parent",
+            "target": {
+              "number": null,
+              "display": null,
+              "iri": "urn:iki:ledger:runs:item:01M6SJ5GCY0000000000000R07"
+            }
+          },
+          {
+            "type": "blocks",
+            "target": {
+              "number": null,
+              "display": null,
+              "iri": "urn:iki:ledger:alpha:item:01M6SJ5GCY0000000000000A05"
+            }
+          }
+        ],
+        "children": [],
+        "claim": null,
+        "awaiting": null
+      }
+    },
+    "urn:iki:ledger:beta:item:01M6SJ5GCY0000000000000B03": {
+      "schema": "urn:iki:ledger:schema:item",
+      "ledger": "beta",
+      "item": {
+        "number": 3,
+        "display": "beta#3",
+        "iri": "urn:iki:ledger:beta:item:01M6SJ5GCY0000000000000B03",
+        "title": "Build beta docs",
+        "status": "open",
+        "closed_reason": null,
+        "state": "filed",
+        "priority": 1,
+        "labels": [
+          "docs"
+        ],
+        "links": [
+          {
+            "type": "parent",
+            "target": {
+              "number": null,
+              "display": null,
+              "iri": "urn:iki:ledger:runs:item:01M6SJ5GCY0000000000000R07"
+            }
+          }
+        ],
+        "children": [],
+        "claim": null,
+        "awaiting": null
+      }
+    },
+    "urn:iki:ledger:alpha:item:01M6SJ5GCY0000000000000A05": {
+      "schema": "urn:iki:ledger:schema:item",
+      "ledger": "alpha",
+      "item": {
+        "number": 5,
+        "display": "alpha#5",
+        "iri": "urn:iki:ledger:alpha:item:01M6SJ5GCY0000000000000A05",
+        "title": "Publish alpha",
+        "status": "open",
+        "closed_reason": null,
+        "state": "filed",
+        "priority": 1,
+        "labels": [
+          "release"
+        ],
+        "links": [
+          {
+            "type": "parent",
+            "target": {
+              "number": null,
+              "display": null,
+              "iri": "urn:iki:ledger:runs:item:01M6SJ5GCY0000000000000R07"
+            }
+          }
+        ],
+        "children": [],
+        "claim": null,
+        "awaiting": null
+      }
+    },
+    "urn:iki:ledger:beta:item:01M6SJ5GCY0000000000000B01": {
+      "schema": "urn:iki:ledger:schema:item",
+      "ledger": "beta",
+      "item": {
+        "number": 1,
+        "display": "beta#1",
+        "iri": "urn:iki:ledger:beta:item:01M6SJ5GCY0000000000000B01",
+        "title": "Bump beta's alpha pin",
+        "status": "open",
+        "closed_reason": null,
+        "state": "filed",
+        "priority": 2,
+        "labels": [
+          "release"
+        ],
+        "links": [
+          {
+            "type": "parent",
+            "target": {
+              "number": null,
+              "display": null,
+              "iri": "urn:iki:ledger:runs:item:01M6SJ5GCY0000000000000R07"
+            }
+          },
+          {
+            "type": "blocks",
+            "target": {
+              "number": null,
+              "display": null,
+              "iri": "urn:iki:ledger:alpha:item:01M6SJ5GCY0000000000000A03"
+            }
+          }
+        ],
+        "children": [],
+        "claim": null,
+        "awaiting": null
+      }
+    }
+  }
+}
