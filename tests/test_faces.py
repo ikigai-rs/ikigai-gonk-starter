@@ -169,7 +169,8 @@ class FacesTest(unittest.TestCase):
                 self.assertNotIn("out.append(", text)
         for kit in FACES.rglob("kit.js"):
             with self.subTest(file=str(kit.relative_to(ROOT))):
-                self.assertIn("export function append(node, ...children)", kit.read_text(encoding="utf-8"))
+                text = kit.read_text(encoding="utf-8")
+                self.assertIn("export function append(node, ...children)", text)
 
     def test_projects_json_parses_to_names_and_ledgers(self):
         projects = json.loads((FACES / "project" / "projects.json").read_text(encoding="utf-8"))
