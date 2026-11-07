@@ -69,6 +69,7 @@ an allowed extension (source `README.md` files are excluded).
 | Export | What it does |
 | --- | --- |
 | `el(tag, attrs, ...children)` | builds an element; text is always text, never markup |
+| `append(node, ...children)` | puts children into an existing node (the page's output region), skipping `null`, `undefined` and `false` as `el` does; DOM `append(null)` would write "null" |
 | `read(path, params)` | a same-origin GET with `Accept: application/json`; throws with the status |
 | `paths.item / items` | gonk's mechanical JSON paths for an item and a listing, default or named ledger |
 | `paths.itemPage / labelPage` | gonk's own pages, for links: an item, and `/l/{ledger}?labels=` |

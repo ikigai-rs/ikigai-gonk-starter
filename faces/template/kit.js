@@ -23,6 +23,17 @@ export function el(tag, attrs = {}, ...children) {
   return node;
 }
 
+// Put children into a node that already exists (a page's output region), skipping what `el`
+// skips: undefined, null and false. DOM `append(null)` writes the text "null" on the page, so a
+// face never passes a maybe-absent child (`cond ? x : null`) to `node.append` directly.
+export function append(node, ...children) {
+  for (const child of children.flat()) {
+    if (child === undefined || child === null || child === false) continue;
+    node.append(child instanceof Node ? child : document.createTextNode(String(child)));
+  }
+  return node;
+}
+
 // Read one of gonk's JSON routes: same origin, the session's cookie, JSON asked for by name.
 // Throws an Error carrying the status, so a face can say what failed in words.
 export async function read(path, params = {}) {

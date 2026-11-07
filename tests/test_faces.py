@@ -159,14 +159,17 @@ class FacesTest(unittest.TestCase):
                 self.assertNotIn("http://", text)
                 self.assertNotIn("https://", text)
 
-    def test_an_absent_unreadable_note_is_never_appended_as_null(self):
-        # `unreadableNote` answers null when everything was read, and DOM `append(null)` writes
-        # the text "null" on the page (it did, on every board and flight with nothing hidden).
+    def test_a_face_never_appends_a_maybe_absent_child_to_the_page_directly(self):
+        # DOM `append(null)` writes the text "null" on the page, and every face passes children
+        # like `cond ? x : null` (it did: "null" under the board's heading, "nullnull" under a
+        # flight plan). Output goes through kit's `append`, which skips them as `el` does.
         for js in FACES.rglob("app.js"):
             text = js.read_text(encoding="utf-8")
             with self.subTest(file=str(js.relative_to(ROOT))):
-                for call in re.findall(r"unreadableNote\([^)]*\)[^,\n]*", text):
-                    self.assertIn('?? ""', call)
+                self.assertNotIn("out.append(", text)
+        for kit in FACES.rglob("kit.js"):
+            with self.subTest(file=str(kit.relative_to(ROOT))):
+                self.assertIn("export function append(node, ...children)", kit.read_text(encoding="utf-8"))
 
     def test_projects_json_parses_to_names_and_ledgers(self):
         projects = json.loads((FACES / "project" / "projects.json").read_text(encoding="utf-8"))
