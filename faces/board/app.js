@@ -1,7 +1,7 @@
 // The epic board: which of an epic's children can be worked now, and how far along it is.
 // The epic is read in the ledger the address names (`?ledger=`); each child is read by its IRI
 // from its own ledger, and shown as `{ledger}#{number}`.
-import { el, item, labelOf, paths, stateOf, announce, query, setQuery, unreadableNote, unreadableWords } from "./kit.js";
+import { append, el, item, labelOf, paths, stateOf, announce, query, setQuery, unreadableNote, unreadableWords } from "./kit.js";
 import { COLUMNS, board, readChildren } from "./board.js";
 
 const form = document.getElementById("pick");
@@ -28,7 +28,7 @@ async function show(ledger, number) {
     const { items: kids, unreadable } = await readChildren(epic);
     // No viewer clock: each child's lease is judged by the door's time for its own answer.
     const { by, done, tally } = board(kids);
-    out.append(
+    append(out,
       el("h2", {}, el("a", { href: paths.itemPage(ledger, number) }, `${ledger}#${number}`), ` ${epic.title || ""}`),
       unreadableNote(unreadable, "child item", "child items"),
       el("p", {}, el("label", {}, `${done} of ${kids.length} done `, el("progress", { max: kids.length || 1, value: done }))),
@@ -56,7 +56,7 @@ async function show(ledger, number) {
     const missing = unreadableWords(unreadable, "child item", "child items");
     announce(`Epic ${number}: ${kids.length} children, ${done} done.${missing ? ` ${missing}` : ""}`);
   } catch (error) {
-    out.append(el("p", { class: "warn" }, `Could not read the epic: ${error.message}`));
+    append(out, el("p", { class: "warn" }, `Could not read the epic: ${error.message}`));
     announce(`Could not read epic ${number}.`);
   }
 }

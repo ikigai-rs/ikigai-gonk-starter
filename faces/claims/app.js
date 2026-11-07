@@ -1,6 +1,6 @@
 // Claims and hand-backs: who holds what (expired leases first, since those are stuck), and
 // every item handed back, grouped by whose turn it is.
-import { el, listAll, paths, stateOf, announce, query, setQuery } from "./kit.js";
+import { append, el, listAll, paths, stateOf, announce, query, setQuery } from "./kit.js";
 
 const form = document.getElementById("pick");
 const out = document.getElementById("out");
@@ -44,12 +44,12 @@ async function show(ledger) {
     }
     const expiredCount = (list) => list.filter((it) => stateOf(it) === "expired").length;
     const holderOrder = [...holders].sort((a, b) => expiredCount(b[1]) - expiredCount(a[1]) || a[0].localeCompare(b[0]));
-    out.append(el("h2", {}, `Claimed (${[...holders.values()].flat().length})`));
-    if (!holderOrder.length) out.append(el("p", { class: "muted" }, "Nothing is claimed."));
+    append(out, el("h2", {}, `Claimed (${[...holders.values()].flat().length})`));
+    if (!holderOrder.length) append(out, el("p", { class: "muted" }, "Nothing is claimed."));
     for (const [holder, list] of holderOrder) {
       list.sort((a, b) => (stateOf(b) === "expired") - (stateOf(a) === "expired") || a.number - b.number);
       const expired = expiredCount(list);
-      out.append(
+      append(out,
         el("h3", {}, `${holder}: ${list.length} held${expired ? `, ${expired} with an expired lease` : ""}`),
         el(
           "ul",
@@ -62,17 +62,17 @@ async function show(ledger) {
         ),
       );
     }
-    out.append(el("h2", {}, `Handed back (${[...turns.values()].flat().length})`));
-    if (!turns.size) out.append(el("p", { class: "muted" }, "Nothing is waiting."));
+    append(out, el("h2", {}, `Handed back (${[...turns.values()].flat().length})`));
+    if (!turns.size) append(out, el("p", { class: "muted" }, "Nothing is waiting."));
     for (const [turn, list] of [...turns].sort((a, b) => a[0].localeCompare(b[0]))) {
-      out.append(
+      append(out,
         el("h3", {}, `${turn}'s turn: ${list.length}`),
         el("ul", { class: "items" }, list.sort((a, b) => a.number - b.number).map((it) => line(ledger, it, "handed back", false))),
       );
     }
     announce(`${holders.size} holders, ${turns.size} queues of handed-back items.`);
   } catch (error) {
-    out.append(el("p", { class: "warn" }, `Could not read the ledger: ${error.message}`));
+    append(out, el("p", { class: "warn" }, `Could not read the ledger: ${error.message}`));
     announce("Could not read the ledger.");
   }
 }
