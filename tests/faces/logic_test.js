@@ -8,7 +8,7 @@ import fixture from "../fixtures/faces/plan.json" with { type: "json" };
 import cross from "../fixtures/faces/cross-ledger.json" with { type: "json" };
 import { board, childTargets, readChildren } from "../../faces/board/board.js";
 import { plan, readSteps, stepTargets } from "../../faces/flight/plan.js";
-import { answeredAt, children, item, labelOf, listAll, paths, stateOf } from "../../faces/template/kit.js";
+import { answeredAt, children, item, labelOf, listAll, paths, refusal, stateOf, unreadableWords } from "../../faces/template/kit.js";
 
 const now = Date.parse(fixture.now);
 const record = fixture.record.item;
@@ -142,7 +142,9 @@ Deno.test("with no Date header the viewer's clock is the fallback", async () => 
 
 // The steps in other ledgers, served as gonk answers each IRI's mechanical path, every path
 // asked recorded. A path for the record's ledger (`runs`) answers 404: no step lives there.
-async function serveCross(run) {
+// `refuse` maps an IRI to the status its path answers instead (403 for a ledger the viewer
+// holds no read grant for, 404 for an item that is not there).
+async function serveCross(run, refuse = {}) {
   globalThis.location = { origin: "http://gonk.test" };
   const realFetch = globalThis.fetch;
   const asked = [];
@@ -150,6 +152,8 @@ async function serveCross(run) {
   globalThis.fetch = (url) => {
     const path = new URL(url).pathname;
     asked.push(path);
+    const refused = Object.entries(refuse).find(([iri]) => paths.itemByIri(iri) === path);
+    if (refused) return Promise.resolve(new Response(JSON.stringify({ error: "refused", title: "SECRET" }), { status: refused[1] }));
     const doc = byPath.get(path);
     return Promise.resolve(doc ? new Response(JSON.stringify(doc)) : new Response("{}", { status: 404 }));
   };
@@ -178,7 +182,8 @@ Deno.test("flight: a record whose steps are in two other ledgers reads each from
   const rec = cross.record.item;
   equal(stepTargets(rec).length, 4, "no step dropped for `number: null`");
   await serveCross(async (asked) => {
-    const steps = await readSteps(rec);
+    const { items: steps, unreadable } = await readSteps(rec);
+    equal(unreadable, [], "every step read");
     equal(labels(steps).sort(), ["alpha#3", "alpha#5", "beta#1", "beta#3"], "every step, by its own ledger");
     equal(asked.filter((p) => !p.startsWith("/iki/ledger/alpha/") && !p.startsWith("/iki/ledger/beta/")), [], "nothing read in the record's ledger");
     const p = plan(steps, Date.parse(cross.now));
@@ -191,11 +196,49 @@ Deno.test("flight: a record whose steps are in two other ledgers reads each from
 
 Deno.test("board: siblings that share a number across ledgers are told apart", async () => {
   await serveCross(async () => {
-    const kids = await readChildren(cross.record.item);
+    const { items: kids } = await readChildren(cross.record.item);
     equal(labels(kids), ["alpha#3", "beta#3", "alpha#5"], "the epic's children, each from its own ledger");
     const all = Object.values(cross.members).map((d) => ({ ...d.item, ledger: d.ledger }));
     const b = board(all, Date.parse(cross.now));
     equal(labels(b.by.blocked), ["alpha#3", "alpha#5"], "blocked: only alpha#3 (by beta#1) and alpha#5 (by alpha#3)");
     equal(labels(b.by.ready), ["beta#1", "beta#3"], "ready: beta#3, though beta#1 blocks a #3 elsewhere");
   });
+});
+
+const B03 = "urn:iki:ledger:beta:item:01M6SJ5GCY0000000000000B03";
+const A05 = "urn:iki:ledger:alpha:item:01M6SJ5GCY0000000000000A05";
+
+Deno.test("flight: steps that answer 403 and 404 are counted by reason, and the rest still order", async () => {
+  await serveCross(async () => {
+    const { items: steps, unreadable } = await readSteps(cross.record.item);
+    equal(labels(steps).sort(), ["alpha#3", "beta#1"], "the steps that could be read");
+    equal(unreadable, [{ iri: B03, reason: "denied" }, { iri: A05, reason: "not found" }], "the unreadable, by IRI and reason");
+    const p = plan(steps, Date.parse(cross.now));
+    equal(labels(p.order), ["beta#1", "alpha#3"], "landing order of the rest, by `blocks`");
+    equal(p.next && labelOf(p.next), "beta#1", "next to land");
+    const words = unreadableWords(unreadable, "step", "steps");
+    equal(words, "2 steps could not be read (1 denied, 1 not found): you may not have access to their ledger.", "said in words");
+    equal(JSON.stringify(unreadable).includes("SECRET"), false, "nothing from the refusing ledger's answer");
+  }, { [B03]: 403, [A05]: 404 });
+});
+
+Deno.test("board: children that answer 403 and 404 are counted by reason", async () => {
+  await serveCross(async () => {
+    const { items: kids, unreadable } = await readChildren(cross.record.item);
+    equal(labels(kids), ["alpha#3"], "the child that could be read");
+    equal(unreadable.map((u) => u.reason), ["denied", "not found"], "reasons, in the epic's order");
+    equal(unreadableWords(unreadable, "child item", "child items"),
+      "2 child items could not be read (1 denied, 1 not found): you may not have access to their ledger.", "said in words");
+  }, { [B03]: 403, [A05]: 404 });
+});
+
+Deno.test("unreadable words: one, grouped, other failures, and none", () => {
+  equal(unreadableWords([], "step", "steps"), "", "nothing to say");
+  equal(unreadableWords([{ iri: "x", reason: "denied" }], "step", "steps"),
+    "1 step could not be read (denied): you may not have access to its ledger.", "one");
+  equal(unreadableWords([{ iri: "x", reason: "denied" }, { iri: "y", reason: "denied" }, { iri: "z", reason: "failed" }], "step", "steps"),
+    "3 steps could not be read (2 denied, 1 failed): you may not have access to their ledger.", "grouped");
+  equal(refusal(Object.assign(new Error("x"), { status: 401 })), "denied", "401 is denied");
+  equal(refusal(Object.assign(new Error("x"), { status: 500 })), "failed", "500 failed");
+  equal(refusal(undefined), "failed", "no item in the answer");
 });

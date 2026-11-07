@@ -156,6 +156,60 @@ export async function pool(inputs, task, limit = 6) {
   return results;
 }
 
+// Read each of `iris` once (by `itemAt`, or `read` in a test), so each from its own ledger.
+// Answers {items, unreadable}: the items read, in input order, and for each read that failed
+// {iri, reason}, so a face can say how many it could not show and why. Nothing else of a
+// failed read is kept: not its answer's body, nor anything else from that ledger.
+export async function readEach(iris, read = itemAt) {
+  const results = await pool(iris, (iri) => read(iri));
+  const items = [];
+  const unreadable = [];
+  results.forEach((it, i) => {
+    if (it && typeof it === "object" && !it.error) items.push(it);
+    else unreadable.push({ iri: iris[i], reason: refusal(it && it.error) });
+  });
+  return { items, unreadable };
+}
+
+// Why a read failed, in words: "denied" (401, 403: no read grant for that ledger), "not found"
+// (404), or "failed" (anything else, or an answer that carried no item).
+export const REASONS = ["denied", "not found", "failed"];
+export function refusal(error) {
+  const status = error && error.status;
+  if (status === 401 || status === 403) return "denied";
+  if (status === 404) return "not found";
+  return "failed";
+}
+
+// The sentence for what `readEach` could not read, grouped by reason, or "" for none:
+// "2 steps could not be read (1 denied, 1 not found): you may not have access to their ledger."
+export function unreadableWords(unreadable, one, many) {
+  const n = unreadable.length;
+  if (!n) return "";
+  const count = (reason) => unreadable.filter((u) => u.reason === reason).length;
+  const groups = REASONS.filter((r) => count(r)).map((r) => (n === 1 ? r : `${count(r)} ${r}`));
+  return `${n} ${n === 1 ? one : many} could not be read (${groups.join(", ")}): ` +
+    `you may not have access to ${n === 1 ? "its" : "their"} ledger.`;
+}
+
+// That sentence on the page, under the heading, with the IRIs (and nothing else of them) in a
+// <details>; null when everything was read. Say the same sentence in the `announce`.
+export function unreadableNote(unreadable, one, many) {
+  const words = unreadableWords(unreadable, one, many);
+  if (!words) return null;
+  return el(
+    "div",
+    {},
+    el("p", { class: "warn" }, words),
+    el(
+      "details",
+      {},
+      el("summary", {}, unreadable.length === 1 ? "Its address" : "Their addresses"),
+      el("ul", { class: "items" }, unreadable.map((u) => el("li", {}, el("code", {}, u.iri), ` (${u.reason})`))),
+    ),
+  );
+}
+
 // An item's identity is its IRI: numbers repeat across ledgers, and a link target in another
 // ledger carries `number: null` and an IRI ending in an opaque id. `iriOf` is the IRI of a link
 // target, a child entry or an item; `linkedIris` and `childIris` are what links and children

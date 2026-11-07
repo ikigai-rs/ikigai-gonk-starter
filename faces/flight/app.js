@@ -2,7 +2,7 @@
 // in the order they can land (topological by `blocks`, ties by priority then number) and mark
 // the first step that can land now. The record is read in the ledger the address names
 // (`?ledger=`); each step is read by its IRI from its own ledger, and shown as `{ledger}#{number}`.
-import { el, item, labelOf, paths, stateOf, announce, query, setQuery } from "./kit.js";
+import { el, item, labelOf, paths, stateOf, announce, query, setQuery, unreadableNote, unreadableWords } from "./kit.js";
 import { plan, readSteps } from "./plan.js";
 
 const form = document.getElementById("pick");
@@ -21,7 +21,7 @@ async function show(ledger, number) {
   out.replaceChildren();
   try {
     const record = await item(ledger, number);
-    const items = await readSteps(record);
+    const { items, unreadable } = await readSteps(record);
     // No viewer clock: each step's lease is judged by the door's time for its own answer.
     const { order, cycle, next } = plan(items);
     const row = (it, extra) =>
@@ -35,12 +35,14 @@ async function show(ledger, number) {
       );
     out.append(
       el("h2", {}, el("a", { href: paths.itemPage(ledger, number) }, `${ledger}#${number}`), ` ${record.title || ""}`),
+      unreadableNote(unreadable, "step", "steps"),
       el("h3", {}, `Landing order (${order.length} steps)`),
       order.length ? el("ol", { class: "items" }, order.map((it) => row(it))) : el("p", { class: "muted" }, "No steps."),
       cycle.length ? el("h3", {}, "In a blocking cycle (cannot land until it is broken)") : null,
       cycle.length ? el("ul", { class: "items" }, cycle.map((it) => row(it, ", in a cycle"))) : null,
     );
-    announce(next ? `Next to land: ${labelOf(next)}.` : "No step can land now.");
+    const missing = unreadableWords(unreadable, "step", "steps");
+    announce(`${next ? `Next to land: ${labelOf(next)}.` : "No step can land now."}${missing ? ` ${missing}` : ""}`);
   } catch (error) {
     out.append(el("p", { class: "warn" }, `Could not read the record: ${error.message}`));
     announce(`Could not read record ${number}.`);

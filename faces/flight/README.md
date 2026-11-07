@@ -10,6 +10,9 @@ are keyed by IRI, since numbers repeat across ledgers. They are listed in the or
 ties broken by priority (lower first, none last), then number, then ledger. The first step that is open,
 not handed back and blocked by nothing open is marked "Next to land" in words as well as by
 its border. Steps caught in a blocking cycle are listed apart, since none of them can land.
+A step that could not be read (no read grant for its ledger, or not found) is left out of the
+plan but said under the heading and in the status announcement, counted by reason ("2 steps
+could not be read (1 denied, 1 not found): ..."), with only its IRI shown.
 
 The ordering logic is `plan.js`, apart from the page; `tests/faces/logic_test.js` runs it
 against recorded items (`tests/fixtures/faces/plan.json`, and `cross-ledger.json` for a record

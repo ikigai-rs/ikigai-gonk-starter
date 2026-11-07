@@ -56,7 +56,8 @@ agent's own interface is its maker's.
   script, `<style>`, `style=` and `on…=` attributes), that each page has `lang`, an `h1` and
   the polite status region, and that only servable extensions are present. That is a static
   check of the markup, not of accessibility. Its Deno test (`tests/faces/logic_test.js`)
-  checks which column or step each recorded item lands in; it renders nothing.
+  checks which column or step each recorded item lands in, and the words that say how many
+  members could not be read and why; it renders nothing.
 - The faces have NOT been opened in a browser by this repository: no keyboard pass, no 320 px
   check, no light/dark check and no axe run has been done; `faces/README.md` lists those
   checks for whoever deploys one.

@@ -1,7 +1,7 @@
 // The board's logic, apart from the page: which column each of an epic's children goes in.
 // No DOM here, so tests/faces/logic_test.js runs it against a recorded item. A child may be an
 // item of any ledger, so siblings and their `blocks` edges are keyed by IRI, never by number.
-import { childIris, iriOf, itemAt, linkedIris, pool, stateOf } from "./kit.js";
+import { childIris, iriOf, itemAt, linkedIris, readEach, stateOf } from "./kit.js";
 
 export const COLUMNS = [
   ["blocked", "Blocked by an open sibling"],
@@ -17,10 +17,11 @@ export function childTargets(epic) {
   return childIris(epic).filter((iri) => iri !== self);
 }
 
-// The children themselves, each read once by its IRI, so each from its own ledger.
-export async function readChildren(epic, read = itemAt) {
-  const items = await pool(childTargets(epic), (iri) => read(iri));
-  return items.filter((it) => it && !it.error);
+// The children themselves, each read once by its IRI, so each from its own ledger: {items,
+// unreadable}. A child that could not be read is in no column, but it is counted, with its IRI
+// and why (kit.js `readEach`), so the page says so rather than showing a smaller epic.
+export function readChildren(epic, read = itemAt) {
+  return readEach(childTargets(epic), read);
 }
 
 // Which column: done and awaiting are the ledger's own state; a claim is in flight; an open
