@@ -7,7 +7,10 @@ IRI from its own ledger and shown as `{ledger}#{number}`, and siblings are keyed
 children with the same number in different ledgers are told apart. Columns: **blocked** (an open sibling `blocks` it), **ready**, **in flight**
 (claimed; an expired lease is said in words beside the holder), **awaiting** (handed back:
 any non-null `awaiting`) and **done** (closed). A `<progress>` bar counts done of all, and a
-label tally links each label to gonk's filter, `/l/{ledger}?labels=`.
+label tally links each label to gonk's filter, `/l/{ledger}?labels=`. A child that could not
+be read (no read grant for its ledger, or not found) is in no column and not in the count, but
+is said under the heading and in the status announcement, counted by reason, with only its IRI
+shown.
 
 The column logic is `board.js`, apart from the page; `tests/faces/logic_test.js` runs it
 against recorded items (`tests/fixtures/faces/plan.json` and `cross-ledger.json`).

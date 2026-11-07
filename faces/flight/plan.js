@@ -3,7 +3,7 @@
 // recorded item. A step may be an item of ANY ledger (a run record's steps are often items of
 // each repository's own ledger), so steps and their `blocks` edges are keyed by IRI, never by
 // number: numbers repeat across ledgers.
-import { childIris, iriOf, itemAt, linkedIris, pool, stateOf } from "./kit.js";
+import { childIris, iriOf, itemAt, linkedIris, readEach, stateOf } from "./kit.js";
 
 // A plan's steps, as IRIs: the record's `item.children` (closed ones too: a landed step stays
 // a step) and the targets of its `related` links. One read of the record, never a scan of a
@@ -14,11 +14,11 @@ export function stepTargets(record) {
   return [...iris];
 }
 
-// The steps themselves, each read once by its IRI, so each from its own ledger. A step that
-// could not be read is left out.
-export async function readSteps(record, read = itemAt) {
-  const items = await pool(stepTargets(record), (iri) => read(iri));
-  return items.filter((it) => it && !it.error);
+// The steps themselves, each read once by its IRI, so each from its own ledger: {items,
+// unreadable}. A step that could not be read is not in the plan, but it is counted, with its
+// IRI and why (kit.js `readEach`), so the page says so rather than showing a shorter plan.
+export function readSteps(record, read = itemAt) {
+  return readEach(stepTargets(record), read);
 }
 
 // Lower priority number first; no priority last; then the item number, then its ledger.

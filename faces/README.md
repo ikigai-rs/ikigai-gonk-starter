@@ -78,6 +78,8 @@ an allowed extension (source `README.md` files are excluded).
 | `labelOf(item)` | `{ledger}#{number}`, in the item's own ledger |
 | `listAll(ledger, params)` | every item of a listing (open only unless `status` says), paging by `total` |
 | `pool(inputs, task, limit)` | runs tasks with at most `limit` in flight |
+| `readEach(iris)`, `refusal(error)` | reads each IRI by `itemAt`; answers `{items, unreadable}`, each unreadable one as `{iri, reason}` (`denied`, `not found` or `failed`) |
+| `unreadableWords(unreadable, one, many)`, `unreadableNote(...)` | says how many could not be read, grouped by reason, as a sentence and as the line under a heading (IRIs only, in a `<details>`) |
 | `children(item)` | the NUMBERS of an item's children from `item.children` (one ledger only: a target elsewhere has `number: null` and is left out) |
 | `linked(item, type)`, `stateOf(item)` | links by type (`blocks`, `parent`, `related`); open, claimed, expired, awaiting or done |
 | `announce(text)` | says it in the page's polite `role=status` region |
@@ -97,6 +99,10 @@ is (`"dispatcher"`, ...), and `item.status` is `open` or `closed`. A listing is
 asked otherwise: **find an item's members from its own face, never by listing the ledger.**
 A member may be in another ledger: its target then carries `number: null` and an IRI ending in
 an opaque id, so read it by that IRI (`itemAt`) and key members by IRI, never by number.
+A member the viewer cannot read (403 for a ledger they hold no read grant for, 404) is never
+left out silently: read members with `readEach`, and say what it could not read, under the
+heading and in the `announce`, with `unreadableNote` and `unreadableWords`. Show nothing of an
+unreadable member but its IRI.
 
 ## Checking one in a browser
 
