@@ -1,17 +1,12 @@
 // The flight plan: a record item's children and `related` items are a plan's steps; list them
 // in the order they can land (topological by `blocks`, ties by priority then number) and mark
-// the first step that can land now.
-import { el, item, paths, pool, stateOf, announce, query, setQuery } from "./kit.js";
-import { plan, stepNumbers } from "./plan.js";
+// the first step that can land now. The record is read in the ledger the address names
+// (`?ledger=`); each step is read by its IRI from its own ledger, and shown as `{ledger}#{number}`.
+import { el, item, labelOf, paths, stateOf, announce, query, setQuery } from "./kit.js";
+import { plan, readSteps } from "./plan.js";
 
 const form = document.getElementById("pick");
 const out = document.getElementById("out");
-
-// The steps, from the record's own `item.children` and `related` links, each read once.
-async function steps(ledger, record) {
-  const items = await pool(stepNumbers(record), (n) => item(ledger, n));
-  return items.filter((it) => it && !it.error);
-}
 
 const WORDS = {
   done: "done",
@@ -26,7 +21,7 @@ async function show(ledger, number) {
   out.replaceChildren();
   try {
     const record = await item(ledger, number);
-    const items = await steps(ledger, record);
+    const items = await readSteps(record);
     // No viewer clock: each step's lease is judged by the door's time for its own answer.
     const { order, cycle, next } = plan(items);
     const row = (it, extra) =>
@@ -34,7 +29,7 @@ async function show(ledger, number) {
         "li",
         { class: it === next ? "next" : null },
         it === next ? el("strong", {}, "Next to land: ") : null,
-        el("a", { href: paths.itemPage(ledger, it.number) }, `${ledger}#${it.number}`),
+        el("a", { href: paths.itemPage(it.ledger, it.number) }, labelOf(it)),
         ` ${it.title || ""} `,
         el("span", { class: stateOf(it) === "expired" ? "warn" : "muted" }, `(${WORDS[stateOf(it)]}${it.priority != null ? `, priority ${it.priority}` : ""}${extra || ""})`),
       );
@@ -45,7 +40,7 @@ async function show(ledger, number) {
       cycle.length ? el("h3", {}, "In a blocking cycle (cannot land until it is broken)") : null,
       cycle.length ? el("ul", { class: "items" }, cycle.map((it) => row(it, ", in a cycle"))) : null,
     );
-    announce(next ? `Next to land: ${ledger}#${next.number}.` : "No step can land now.");
+    announce(next ? `Next to land: ${labelOf(next)}.` : "No step can land now.");
   } catch (error) {
     out.append(el("p", { class: "warn" }, `Could not read the record: ${error.message}`));
     announce(`Could not read record ${number}.`);

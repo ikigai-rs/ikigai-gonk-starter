@@ -73,9 +73,12 @@ an allowed extension (source `README.md` files are excluded).
 | `paths.item / items` | gonk's mechanical JSON paths for an item and a listing, default or named ledger |
 | `paths.itemPage / labelPage` | gonk's own pages, for links: an item, and `/l/{ledger}?labels=` |
 | `item(ledger, n)` | one item's JSON face |
+| `itemAt(iri)`, `paths.itemByIri` | one item's JSON face by its IRI, from its own ledger (the item carries `ledger`) |
+| `iriOf`, `childIris(item)`, `linkedIris(item, type)` | an item's identity and what it points at, by IRI: key by these when items may span ledgers |
+| `labelOf(item)` | `{ledger}#{number}`, in the item's own ledger |
 | `listAll(ledger, params)` | every item of a listing (open only unless `status` says), paging by `total` |
 | `pool(inputs, task, limit)` | runs tasks with at most `limit` in flight |
-| `children(item)` | an item's children from `item.children`, closed ones included |
+| `children(item)` | the NUMBERS of an item's children from `item.children` (one ledger only: a target elsewhere has `number: null` and is left out) |
 | `linked(item, type)`, `stateOf(item)` | links by type (`blocks`, `parent`, `related`); open, claimed, expired, awaiting or done |
 | `announce(text)` | says it in the page's polite `role=status` region |
 | `query()`, `setQuery(params)` | the address as the face's state |
@@ -92,6 +95,8 @@ is `[{number, display, iri}]`, `item.links` is `[{type, target: {number, display
 is (`"dispatcher"`, ...), and `item.status` is `open` or `closed`. A listing is
 `{schema, ledger, count, total, offset, items, unreadable}`, and answers open items unless
 asked otherwise: **find an item's members from its own face, never by listing the ledger.**
+A member may be in another ledger: its target then carries `number: null` and an IRI ending in
+an opaque id, so read it by that IRI (`itemAt`) and key members by IRI, never by number.
 
 ## Checking one in a browser
 

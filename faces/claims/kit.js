@@ -84,12 +84,39 @@ export const paths = {
   itemPage: (ledger, number) => `/l/${encodeURIComponent(ledger || "default")}/item/${Number(number)}`,
   labelPage: (ledger, labels) =>
     `/l/${encodeURIComponent(ledger || "default")}?labels=${encodeURIComponent([].concat(labels).join(","))}`,
+  // An item's JSON face by its IRI, by the mechanical rule: `urn:iki:ledger:acme:item:01J…` is
+  // `/iki/ledger/acme/item/01J…`. Only a ledger item's IRI is read; anything else is refused.
+  itemByIri: (iri) => {
+    const parts = String(iri || "").split(":");
+    if (parts[0] !== "urn" || parts[1] !== "iki" || parts[2] !== "ledger" || parts.length < 5 ||
+        parts[parts.length - 2] !== "item" || parts.some((p) => p === "")) {
+      throw new Error(`kit.paths.itemByIri: ${iri} is not a ledger item's IRI`);
+    }
+    return "/" + parts.slice(1).map(encodeURIComponent).join("/");
+  },
 };
 
 // One item's JSON face: the `item` object of {"item": {...}}.
 export async function item(ledger, number) {
   const doc = await read(paths.item(ledger, number));
   return stamp(doc.item, answeredAt(doc));
+}
+
+// One item's JSON face read by its IRI (a link target's `iri`), so an item in ANOTHER ledger is
+// read from its own ledger. The item carries `ledger` from the answer, for its label and link.
+export async function itemAt(iri) {
+  const doc = await read(paths.itemByIri(iri));
+  const it = doc.item;
+  if (it && typeof it === "object") {
+    if (!it.iri) it.iri = iri;
+    if (!it.ledger) it.ledger = doc.ledger || "default";
+  }
+  return stamp(it, answeredAt(doc));
+}
+
+// How a person reads an item: `{ledger}#{number}`, in its own ledger.
+export function labelOf(it) {
+  return `${it.ledger || "default"}#${it.number}`;
 }
 
 // Every item of a listing, a page at a time. A listing answers
@@ -129,7 +156,26 @@ export async function pool(inputs, task, limit = 6) {
   return results;
 }
 
+// An item's identity is its IRI: numbers repeat across ledgers, and a link target in another
+// ledger carries `number: null` and an IRI ending in an opaque id. `iriOf` is the IRI of a link
+// target, a child entry or an item; `linkedIris` and `childIris` are what links and children
+// point at, by IRI. A face that may hold items of more than one ledger keys them by these.
+export function iriOf(target) {
+  if (typeof target === "string") return target || null;
+  return (target && (target.iri || target.id)) || null;
+}
+export function linkedIris(it, type) {
+  return (it.links || [])
+    .filter((l) => l.type === type)
+    .map((l) => iriOf(l.target))
+    .filter((iri) => iri !== null);
+}
+export function childIris(it) {
+  return (it.children || []).map(iriOf).filter((iri) => iri !== null);
+}
+
 // The number at the end of an item IRI or link target (`urn:iki:ledger:x:item:12` -> 12).
+// Only for items of one ledger: a target in another ledger has no number here (null).
 export function numberOf(target) {
   const iri = typeof target === "string" ? target : (target && (target.iri || target.id)) || "";
   const n = (target && typeof target === "object" && target.number) || iri.split(":").pop();

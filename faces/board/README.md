@@ -2,10 +2,12 @@
 
 `?ledger=<name>&epic=<n>`. The children are the epic's own `item.children` (its JSON face,
 closed children included), each read once; the ledger is never listed to find them, since a
-listing answers open items only. Columns: **blocked** (an open sibling `blocks` it), **ready**, **in flight**
+listing answers open items only. `?ledger=` names the EPIC's ledger; each child is read by its
+IRI from its own ledger and shown as `{ledger}#{number}`, and siblings are keyed by IRI, so two
+children with the same number in different ledgers are told apart. Columns: **blocked** (an open sibling `blocks` it), **ready**, **in flight**
 (claimed; an expired lease is said in words beside the holder), **awaiting** (handed back:
 any non-null `awaiting`) and **done** (closed). A `<progress>` bar counts done of all, and a
 label tally links each label to gonk's filter, `/l/{ledger}?labels=`.
 
 The column logic is `board.js`, apart from the page; `tests/faces/logic_test.js` runs it
-against a recorded item (`tests/fixtures/faces/plan.json`).
+against recorded items (`tests/fixtures/faces/plan.json` and `cross-ledger.json`).
