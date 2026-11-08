@@ -45,6 +45,10 @@ agent's own interface is its maker's.
   never by color alone; progress is a `<progress>` with its count in text; light and dark
   follow the system setting, with text colors chosen for 4.5:1; a wide table scrolls in its
   own box so the page does not scroll sideways at 320 px.
+  The board's column colors are decoration beside each column's written name, chosen for 3:1
+  against the page and the column in light and dark. Its picker is a labeled `<select>`: picking
+  an option redraws the board without moving focus and says so in the status region, and the
+  number input beside it reaches any item.
 
 ## How it is tested
 
@@ -55,14 +59,18 @@ agent's own interface is its maker's.
 - `tests/test_faces.py` checks every face's HTML for what the door's CSP refuses (inline
   script, `<style>`, `style=` and `on…=` attributes), that each page has `lang`, an `h1` and
   the polite status region, and that only servable extensions are present. That is a static
-  check of the markup, not of accessibility. Its Deno test (`tests/faces/logic_test.js`)
+  check of the markup, not of accessibility. It also computes the contrast of the board's
+  column colors from `app.css`. Its Deno test (`tests/faces/logic_test.js`)
   checks which column or step each recorded item lands in, and the words that say how many
   members could not be read and why; it renders nothing.
-- The faces have NOT been opened in a browser by this repository: no keyboard pass, no 320 px
-  check, no light/dark check and no axe run has been done; `faces/README.md` lists those
-  checks for whoever deploys one.
-- No automated accessibility checker, no browser and no assistive technology has been used on
-  any of this output. **No screen reader, screen magnifier, speech-input or switch-access
+- The `board` face was driven once in headless Chromium (2026-11-08, by script, against a stand-in
+  for gonk answering under the door's CSP): tab order, no CSP violation, no sideways scroll at
+  320 px with long titles, and the column borders' computed colors in light and dark. That is
+  not a person's keyboard pass and CI does not repeat it. The other faces have NOT been opened
+  in a browser by this repository, and no axe run has been done on any; `faces/README.md` lists
+  those checks for whoever deploys one.
+- No automated accessibility checker and no assistive technology has been used on any of this
+  output, and no browser on any of it but that one pass. **No screen reader, screen magnifier, speech-input or switch-access
   software has been used to test this repository.**
 
 ## Known limitations

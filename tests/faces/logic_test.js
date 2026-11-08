@@ -6,7 +6,7 @@
 // Run by tests/test_faces.py with Deno (the gates provision it): deno test tests/faces/
 import fixture from "../fixtures/faces/plan.json" with { type: "json" };
 import cross from "../fixtures/faces/cross-ledger.json" with { type: "json" };
-import { board, childTargets, readChildren } from "../../faces/board/board.js";
+import { board, childTargets, optionText, parseKinds, pickerOptions, pickerWords, readChildren, readPicker } from "../../faces/board/board.js";
 import { plan, readSteps, stepTargets } from "../../faces/flight/plan.js";
 import { answeredAt, children, item, labelOf, listAll, paths, refusal, stateOf, unreadableWords } from "../../faces/template/kit.js";
 
@@ -241,4 +241,61 @@ Deno.test("unreadable words: one, grouped, other failures, and none", () => {
   equal(refusal(Object.assign(new Error("x"), { status: 401 })), "denied", "401 is denied");
   equal(refusal(Object.assign(new Error("x"), { status: 500 })), "failed", "500 failed");
   equal(refusal(undefined), "failed", "no item in the answer");
+});
+
+const open = (number, title = `t${number}`) => ({ number, title });
+const offered = (p) => p.entries.map((e) => [e.kind, e.number]);
+
+Deno.test("picker: two kinds merge by number, ordered by kind as listed and then by number", () => {
+  const p = pickerOptions(["epic", "feature"], [
+    { items: [open(9), open(4)], total: 2 },
+    { items: [open(7), open(4), open(2)], total: 3 },
+  ]);
+  equal(offered(p), [["epic", 4], ["epic", 9], ["feature", 2], ["feature", 7]], "4 carries both: once, under the first kind listed");
+  equal(offered(pickerOptions(["feature", "epic"], [{ items: [open(4)] }, { items: [open(4), open(1)] }])),
+    [["feature", 4], ["epic", 1]], "the listed order decides");
+});
+
+Deno.test("picker: an option names its kind only when there is more than one", () => {
+  const entry = { number: 4, title: "Build it", kind: "epic" };
+  equal(optionText(entry, "acme", ["epic"]), "acme#4 Build it", "one kind");
+  equal(optionText(entry, "acme", ["epic", "story"]), "epic: acme#4 Build it", "two kinds");
+});
+
+Deno.test("picker: kinds follow the label grammar, each once, and default to epic", () => {
+  equal(parseKinds("epic, feature,,a b,<x>,kind:story,epic"), ["epic", "feature", "kind:story"], "bad ones ignored");
+  equal(parseKinds(null), ["epic"], "absent");
+  equal(parseKinds("<x>"), ["epic"], "none valid");
+});
+
+Deno.test("picker: one bounded page per kind, open items only", async () => {
+  const asked = [];
+  const p = await readPicker("acme", ["epic", "story"], (path, params) => {
+    asked.push([path, params]);
+    if (params.labels === "story") throw Object.assign(new Error("no"), { status: 403 });
+    return Promise.resolve({ items: [open(1)], total: 60 });
+  });
+  equal(asked, [
+    ["/iki/ledger/acme/items", { labels: "epic", status: "open", limit: 50 }],
+    ["/iki/ledger/acme/items", { labels: "story", status: "open", limit: 50 }],
+  ], "the reads");
+  equal(p.failed, [{ kind: "story", reason: "denied" }], "the kind that failed");
+  equal(pickerWords(["epic", "story"], p),
+    "Could not list open items labeled story (denied). Offering the first 1 of 60 open items labeled epic; enter an item number for the others.",
+    "said in words");
+});
+
+Deno.test("picker: with nothing to offer the status says so, and a failure is not called empty", () => {
+  const none = { entries: [], failed: [], truncated: [] };
+  equal(pickerWords(["epic"], none), "No open item labeled epic is readable here. Label one, or enter an item number.", "one kind");
+  equal(pickerWords(["epic", "feature", "story"], none),
+    "No open item labeled epic, feature or story is readable here. Label one, or enter an item number.", "three kinds");
+  equal(pickerWords(["epic"], { ...none, failed: [{ kind: "epic", reason: "failed" }] }), "Could not list open items labeled epic (failed).", "failed");
+  equal(pickerWords(["epic"], { ...none, entries: [{ number: 1 }] }), "", "nothing to say");
+});
+
+Deno.test("the picker's kinds are left out of the label tally", () => {
+  const kid = { number: 1, status: "open", labels: ["epic", "format"] };
+  equal(board([kid], now).tally, [["epic", 1], ["format", 1]], "without quiet");
+  equal(board([kid], now, ["epic"]).tally, [["format", 1]], "quiet");
 });

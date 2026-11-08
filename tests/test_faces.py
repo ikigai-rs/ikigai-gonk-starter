@@ -93,6 +93,19 @@ def problems(html: str) -> list[str]:
     return p.problems
 
 
+def luminance(color: str) -> float:
+    """WCAG relative luminance of a #rrggbb color."""
+    channels = [int(color[i : i + 2], 16) / 255 for i in (1, 3, 5)]
+    r, g, b = (c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in channels)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def contrast(a: str, b: str) -> float:
+    """WCAG contrast ratio of two #rrggbb colors."""
+    hi, lo = sorted((luminance(a), luminance(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
 class FacesTest(unittest.TestCase):
     def files(self) -> list[Path]:
         return [p for p in FACES.rglob("*") if p.is_file()]
@@ -171,6 +184,24 @@ class FacesTest(unittest.TestCase):
             with self.subTest(file=str(kit.relative_to(ROOT))):
                 text = kit.read_text(encoding="utf-8")
                 self.assertIn("export function append(node, ...children)", text)
+
+    def test_board_column_colors_meet_the_non_text_floor_in_light_and_dark(self):
+        css = (FACES / "template" / "app.css").read_text(encoding="utf-8")
+        light = css.split("@media (prefers-color-scheme: dark)", 1)[0]
+        dark = css.split("@media (prefers-color-scheme: dark)", 1)[1].split("* {", 1)[0]
+
+        def color(block: str, name: str) -> str:
+            found = re.search(rf"--{name}: (#[0-9a-f]{{6}});", block)
+            self.assertIsNotNone(found, f"--{name} is missing")
+            return found.group(1)
+
+        for theme, block in (("light", light), ("dark", dark)):
+            for key in ["blocked", "ready", "flight", "awaiting", "done"]:
+                self.assertIn(f".columns > .column-{key} ", css)
+                for ground in ["bg", "surface"]:
+                    with self.subTest(theme=theme, column=key, against=ground):
+                        ratio = contrast(color(block, f"column-{key}"), color(block, ground))
+                        self.assertGreaterEqual(ratio, 3.0)
 
     def test_projects_json_parses_to_names_and_ledgers(self):
         projects = json.loads((FACES / "project" / "projects.json").read_text(encoding="utf-8"))
