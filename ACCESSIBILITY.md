@@ -10,7 +10,7 @@ how it is tested, and how to report a barrier. It is not a conformance claim. Ad
 | Status | Evaluation in progress. No conformance claim. |
 | Owner | the maintainers of this repository |
 | Report a barrier | [a GitHub issue](https://github.com/ikigai-rs/ikigai-gonk-starter/issues/new) with the `accessibility` label; anything security-sensitive through [private vulnerability reporting](https://github.com/ikigai-rs/ikigai-gonk-starter/security/advisories/new) |
-| Last reviewed | 2026-10-15 |
+| Last reviewed | 2026-11-08 |
 
 ## What it shows people
 
@@ -42,11 +42,18 @@ agent's own interface is its maker's.
 - **Faces**: real headings (one `h1`, then `h2`/`h3` per section); every control has a visible
   `<label>`; status is announced politely through one `role="status" aria-live="polite"`
   region, never by moving focus; state is said in words ("lease expired", "Next to land"),
-  never by color alone; progress is a `<progress>` with its count in text; light and dark
-  follow the system setting, with text colors chosen for 4.5:1; a wide table scrolls in its
-  own box so the page does not scroll sideways at 320 px.
+  never by color alone; progress is a `<progress>` with its count in text; a wide table scrolls
+  in its own box so the page does not scroll sideways at 320 px, and the project view's table
+  becomes a list of labeled cards at 600 px and narrower, its narrow columns never breaking
+  inside a word. A count is a chip: its label, then its number in an element of its own.
+  `app.css` carries gonk's light, dark and high-contrast palettes under `[data-theme=…]`, the
+  attribute gonk's own script sets on a face's page, and follows `prefers-color-scheme` and
+  `prefers-contrast: more` when the attribute is absent or `auto`. Every color is a token: text
+  meets 4.5:1 on its backgrounds (7:1 in high contrast), control borders, the focus ring and
+  column colors 3:1. A face offers no theme chooser, breadcrumb or link back to gonk of its
+  own: gonk draws that frame around a face (ledger item 3279).
   The board's column colors are decoration beside each column's written name, chosen for 3:1
-  against the page and the column in light and dark. Its picker is a labeled `<select>`: picking
+  against the page and the column in every theme. Its picker is a labeled `<select>`: picking
   an option redraws the board without moving focus and says so in the status region, and the
   number input beside it reaches any item.
 
@@ -59,18 +66,23 @@ agent's own interface is its maker's.
 - `tests/test_faces.py` checks every face's HTML for what the door's CSP refuses (inline
   script, `<style>`, `style=` and `on…=` attributes), that each page has `lang`, an `h1` and
   the polite status region, and that only servable extensions are present. That is a static
-  check of the markup, not of accessibility. It also computes the contrast of the board's
-  column colors from `app.css`. Its Deno test (`tests/faces/logic_test.js`)
-  checks which column or step each recorded item lands in, and the words that say how many
-  members could not be read and why; it renders nothing.
+  check of the markup, not of accessibility. From `app.css` it computes the contrast of every
+  text and non-text token in each theme, and checks that every color comes from the tokens and
+  that "auto" falls back to the same palettes. Its Deno test (`tests/faces/logic_test.js`)
+  checks which column or step each recorded item lands in, the words that say how many members
+  could not be read and why, and the order of a count's chips; it renders nothing.
 - The `board` face was driven once in headless Chromium (2026-11-08, by script, against a stand-in
   for gonk answering under the door's CSP): tab order, no CSP violation, no sideways scroll at
   320 px with long titles, and the column borders' computed colors in light and dark. That is
-  not a person's keyboard pass and CI does not repeat it. The other faces have NOT been opened
-  in a browser by this repository, and no axe run has been done on any; `faces/README.md` lists
-  those checks for whoever deploys one.
+  not a person's keyboard pass and CI does not repeat it.
+- All five faces were driven once in headless Chromium (2026-11-08, by script, against the same
+  kind of stand-in): no CSP violation and no sideways scroll at 320 and 687 px, in dark. The
+  project view was also measured and looked at in screenshots at 375, 687 and 1280 px, in
+  light, dark and high contrast by `data-theme`, and the `auto` fallback by emulated
+  `prefers-color-scheme` and `prefers-contrast`. No keyboard pass was made in this run, and no
+  axe run has been done on any face; `faces/README.md` lists those checks for whoever deploys one.
 - No automated accessibility checker and no assistive technology has been used on any of this
-  output, and no browser on any of it but that one pass. **No screen reader, screen magnifier, speech-input or switch-access
+  output, and no browser on any of it but those passes. **No screen reader, screen magnifier, speech-input or switch-access
   software has been used to test this repository.**
 
 ## Known limitations

@@ -34,6 +34,35 @@ export function append(node, ...children) {
   return node;
 }
 
+// Counts as a list of chips: each entry is [label, count], in the order given. `link(label)`,
+// when given, makes the label a link; the count is always an element of its own.
+export function chips(entries, link) {
+  return el(
+    "ul",
+    { class: "chips", role: "list" },
+    [...entries].map(([label, count]) =>
+      el(
+        "li",
+        { class: "chip" },
+        el("span", { class: "chip-label" }, link ? link(label) : label),
+        " ",
+        el("span", { class: "chip-count" }, count),
+      ),
+    ),
+  );
+}
+
+// [label, count] entries, most first and then by name.
+export function orderByCount(entries) {
+  return [...entries].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])));
+}
+
+// [priority, count] entries, 0 up to 4 and then "none", whatever the counts.
+export function orderByPriority(entries) {
+  const rank = (priority) => (priority === "none" ? Infinity : Number(priority));
+  return [...entries].sort((a, b) => rank(a[0]) - rank(b[0]));
+}
+
 // Read one of gonk's JSON routes: same origin, the session's cookie, JSON asked for by name.
 // Throws an Error carrying the status, so a face can say what failed in words.
 export async function read(path, params = {}) {
