@@ -1,41 +1,122 @@
 /* app.css: one stylesheet every sample shares (copied unchanged; tests/test_faces.py checks).
-   Light and dark follow the viewer's setting. No style attributes anywhere: the door's CSP
-   refuses them, so every look is a class here. Text colors meet 4.5:1 on their background. */
+   The theme is gonk's: on a face page gonk's script sets data-theme on <html>, and with no
+   attribute or "auto" the viewer's system settings decide. These are gonk's palettes (ikigai-ui
+   tokens.css), in its order: high contrast wins over dark. Every color is a token, so a theme is
+   one block. Text meets 4.5:1 on --bg and --surface (7:1 in high contrast); --line, --focus and
+   the columns meet 3:1; --rule is decoration. No style attributes anywhere: the door's CSP
+   refuses them, so every look is a class here. */
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
+  --gap: 1rem;
   --bg: #ffffff;
-  --surface: #f3f4f6;
-  --fg: #111827;
-  --muted: #4b5563;
-  --accent: #1d4ed8;
-  --line: #d1d5db;
-  --warn: #92400e;
-  --ok: #166534;
-  --focus: #b45309;
+  --surface: #f4f6f8;
+  --fg: #1b1f24;
+  --muted: #545d68;
+  --accent: #0b5cad;
+  --line: #848d97;
+  --rule: #c9d1d9;
+  --warn: #8a4b00;
+  --ok: #19703a;
+  --focus: #0b5cad;
   --column-blocked: #b91c1c;
   --column-ready: #15803d;
   --column-flight: #1d4ed8;
   --column-awaiting: #b45309;
   --column-done: #4b5563;
-  --gap: 1rem;
 }
 @media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #111827;
-    --surface: #1f2937;
-    --fg: #f9fafb;
-    --muted: #d1d5db;
-    --accent: #93c5fd;
-    --line: #4b5563;
-    --warn: #fcd34d;
-    --ok: #86efac;
-    --focus: #fbbf24;
+  :root:not([data-theme]), :root[data-theme="auto"] {
+    color-scheme: dark;
+    --bg: #0d1117;
+    --surface: #161b22;
+    --fg: #e6edf3;
+    --muted: #9ea8b3;
+    --accent: #6cb6ff;
+    --line: #656d76;
+    --rule: #30363d;
+    --warn: #e3b341;
+    --ok: #5bd07a;
+    --focus: #6cb6ff;
     --column-blocked: #f87171;
     --column-ready: #4ade80;
     --column-flight: #60a5fa;
     --column-awaiting: #fbbf24;
     --column-done: #9ca3af;
   }
+}
+@media (prefers-contrast: more) {
+  :root:not([data-theme]), :root[data-theme="auto"] {
+    color-scheme: dark;
+    --bg: #000000;
+    --surface: #1a1a1a;
+    --fg: #ffffff;
+    --muted: #e0e0e0;
+    --accent: #ffe066;
+    --line: #ffffff;
+    --rule: #ffffff;
+    --warn: #ffd33d;
+    --ok: #7ee787;
+    --focus: #ffe066;
+    --column-blocked: #ff9e9e;
+    --column-ready: #7ee787;
+    --column-flight: #79c0ff;
+    --column-awaiting: #ffd33d;
+    --column-done: #ffffff;
+  }
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #ffffff;
+  --surface: #f4f6f8;
+  --fg: #1b1f24;
+  --muted: #545d68;
+  --accent: #0b5cad;
+  --line: #848d97;
+  --rule: #c9d1d9;
+  --warn: #8a4b00;
+  --ok: #19703a;
+  --focus: #0b5cad;
+  --column-blocked: #b91c1c;
+  --column-ready: #15803d;
+  --column-flight: #1d4ed8;
+  --column-awaiting: #b45309;
+  --column-done: #4b5563;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0d1117;
+  --surface: #161b22;
+  --fg: #e6edf3;
+  --muted: #9ea8b3;
+  --accent: #6cb6ff;
+  --line: #656d76;
+  --rule: #30363d;
+  --warn: #e3b341;
+  --ok: #5bd07a;
+  --focus: #6cb6ff;
+  --column-blocked: #f87171;
+  --column-ready: #4ade80;
+  --column-flight: #60a5fa;
+  --column-awaiting: #fbbf24;
+  --column-done: #9ca3af;
+}
+:root[data-theme="high-contrast"] {
+  color-scheme: dark;
+  --bg: #000000;
+  --surface: #1a1a1a;
+  --fg: #ffffff;
+  --muted: #e0e0e0;
+  --accent: #ffe066;
+  --line: #ffffff;
+  --rule: #ffffff;
+  --warn: #ffd33d;
+  --ok: #7ee787;
+  --focus: #ffe066;
+  --column-blocked: #ff9e9e;
+  --column-ready: #7ee787;
+  --column-flight: #79c0ff;
+  --column-awaiting: #ffd33d;
+  --column-done: #ffffff;
 }
 * { box-sizing: border-box; }
 body {
@@ -60,7 +141,7 @@ label { display: flex; flex-direction: column; font-size: 0.9rem; max-width: 100
 input, select, button { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line); padding: 0.25rem 0.5rem; max-width: 100%; }
 ul.items, ol.items { padding-left: 1.25rem; }
 .columns { display: grid; gap: var(--gap); grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); }
-.columns > section { background: var(--surface); border: 1px solid var(--line); padding: 0.5rem; min-width: 0; }
+.columns > section { background: var(--surface); border: 1px solid var(--rule); padding: 0.5rem; min-width: 0; }
 /* A board column's color is decoration: its heading says what it is. Each is at least 3:1 against
    --bg and --surface in its theme (WCAG 1.4.11; tests/test_faces.py computes it). */
 .columns > section[class*="column-"] { border-top-width: 4px; }
@@ -70,9 +151,29 @@ ul.items, ol.items { padding-left: 1.25rem; }
 .columns > .column-awaiting { border-top-color: var(--column-awaiting); }
 .columns > .column-done { border-top-color: var(--column-done); }
 progress, meter { width: 100%; max-width: 24rem; }
-table { border-collapse: collapse; width: 100%; }
-th, td { text-align: left; border-bottom: 1px solid var(--line); padding: 0.25rem 0.5rem; vertical-align: top; }
+/* A table's columns size to their content, so its words break only at spaces: the page's
+   `overflow-wrap: anywhere` would narrow a column to one character per line. */
+table { border-collapse: collapse; width: 100%; overflow-wrap: normal; }
+th, td { text-align: left; border-bottom: 1px solid var(--rule); padding: 0.25rem 0.5rem; vertical-align: top; }
 .table-wrap { overflow-x: auto; }
-.breadcrumb { display: flex; flex-wrap: wrap; gap: 0.25rem 0.5rem; margin: 0 0 0.25rem; padding: 0; list-style: none; font-size: 0.9rem; }
-.breadcrumb li + li::before { content: "/"; content: "/" / ""; margin-right: 0.5rem; }
-.tags { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; padding: 0; list-style: none; }
+.nowrap { white-space: nowrap; }
+/* A long word (a URL in a title) breaks rather than widen the table; the column keeps a width. */
+.long-text { min-width: 12rem; overflow-wrap: anywhere; }
+/* A count: its label, then its number in an element of its own. */
+.chips { display: flex; flex-wrap: wrap; gap: 0.25rem 0.5rem; margin: 0 0 0.5rem; padding: 0; list-style: none; }
+.chip { display: inline-flex; align-items: baseline; gap: 0.375rem; max-width: 100%; padding: 0 0.5rem; background: var(--surface); border: 1px solid var(--rule); border-radius: 0.5rem; }
+.chip-label { min-width: 0; }
+.chip-label a { display: inline-block; min-width: 1.5rem; min-height: 1.5rem; }
+.chip-count { font-weight: 600; font-variant-numeric: tabular-nums; }
+/* The same rows twice, one shown: a table where it fits, a list of cards where it does not. */
+.narrow-only { display: none; }
+.item-cards { margin: 0; padding: 0; list-style: none; }
+.item-card { margin: 0 0 0.5rem; padding: 0.5rem; background: var(--surface); border: 1px solid var(--rule); }
+.item-card dl { margin: 0; }
+.item-card dl > div { display: grid; grid-template-columns: 5rem minmax(0, 1fr); gap: 0.5rem; }
+.item-card dt { color: var(--muted); }
+.item-card dd { margin: 0; }
+@media (max-width: 37.5rem) {
+  .wide-only { display: none; }
+  .narrow-only { display: block; }
+}

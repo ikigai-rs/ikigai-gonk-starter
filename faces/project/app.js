@@ -4,23 +4,69 @@
 //
 // One listing per ledger, at most a few at once. ikigai-ledger's `ledgers=` union (ledger PR 88)
 // answers all of them in one read once it is released, and replaces this loop.
-import { append, el, read, listAll, paths, pool, stateOf, announce, query, setQuery } from "./kit.js";
+import { append, chips, el, read, listAll, orderByCount, orderByPriority, paths, pool, stateOf, announce, query, setQuery } from "./kit.js";
 
 const form = document.getElementById("pick");
 const out = document.getElementById("out");
 const split = (s) => (s || "").split(",").map((w) => w.trim()).filter(Boolean);
 
 function counts(title, entries, link) {
-  return [
-    el("h3", {}, title),
+  return [el("h3", {}, title), chips(entries, link)];
+}
+
+const itemLink = (it) => el("a", { href: paths.itemPage(it.ledger, it.number) }, `${it.ledger}#${it.number}`);
+
+// The item, priority and state columns stay on one line; a title or labels wrap between words.
+function table(items) {
+  const heads = [["Item", true], ["Title"], ["Priority", true], ["State", true], ["Labels"]];
+  return el(
+    "div",
+    { class: "table-wrap wide-only" },
     el(
-      "ul",
-      { class: "tags" },
-      [...entries]
-        .sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))
-        .map(([k, n]) => el("li", {}, link ? link(k) : String(k), ` ${n}`)),
+      "table",
+      {},
+      el("thead", {}, el("tr", {}, heads.map(([h, tight]) => el("th", { scope: "col", class: tight ? "nowrap" : null }, h)))),
+      el(
+        "tbody",
+        {},
+        items.map((it) =>
+          el(
+            "tr",
+            {},
+            el("td", { class: "nowrap" }, itemLink(it)),
+            el("td", { class: "long-text" }, it.title || ""),
+            el("td", { class: "nowrap" }, it.priority ?? "none"),
+            el("td", { class: "nowrap" }, stateOf(it)),
+            el("td", {}, (it.labels || []).join(", ")),
+          ),
+        ),
+      ),
     ),
-  ];
+  );
+}
+
+// The same rows where a table does not fit: one card per item, each value under its name.
+function cards(items) {
+  const field = (name, value) => el("div", {}, el("dt", {}, name), el("dd", {}, value));
+  return el(
+    "ul",
+    { class: "item-cards narrow-only", role: "list" },
+    items.map((it) =>
+      el(
+        "li",
+        { class: "item-card" },
+        el(
+          "dl",
+          {},
+          field("Item", itemLink(it)),
+          field("Title", it.title || ""),
+          field("Priority", it.priority ?? "none"),
+          field("State", stateOf(it)),
+          it.labels && it.labels.length ? field("Labels", it.labels.join(", ")) : null,
+        ),
+      ),
+    ),
+  );
 }
 
 async function show(projects, name, labels, without) {
@@ -55,34 +101,12 @@ async function show(projects, name, labels, without) {
   append(out,
     el("h2", {}, `${name}: ${items.length} open items`),
     failed.length ? el("p", { class: "warn" }, `Could not read: ${failed.join(", ")}.`) : null,
-    ...counts("By ledger", byLedger, (l) => el("a", { href: paths.labelPage(l, labels) }, l)),
-    ...counts("By priority", byPriority),
-    ...counts("By label", byLabel),
+    ...counts("By ledger", orderByCount(byLedger), (l) => el("a", { href: paths.labelPage(l, labels) }, l)),
+    ...counts("By priority", orderByPriority(byPriority)),
+    ...counts("By label", orderByCount(byLabel)),
     el("h3", {}, "Items"),
-    el(
-      "div",
-      { class: "table-wrap" },
-      el(
-        "table",
-        {},
-        el("thead", {}, el("tr", {}, ["Item", "Title", "Priority", "State", "Labels"].map((h) => el("th", { scope: "col" }, h)))),
-        el(
-          "tbody",
-          {},
-          items.map((it) =>
-            el(
-              "tr",
-              {},
-              el("td", {}, el("a", { href: paths.itemPage(it.ledger, it.number) }, `${it.ledger}#${it.number}`)),
-              el("td", {}, it.title || ""),
-              el("td", {}, it.priority ?? "none"),
-              el("td", {}, stateOf(it)),
-              el("td", {}, (it.labels || []).join(", ")),
-            ),
-          ),
-        ),
-      ),
-    ),
+    table(items),
+    cards(items),
   );
   announce(`${items.length} open items in ${name}.`);
 }

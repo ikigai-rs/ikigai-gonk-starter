@@ -8,7 +8,7 @@ import fixture from "../fixtures/faces/plan.json" with { type: "json" };
 import cross from "../fixtures/faces/cross-ledger.json" with { type: "json" };
 import { board, childTargets, optionText, parseKinds, pickerOptions, pickerWords, readChildren, readPicker } from "../../faces/board/board.js";
 import { plan, readSteps, stepTargets } from "../../faces/flight/plan.js";
-import { answeredAt, children, item, labelOf, listAll, paths, refusal, stateOf, unreadableWords } from "../../faces/template/kit.js";
+import { answeredAt, children, item, labelOf, listAll, orderByCount, orderByPriority, paths, refusal, stateOf, unreadableWords } from "../../faces/template/kit.js";
 
 const now = Date.parse(fixture.now);
 const record = fixture.record.item;
@@ -298,4 +298,15 @@ Deno.test("the picker's kinds are left out of the label tally", () => {
   const kid = { number: 1, status: "open", labels: ["epic", "format"] };
   equal(board([kid], now).tally, [["epic", 1], ["format", 1]], "without quiet");
   equal(board([kid], now, ["epic"]).tally, [["format", 1]], "quiet");
+});
+
+Deno.test("priorities are ordered 0 to 4 and then none, whatever their counts", () => {
+  const counted = new Map([["none", 152], [2, 328], [0, 1], [4, 9], [3, 508], [1, 40]]);
+  equal(orderByPriority(counted).map(([p]) => p), [0, 1, 2, 3, 4, "none"], "the order");
+  equal(orderByPriority(new Map([["none", 3]])), [["none", 3]], "none alone");
+});
+
+Deno.test("labels are ordered by count and then by name", () => {
+  const counted = new Map([["zeta", 2], ["alpha", 2], ["mid", 5], ["low", 1]]);
+  equal(orderByCount(counted), [["mid", 5], ["alpha", 2], ["zeta", 2], ["low", 1]], "the order");
 });

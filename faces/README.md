@@ -64,6 +64,19 @@ The door's default CSP is `script-src 'self'` with no `'unsafe-inline'` for scri
 `tests/test_faces.py` checks the first two for every HTML file, and that every face asset has
 an allowed extension (source `README.md` files are excluded).
 
+## The frame and the theme are gonk's
+
+gonk draws the frame around a face (ledger item 3279): a bar across the top of the page and its
+own theme script, which sets `data-theme` on `<html>` from the viewer's choice. So a face carries
+no breadcrumb, no link back to gonk, no theme chooser, and never reads `localStorage`.
+
+`app.css` holds gonk's palettes under `[data-theme="light"]`, `"dark"` and `"high-contrast"`,
+falling back to `prefers-color-scheme` and `prefers-contrast: more` when the attribute is
+absent or `auto`, as on a gonk that does not draw the frame yet. Every color in a face is a token
+from those blocks; `tests/test_faces.py` fails on one written anywhere else, and computes each
+theme's contrast: 4.5:1 for text (7:1 in high contrast) and 3:1 for control borders, the focus
+ring and the board's column colors. `--rule` is the decorative line, with no floor.
+
 ## kit.js
 
 | Export | What it does |
@@ -81,6 +94,8 @@ an allowed extension (source `README.md` files are excluded).
 | `pool(inputs, task, limit)` | runs tasks with at most `limit` in flight |
 | `readEach(iris)`, `refusal(error)` | reads each IRI by `itemAt`; answers `{items, unreadable}`, each unreadable one as `{iri, reason}` (`denied`, `not found` or `failed`) |
 | `unreadableWords(unreadable, one, many)`, `unreadableNote(...)` | says how many could not be read, grouped by reason, as a sentence and as the line under a heading (IRIs only, in a `<details>`) |
+| `chips(entries, link)` | `[label, count]` entries as a list of chips, the label first (a link when `link` is given) and the count in its own element |
+| `orderByCount`, `orderByPriority` | a count's entries most first and then by name; or 0 to 4 and then `none`, whatever the counts |
 | `children(item)` | the NUMBERS of an item's children from `item.children` (one ledger only: a target elsewhere has `number: null` and is left out) |
 | `linked(item, type)`, `stateOf(item)` | links by type (`blocks`, `parent`, `related`); open, claimed, expired, awaiting or done |
 | `announce(text)` | says it in the page's polite `role=status` region |
@@ -112,7 +127,8 @@ unreadable member but its IRI.
 3. Tab through the page: every control and link is reached, in reading order, with a visible
    focus ring.
 4. Narrow the window to 320 px: nothing scrolls sideways (a wide table scrolls in its own box).
-5. Switch the system between light and dark.
+5. Choose light, dark and high contrast in gonk's header, and switch the system between light
+   and dark with gonk's choice on `auto`.
 6. Run axe (or your browser's accessibility audit) and fix what it finds.
 
 None of these has been run by this repository's CI: it has no browser. `ACCESSIBILITY.md`

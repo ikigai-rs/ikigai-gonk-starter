@@ -47,6 +47,17 @@ ALLOWED = {
 }
 SAMPLES = ["template", "board", "flight", "project", "claims"]
 SHARED = ["kit.js", "app.css"]
+THEMES = ["light", "dark", "high-contrast"]
+TEXT_TOKENS = ["fg", "muted", "accent", "warn", "ok"]
+NON_TEXT_TOKENS = [
+    "line",
+    "focus",
+    "column-blocked",
+    "column-ready",
+    "column-flight",
+    "column-awaiting",
+    "column-done",
+]
 
 
 class CspProblems(HTMLParser):
@@ -104,6 +115,47 @@ def contrast(a: str, b: str) -> float:
     """WCAG contrast ratio of two #rrggbb colors."""
     hi, lo = sorted((luminance(a), luminance(b)), reverse=True)
     return (hi + 0.05) / (lo + 0.05)
+
+
+def tokens(block: str) -> dict[str, str]:
+    """The color tokens one rule of app.css defines, by name."""
+    return dict(re.findall(r"--([a-z-]+): (#[0-9a-f]{6});", block))
+
+
+def theme_tokens(css: str, name: str) -> dict[str, str]:
+    """The tokens of the rule `:root[data-theme="<name>"]`."""
+    found = re.search(rf':root\[data-theme="{name}"\] \{{(.*?)\}}', css, re.S)
+    return tokens(found.group(1)) if found else {}
+
+
+def auto_tokens(css: str, feature: str) -> dict[str, str]:
+    """The tokens for "auto" (or no attribute) under one media feature."""
+    selector = r':root:not\(\[data-theme\]\), :root\[data-theme="auto"\]'
+    found = re.search(rf"@media \({feature}\) \{{\s*{selector} \{{(.*?)\}}", css, re.S)
+    return tokens(found.group(1)) if found else {}
+
+
+NAMED_COLOR = re.compile(
+    r"\b(white|black|red|green|blue|yellow|orange|purple|pink|brown|gray|grey|silver|navy|teal"
+    r"|maroon|lime|aqua|fuchsia|olive|canvas|canvastext)\b",
+    re.I,
+)
+
+
+def colors_outside_tokens(css: str) -> list[str]:
+    """Every declaration of a stylesheet that writes a color instead of naming a token."""
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    found = []
+    for name, value in re.findall(r"([a-z-]+)\s*:\s*([^;{}]+)[;}]", css):
+        if name.startswith("--") or name == "color-scheme":
+            continue
+        if re.search(
+            r"#[0-9a-f]{3,8}\b|\b(rgb|rgba|hsl|hsla|hwb|lab|lch|oklab|oklch)\(", value, re.I
+        ):
+            found.append(f"{name}: {value.strip()}")
+        elif NAMED_COLOR.search(value):
+            found.append(f"{name}: {value.strip()}")
+    return found
 
 
 class FacesTest(unittest.TestCase):
@@ -185,23 +237,66 @@ class FacesTest(unittest.TestCase):
                 text = kit.read_text(encoding="utf-8")
                 self.assertIn("export function append(node, ...children)", text)
 
-    def test_board_column_colors_meet_the_non_text_floor_in_light_and_dark(self):
-        css = (FACES / "template" / "app.css").read_text(encoding="utf-8")
-        light = css.split("@media (prefers-color-scheme: dark)", 1)[0]
-        dark = css.split("@media (prefers-color-scheme: dark)", 1)[1].split("* {", 1)[0]
+    def css(self) -> str:
+        return (FACES / "template" / "app.css").read_text(encoding="utf-8")
 
-        def color(block: str, name: str) -> str:
-            found = re.search(rf"--{name}: (#[0-9a-f]{{6}});", block)
-            self.assertIsNotNone(found, f"--{name} is missing")
-            return found.group(1)
+    def test_every_theme_defines_the_same_tokens_and_auto_falls_back_to_them(self):
+        css = self.css()
+        light = theme_tokens(css, "light")
+        self.assertTrue(light, "no light theme in app.css")
+        for name in THEMES:
+            with self.subTest(theme=name):
+                self.assertEqual(theme_tokens(css, name).keys(), light.keys())
+        # With no attribute, or "auto", the system settings choose among the same palettes.
+        default = css.split("@media", 1)[0]
+        self.assertEqual(tokens(default), light)
+        self.assertEqual(auto_tokens(css, "prefers-color-scheme: dark"), theme_tokens(css, "dark"))
+        self.assertEqual(
+            auto_tokens(css, "prefers-contrast: more"), theme_tokens(css, "high-contrast")
+        )
+        # Equal specificity, so the later rule wins: high contrast must follow dark, as in gonk's.
+        self.assertLess(
+            css.index("@media (prefers-color-scheme: dark)"),
+            css.index("@media (prefers-contrast: more)"),
+        )
 
-        for theme, block in (("light", light), ("dark", dark)):
-            for key in ["blocked", "ready", "flight", "awaiting", "done"]:
-                self.assertIn(f".columns > .column-{key} ", css)
-                for ground in ["bg", "surface"]:
-                    with self.subTest(theme=theme, column=key, against=ground):
-                        ratio = contrast(color(block, f"column-{key}"), color(block, ground))
-                        self.assertGreaterEqual(ratio, 3.0)
+    def test_text_and_non_text_tokens_meet_their_floors_in_every_theme(self):
+        css = self.css()
+        for name in THEMES:
+            palette = theme_tokens(css, name)
+            floor = 7.0 if name == "high-contrast" else 4.5
+            for ground in ["bg", "surface"]:
+                for token in TEXT_TOKENS:
+                    with self.subTest(theme=name, token=token, against=ground):
+                        self.assertGreaterEqual(contrast(palette[token], palette[ground]), floor)
+                for token in NON_TEXT_TOKENS:
+                    with self.subTest(theme=name, token=token, against=ground):
+                        self.assertGreaterEqual(contrast(palette[token], palette[ground]), 3.0)
+
+    def test_every_color_in_app_css_comes_from_the_tokens(self):
+        self.assertEqual(colors_outside_tokens(self.css()), [])
+
+    def test_the_color_check_catches_a_written_color(self):
+        self.assertEqual(colors_outside_tokens("a { color: #123456; }"), ["color: #123456"])
+        self.assertEqual(colors_outside_tokens("a { color: white }"), ["color: white"])
+        self.assertEqual(
+            colors_outside_tokens("a { background: rgb(0, 0, 0); }"),
+            ["background: rgb(0, 0, 0)"],
+        )
+        self.assertEqual(colors_outside_tokens(":root { --bg: #fff; color: var(--bg); }"), [])
+
+    def test_no_face_carries_a_way_back_to_gonk_of_its_own(self):
+        # gonk draws the frame around a face (ledger item 3279): a breadcrumb here would be a
+        # second one on the same page.
+        for page in FACES.rglob("index.html"):
+            text = page.read_text(encoding="utf-8")
+            with self.subTest(page=str(page.relative_to(ROOT))):
+                self.assertNotIn('aria-label="Breadcrumb"', text)
+                self.assertNotIn('href="/"', text)
+
+    def test_a_table_does_not_inherit_breaking_anywhere(self):
+        # The page's `overflow-wrap: anywhere` broke narrow columns one character per line.
+        self.assertRegex(self.css(), r"table \{[^}]*overflow-wrap: normal;")
 
     def test_projects_json_parses_to_names_and_ledgers(self):
         projects = json.loads((FACES / "project" / "projects.json").read_text(encoding="utf-8"))

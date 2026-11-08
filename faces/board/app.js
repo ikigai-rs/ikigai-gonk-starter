@@ -2,7 +2,7 @@
 // The epic is read in the ledger the address names (`?ledger=`); each child is read by its IRI
 // from its own ledger, and shown as `{ledger}#{number}`. The picker offers the ledger's open items
 // carrying one of the address's `?kinds=` (default epic); the number input still reaches any item.
-import { append, el, item, labelOf, paths, stateOf, announce, query, setQuery, unreadableNote, unreadableWords } from "./kit.js";
+import { append, chips, el, item, labelOf, paths, stateOf, announce, query, setQuery, unreadableNote, unreadableWords } from "./kit.js";
 import { COLUMNS, board, optionText, parseKinds, pickerWords, readChildren, readPicker } from "./board.js";
 
 const form = document.getElementById("pick");
@@ -58,11 +58,7 @@ async function show(ledger, number) {
         ),
       ),
       el("h2", {}, "Labels"),
-      el(
-        "ul",
-        { class: "tags" },
-        tally.map(([l, n]) => el("li", {}, el("a", { href: paths.labelPage(ledger, l) }, l), ` ${n}`)),
-      ),
+      chips(tally, (l) => el("a", { href: paths.labelPage(ledger, l) }, l)),
     );
     const missing = unreadableWords(unreadable, "child item", "child items");
     say(`Item ${number}: ${kids.length} children, ${done} done.${missing ? ` ${missing}` : ""}`);

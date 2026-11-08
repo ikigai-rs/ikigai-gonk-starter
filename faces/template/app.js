@@ -13,7 +13,7 @@ async function show(ledger, number) {
     append(out,
       el("p", {}, el("a", { href: paths.itemPage(ledger, number) }, `${ledger}#${number}`), " ", it.title || ""),
       el("p", {}, "State: ", stateOf(it)),
-      el("ul", { class: "tags", "aria-label": "Labels" }, (it.labels || []).map((l) => el("li", {}, l))),
+      el("ul", { class: "chips", role: "list", "aria-label": "Labels" }, (it.labels || []).map((l) => el("li", { class: "chip" }, l))),
     );
     announce(`Item ${number} shown.`);
   } catch (error) {
