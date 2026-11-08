@@ -2,7 +2,7 @@
 // in the order they can land (topological by `blocks`, ties by priority then number) and mark
 // the first step that can land now. The record is read in the ledger the address names
 // (`?ledger=`); each step is read by its IRI from its own ledger, and shown as `{ledger}#{number}`.
-import { el, item, labelOf, paths, stateOf, announce, query, setQuery, unreadableNote, unreadableWords } from "./kit.js";
+import { append, el, item, labelOf, paths, stateOf, announce, query, setQuery, unreadableNote, unreadableWords } from "./kit.js";
 import { plan, readSteps } from "./plan.js";
 
 const form = document.getElementById("pick");
@@ -33,7 +33,7 @@ async function show(ledger, number) {
         ` ${it.title || ""} `,
         el("span", { class: stateOf(it) === "expired" ? "warn" : "muted" }, `(${WORDS[stateOf(it)]}${it.priority != null ? `, priority ${it.priority}` : ""}${extra || ""})`),
       );
-    out.append(
+    append(out,
       el("h2", {}, el("a", { href: paths.itemPage(ledger, number) }, `${ledger}#${number}`), ` ${record.title || ""}`),
       unreadableNote(unreadable, "step", "steps"),
       el("h3", {}, `Landing order (${order.length} steps)`),
@@ -44,7 +44,7 @@ async function show(ledger, number) {
     const missing = unreadableWords(unreadable, "step", "steps");
     announce(`${next ? `Next to land: ${labelOf(next)}.` : "No step can land now."}${missing ? ` ${missing}` : ""}`);
   } catch (error) {
-    out.append(el("p", { class: "warn" }, `Could not read the record: ${error.message}`));
+    append(out, el("p", { class: "warn" }, `Could not read the record: ${error.message}`));
     announce(`Could not read record ${number}.`);
   }
 }

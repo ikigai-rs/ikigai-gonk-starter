@@ -4,7 +4,7 @@
 //
 // One listing per ledger, at most a few at once. ikigai-ledger's `ledgers=` union (ledger PR 88)
 // answers all of them in one read once it is released, and replaces this loop.
-import { el, read, listAll, paths, pool, stateOf, announce, query, setQuery } from "./kit.js";
+import { append, el, read, listAll, paths, pool, stateOf, announce, query, setQuery } from "./kit.js";
 
 const form = document.getElementById("pick");
 const out = document.getElementById("out");
@@ -27,7 +27,7 @@ async function show(projects, name, labels, without) {
   out.replaceChildren();
   const ledgers = projects[name] || [];
   if (!ledgers.length) {
-    out.append(el("p", { class: "warn" }, `No project named ${name} in projects.json.`));
+    append(out, el("p", { class: "warn" }, `No project named ${name} in projects.json.`));
     return;
   }
   announce(`Reading ${ledgers.length} ledgers…`);
@@ -52,7 +52,7 @@ async function show(projects, name, labels, without) {
     byPriority.set(p, (byPriority.get(p) || 0) + 1);
     byLedger.set(it.ledger, byLedger.get(it.ledger) + 1);
   }
-  out.append(
+  append(out,
     el("h2", {}, `${name}: ${items.length} open items`),
     failed.length ? el("p", { class: "warn" }, `Could not read: ${failed.join(", ")}.`) : null,
     ...counts("By ledger", byLedger, (l) => el("a", { href: paths.labelPage(l, labels) }, l)),
@@ -92,7 +92,7 @@ async function start() {
   try {
     projects = await read(new URL("projects.json", location.href).pathname);
   } catch (error) {
-    out.append(el("p", { class: "warn" }, `Could not read projects.json: ${error.message}`));
+    append(out, el("p", { class: "warn" }, `Could not read projects.json: ${error.message}`));
     return;
   }
   for (const name of Object.keys(projects)) form.project.append(el("option", { value: name }, name));
