@@ -12,6 +12,11 @@
   --warn: #92400e;
   --ok: #166534;
   --focus: #b45309;
+  --column-blocked: #b91c1c;
+  --column-ready: #15803d;
+  --column-flight: #1d4ed8;
+  --column-awaiting: #b45309;
+  --column-done: #4b5563;
   --gap: 1rem;
 }
 @media (prefers-color-scheme: dark) {
@@ -25,6 +30,11 @@
     --warn: #fcd34d;
     --ok: #86efac;
     --focus: #fbbf24;
+    --column-blocked: #f87171;
+    --column-ready: #4ade80;
+    --column-flight: #60a5fa;
+    --column-awaiting: #fbbf24;
+    --column-done: #9ca3af;
   }
 }
 * { box-sizing: border-box; }
@@ -46,13 +56,23 @@ h2 { font-size: 1.15rem; margin: 1rem 0 0.5rem; }
 .ok { color: var(--ok); font-weight: 600; }
 .next { border-left: 4px solid var(--accent); padding-left: 0.5rem; }
 form { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: end; }
-label { display: flex; flex-direction: column; font-size: 0.9rem; }
+label { display: flex; flex-direction: column; font-size: 0.9rem; max-width: 100%; min-width: 0; }
 input, select, button { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line); padding: 0.25rem 0.5rem; max-width: 100%; }
 ul.items, ol.items { padding-left: 1.25rem; }
 .columns { display: grid; gap: var(--gap); grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); }
 .columns > section { background: var(--surface); border: 1px solid var(--line); padding: 0.5rem; min-width: 0; }
+/* A board column's color is decoration: its heading says what it is. Each is at least 3:1 against
+   --bg and --surface in its theme (WCAG 1.4.11; tests/test_faces.py computes it). */
+.columns > section[class*="column-"] { border-top-width: 4px; }
+.columns > .column-blocked { border-top-color: var(--column-blocked); }
+.columns > .column-ready { border-top-color: var(--column-ready); }
+.columns > .column-flight { border-top-color: var(--column-flight); }
+.columns > .column-awaiting { border-top-color: var(--column-awaiting); }
+.columns > .column-done { border-top-color: var(--column-done); }
 progress, meter { width: 100%; max-width: 24rem; }
 table { border-collapse: collapse; width: 100%; }
 th, td { text-align: left; border-bottom: 1px solid var(--line); padding: 0.25rem 0.5rem; vertical-align: top; }
 .table-wrap { overflow-x: auto; }
+.breadcrumb { display: flex; flex-wrap: wrap; gap: 0.25rem 0.5rem; margin: 0 0 0.25rem; padding: 0; list-style: none; font-size: 0.9rem; }
+.breadcrumb li + li::before { content: "/"; content: "/" / ""; margin-right: 0.5rem; }
 .tags { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; padding: 0; list-style: none; }
