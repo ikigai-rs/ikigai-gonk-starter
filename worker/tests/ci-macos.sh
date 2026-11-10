@@ -113,7 +113,10 @@ if [ "$n" = 1 ]; then ok "two setups put the line in ~/.config/git/ignore once";
 if [ "$(stat -f %Su /Users/agent/.config/git/ignore 2>/dev/null)" = agent ]; then ok "the excludes file is the agent's own"; else bad "the excludes file is not owned by agent"; fi
 if as_agent sh -c 'd="$HOME/xrepo" && git init -q "$d" && mkdir -p "$d/.claude" && : > "$d/.claude/settings.local.json" && cd "$d" && git check-ignore -q .claude/settings.local.json'; then
     ok "git, as the agent, ignores .claude/settings.local.json in a fresh repository"
-else bad "git, as the agent, does not ignore .claude/settings.local.json"; fi
+else
+    bad "git, as the agent, does not ignore .claude/settings.local.json"
+    as_agent sh -c 'cd "$HOME/xrepo" 2>&1 && env | grep -E "^(HOME|XDG|GIT)" ; git config --show-origin --get-all core.excludesFile; git check-ignore -v .claude/settings.local.json; echo "check-ignore: $?"' 2>&1 | sed 's/^/         /'
+fi
 rm -rf /Users/agent/xrepo
 has "--check reports it" "INFO git-excludes: ignores $xl" "$out"
 has "in the facts the hub reads" "INFO git-excludes: ignores $xl" "$(cat /Users/Shared/hubdiag/facts)"
