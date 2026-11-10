@@ -75,7 +75,8 @@ hasnt "no WSL step on a Linux that is not WSL" "── WSL" "$out"
 
 echo "── the agent's global git excludes ignore Claude Code's settings.local.json (ledger item 3347)"
 xl='**/.claude/settings.local.json'
-as_agent() { (cd / && runuser -u agent -- env HOME=/home/agent "$@"); }
+# runuser passes the runner's XDG_CONFIG_HOME (/home/runner/.config) through; the agent has none.
+as_agent() { (cd / && runuser -u agent -- env -u XDG_CONFIG_HOME HOME=/home/agent "$@"); }
 n="$(grep -cxF -- "$xl" /home/agent/.config/git/ignore 2>/dev/null)"
 if [ "$n" = 1 ]; then ok "two setups put the line in ~/.config/git/ignore once"; else bad "~/.config/git/ignore holds the line ${n:-0} time(s), wanted 1"; fi
 if [ "$(stat -c %U /home/agent/.config/git/ignore 2>/dev/null)" = agent ]; then ok "the excludes file is the agent's own"; else bad "the excludes file is not owned by agent"; fi
