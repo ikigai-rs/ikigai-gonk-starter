@@ -961,7 +961,7 @@ the Pop!_OS 24.04 worker, `run --once`) showed, and what is still to try:
    A directory left by an earlier run is never reused: the next is `item-<N>.2`.
 5. **Agent.** The prompt is a fixed preamble (AGENTS.md's rules: reproduce first; work only
    in this worktree; a pull request with green CI; never merge, never close; the evidence
-   file when it is not a defect), then the item's title and body. Its output goes to
+   file when it is not a defect or updates an existing PR), then the item's title and body. Its output goes to
    `<work_root>/<repo>/item-<N>.log`, beside the worktree, inside hubdiag's view. When the
    budget runs out the worker stops its whole process group (SIGTERM, then SIGKILL after
    `grace`).
@@ -969,6 +969,12 @@ the Pop!_OS 24.04 worker, `run --once`) showed, and what is still to try:
    `gh pr checks`, or, when the token may not read checks (a fine-grained token cannot), the
    Actions runs for the head's **full** sha (`gh run list --commit`; a short sha answers `[]`
    silently, so the worker never asks with one). The comment names which source answered.
+   For reworks with no PR on the fresh branch, the worker compares the latest previous
+   `Evidence:` hand-back's same-repository PR heads before and after the agent runs. Only a
+   changed full head SHA becomes fallback evidence; unreadable or unchanged heads do not.
+   The hand-back includes the PR URL, new head SHA and CI. The rework brief also asks the
+   agent to put the existing PR URL on the first line of its report file and the pushed head
+   SHA on the lines after, so it can explicitly report its evidence.
    Then `Evidence: <PR URL>` and the details go on the item as a comment posted with
    `handback=true`, the claim is released, and the worktree is removed (unless `keep`).
    This is proposed close evidence. After checking CI and merging, the dispatcher closes

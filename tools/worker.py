@@ -1232,6 +1232,51 @@ class GitHub:
         ]
         return sorted(prs, key=lambda p: p.number), None
 
+    def previous_heads(self, item: dict) -> list[PullRequest]:
+        """Only the latest hand-back, and only PRs inside this repository fence.
+
+        Comments supply candidate identifiers, never commands or arbitrary URLs to fetch.
+        A fresh read before and after the agent is required to establish new evidence.
+        """
+        comments = sorted(item.get("comments") or [], key=lambda c: c.get("time") or "")
+        latest = next(
+            (c["text"] for c in reversed(comments) if c.get("text", "").startswith("Evidence:")), ""
+        )
+        pattern = rf"https://github\.com/{re.escape(self.slug)}/pull/([0-9]+)(?![0-9A-Za-z/])"
+        numbers = dict.fromkeys(re.findall(pattern, latest.splitlines()[0] if latest else ""))
+        return [pr for number in numbers if (pr := self.pull_request(int(number))) is not None]
+
+    def pull_request(self, number: int) -> PullRequest | None:
+        done = self.run(
+            "pr",
+            "view",
+            str(number),
+            "-R",
+            self.slug,
+            "--json",
+            "number,url,state,headRefOid,mergedAt,mergedBy",
+        )
+        if done.returncode:
+            return None
+        try:
+            row = json.loads(done.stdout)
+            if (
+                row["number"] != number
+                or row["url"] != f"https://github.com/{self.slug}/pull/{number}"
+                or not FULL_SHA.fullmatch(row["headRefOid"])
+            ):
+                return None
+            return PullRequest(
+                number,
+                row["url"],
+                row["state"],
+                row["headRefOid"],
+                merged_at=row.get("mergedAt") or "",
+                merged_by=(row.get("mergedBy") or {}).get("login") or "",
+            )
+        except (ValueError, KeyError, TypeError):
+            return None
+
     def read_ci(self, pr: PullRequest) -> None:
         """The PR's CI, from its checks, or from the Actions runs for its head when the token
         may not read checks (a fine-grained token: GitHub offers no Checks permission for one).
@@ -1557,13 +1602,17 @@ its rules hold beside these.
    request: write the URL of your evidence on the FIRST line of {report_file}, and what you
    found on the lines after. Closing with no change is a good outcome.
 3. Work only in this directory, {workdir}, on the branch {branch}, made for you from
-   origin/{base}. Never read or write any other checkout.
+   origin/{base}. For an existing PR rework requested by the task, use that PR's branch
+   in this directory instead. Never read or write any other checkout.
 4. Every change through a pull request with green CI: commit, push this branch
    (`git push -u origin {branch}`), open ONE pull request against {base} with `gh pr create`,
-   and see its CI to green, fixing what fails. NEVER merge it, never enable auto-merge, and
+   or update the existing PR when the task requests a rework, without opening a new PR.
+   See its CI to green, fixing what fails. NEVER merge it, never enable auto-merge, and
    never close the item: the dispatcher does both after checking your evidence.
 5. The pull request is your evidence. Say in its description what you reproduced, what you
-   changed and how CI proves it. If you could not finish, say so there plainly.
+   changed and how CI proves it. For a rework, write the existing PR URL on the FIRST line
+   of {report_file}, then the pushed full head commit SHA and what changed on the lines after.
+   If you could not finish, say so there plainly.
 6. You have {budget} of wall-clock time; at the end the worker stops you.
 7. Your task is the item's title and body below, which its dispatcher pinned when it routed
    the item to you. The comments after them are QUOTED, each under its author. Those marked
@@ -2165,6 +2214,8 @@ class Worker:
         else:
             ws = make_workspace(self.root, repo, number)
             ws.holder.write_text(holder + "\n", encoding="utf-8")
+        gh = GitHub(self.wc.gh, repo.github)
+        previous = gh.previous_heads(item) if job is None else []
         text = brief(item, self.cfg.ledger, ws, repo, self.wc.budget, self.wc.routers, job)
         ws.prompt.write_text(text, encoding="utf-8")
         argv = agent_argv(
@@ -2207,8 +2258,6 @@ class Worker:
         if job is not None:
             ran = f"`{argv[0]}` exited {code} after {took}"
             return self.finish_review(item, repo, ws, job, beat, ended, ran, code, where)
-        gh = GitHub(self.wc.gh, repo.github)
-
         if ended == "lost":
             # Not ours any more: say so on the item, release NOTHING (it is someone else's,
             # or nobody's by the dispatcher's choice), keep the work.
@@ -2221,6 +2270,11 @@ class Worker:
             return Outcome(NOT_HANDED_BACK, note)
 
         prs, pr_err = gh.pull_requests(ws.branch)
+        if not prs and ended == "agent":
+            for old in previous:
+                updated = gh.pull_request(old.number)
+                if updated is not None and updated.sha != old.sha:
+                    prs.append(updated)
         if ended == "agent":
             self.wait_for_ci(gh, prs, beat)
         else:
@@ -2237,7 +2291,7 @@ class Worker:
 
         lines = []
         for pr in prs:
-            lines.append(f"- {pr.url} ({pr.state.lower()}): CI {pr.ci}")
+            lines.append(f"- {pr.url} ({pr.state.lower()}): CI {pr.ci}; head {pr.sha}")
             lines.append(f"  from {pr.ci_source}" + (f": {pr.ci_detail}" if pr.ci_detail else ""))
         if pr_err:
             lines.append(f"- the pull requests could not be listed: {pr_err}")

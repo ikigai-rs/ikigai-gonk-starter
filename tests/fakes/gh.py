@@ -56,6 +56,19 @@ def main() -> int:
             {"number": number, "url": url, "state": "OPEN", "headRefName": head, "headRefOid": sha}
         )
         out = url + "\n"
+    elif argv[:2] == ["pr", "update-head"]:
+        sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+        for pr in state["prs"]:
+            if pr["headRefName"] == flag(argv, "--head"):
+                pr["headRefOid"] = sha
+    elif argv[:2] == ["pr", "view"]:
+        pr = next((p for p in state["prs"] if str(p["number"]) == argv[2]), None)
+        if pr is None:
+            code, err = 1, "No pull request found"
+        else:
+            out = json.dumps(pr)
     elif argv[:2] == ["pr", "list"]:
         head = flag(argv, "--head")
         # `"merge": {"at": "now" | <ISO time>, "by": <login>}`: someone merges every pull
