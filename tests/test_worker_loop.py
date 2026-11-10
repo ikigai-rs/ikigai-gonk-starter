@@ -203,6 +203,99 @@ class TheLoop(unittest.TestCase):
             self.assertIn(rule, prompt)
         self.assertTrue(prompt.rstrip().endswith("# Fix the due dates\n\nThey are off."))
 
+    def test_rework_finds_the_changed_previous_pr_without_a_report(self):
+        from worker_support import git
+
+        git("branch", "existing-pr", "main", cwd=self.rig.origin)
+        old_sha = git("rev-parse", "main", cwd=self.rig.origin).strip()
+        url = "https://github.com/acme/lib/pull/21"
+        self.rig.gh_state.write_text(
+            json.dumps(
+                {
+                    "prs": [
+                        {
+                            "number": 21,
+                            "url": url,
+                            "state": "OPEN",
+                            "headRefName": "existing-pr",
+                            "headRefOid": old_sha,
+                        }
+                    ]
+                }
+            )
+        )
+        n = self.ledger.file(
+            "Rework", ["worker:w1", "repo:lib"], body="Update PR 21 on the same branch; no new PR."
+        )
+        self.ledger.items[n]["comments"].append(
+            {
+                "text": f"Evidence: {url}\nPrevious hand-back",
+                "time": "2026-11-09",
+            }
+        )
+        self.rig.agent_flags = ["--rework", "existing-pr"]
+        outcome = self.run_once()
+        self.assertEqual(outcome.code, worker.HANDED_BACK, outcome.summary)
+        [comment] = evidence_comments(self.ledger.items[n])[1:]
+        new_sha = git("rev-parse", "existing-pr", cwd=self.rig.origin).strip()
+        self.assertNotEqual(new_sha, old_sha)
+        self.assertIn(url, comment)
+        self.assertIn(new_sha, comment)
+        self.assertIn("CI green", comment)
+        self.assertEqual(len(self.rig.gh()["prs"]), 1)
+        self.assertIn("or update the existing PR", self.rig.prompt(n))
+        self.assertIn("then the pushed full head commit SHA", self.rig.prompt(n))
+
+    def test_rework_does_not_reuse_unchanged_pr_evidence(self):
+        from worker_support import git
+
+        sha = git("rev-parse", "main", cwd=self.rig.origin).strip()
+        self.rig.gh_state.write_text(
+            json.dumps(
+                {
+                    "prs": [
+                        {
+                            "number": 21,
+                            "url": "https://github.com/acme/lib/pull/21",
+                            "state": "OPEN",
+                            "headRefName": "existing-pr",
+                            "headRefOid": sha,
+                        }
+                    ]
+                }
+            )
+        )
+        n = self.ledger.file("Rework", ["worker:w1", "repo:lib"])
+        self.ledger.items[n]["comments"].append(
+            {
+                "text": "Evidence: https://github.com/acme/lib/pull/21",
+                "time": "2026-11-08",
+            }
+        )
+        self.rig.agent_flags = ["--no-pr"]
+        outcome = self.run_once()
+        self.assertEqual(outcome.code, worker.NOT_HANDED_BACK)
+        self.assertIn("without evidence", outcome.summary)
+
+    def test_previous_pr_discovery_uses_only_latest_handback_and_repository(self):
+        self.rig.configure()
+        gh = worker.GitHub(self.rig.gh_argv, "acme/lib")
+        item = {
+            "comments": [
+                {"text": "Evidence: https://github.com/acme/lib/pull/21", "time": "1"},
+                {"text": "Evidence: https://github.com/other/lib/pull/22", "time": "2"},
+            ]
+        }
+        self.assertEqual(gh.previous_heads(item), [])
+        self.assertEqual(self.rig.gh().get("calls", []), [])
+        item["comments"].append(
+            {
+                "text": "Evidence: https://github.com/acme/lib/pull/99",
+                "time": "3",
+            }
+        )
+        self.assertEqual(gh.previous_heads(item), [])  # missing PR cannot be a baseline
+
     def test_a_ledger_without_handback_still_gets_the_evidence(self):
         # A ledger older than 0.8.0 does not know `handback` and ignores it, writing the
         # comment: the evidence is never lost, and the `Evidence:` prefix is the hand-back
