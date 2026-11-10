@@ -17,7 +17,10 @@
 #            [--windows-home DIR]... [--gh-bin PATH] [--journalctl-bin PATH] [--wsl-root DIR]
 #
 #   --sections      comma list from: identity,closed,view,nowrite,journal,linger,sleep,hw,tools,gh,
-#                   agents,wsl,wsl-mnt,wslconfig (default: identity,closed,view,nowrite,journal)
+#                   agents,git-excludes,wsl,wsl-mnt,wslconfig (default: identity,closed,view,nowrite,
+#                   journal)
+#                   git-excludes  whether each --home's global git excludes file ignores
+#                              **/.claude/settings.local.json (one INFO line per home)
 #                   wsl        (WSL only) WSL2 with systemd as PID 1; the [automount] and interop
 #                              state; what this probe cannot see (Windows' power settings)
 #                   wsl-mnt    (WSL only) THIS account must not read the Windows user's profile
@@ -37,7 +40,8 @@
 #   --expect-group  a group this account must be in (systemd-journal for hubdiag on Linux)
 #   --linger USER   (Linux) USER must have lingering on, so its user units run with nobody logged in
 #   --home DIR      for the tools section: also look under DIR/.cargo/bin, DIR/.deno/bin, …;
-#                   for the agents section: the home whose claude, codex and hermes are reported
+#                   for the agents section: the home whose claude, codex and hermes are reported;
+#                   for the git-excludes section: the home whose global git excludes are read
 #   --candidates    read absolute paths from stdin, one per line, and FAIL on every one that
 #                   opens. worker-setup.sh --check feeds it a root enumeration of the admin's and
 #                   the agent's homes; that is the full form of the leak test. Without it the
@@ -73,7 +77,7 @@ while [ $# -gt 0 ]; do
         --journalctl-bin) jcbin="$2"; shift 2 ;;   # tests: a stub journalctl
         --windows-home) winhomes+=("$2"); shift 2 ;;
         --wsl-root) wslroot="${2%/}"; shift 2 ;;   # tests: a stub /proc, /etc and /mnt
-        -h|--help) sed -n '2,55p' "$0" 2>/dev/null; exit 0 ;;
+        -h|--help) sed -n '2,58p' "$0" 2>/dev/null; exit 0 ;;
         *) echo "probe.sh: unknown argument: $1" >&2; exit 2 ;;
     esac
 done
@@ -561,6 +565,35 @@ if want agents; then
                 mark=""; { [ "$pname" = "${active:-default}" ] && mark=" (active)"; }
                 info "ai-agent hermes-profile $pname$mark" "$pm · $login"
             done
+        fi
+    done
+fi
+
+# git-excludes: does this account's GLOBAL git excludes file ignore Claude Code's per-project
+# settings? Claude Code saves the commands a person approves, secrets included, to
+# .claude/settings.local.json inside a project, and a worker's agent commits to the repositories
+# it works on. The file is the one core.excludesFile names (asked of git with HOME set to the
+# --home, so it reads that home's ~/.gitconfig or ~/.config/git/config), else git's default
+# ~/.config/git/ignore. One INFO line, read by the hub's worker-check: "ignores …" or
+# "does NOT ignore …". worker-setup.sh adds the line; only this exact line is looked for.
+claude_local='**/.claude/settings.local.json'
+if want git-excludes; then
+    gitbin=""
+    for c in /usr/bin/git /usr/local/bin/git /opt/homebrew/bin/git; do [ -x "$c" ] && { gitbin="$c"; break; }; done
+    for h in ${homes[@]+"${homes[@]}"}; do
+        xf=""
+        [ -n "$gitbin" ] && xf="$(cd / && env -u XDG_CONFIG_HOME -u GIT_CONFIG_GLOBAL HOME="$h" GIT_CONFIG_NOSYSTEM=1 \
+            "$gitbin" config --global --get core.excludesFile 2>/dev/null)"
+        case "$xf" in
+            "") xf="$h/.config/git/ignore" ;;
+            "~/"*) xf="$h/${xf#\~/}" ;;
+            /*) ;;
+            *) xf="$h/$xf" ;;
+        esac
+        if [ -r "$xf" ] && tr -d '\r' < "$xf" 2>/dev/null | sed 's/[[:space:]]*$//' | grep -qxF -- "$claude_local"; then
+            info git-excludes "ignores $claude_local"
+        else
+            info git-excludes "does NOT ignore $claude_local"
         fi
     done
 fi

@@ -172,6 +172,30 @@ hasnt "no other config key is read as the provider" "not-this-one" "$out"
 out="$(bash "$probe" --sections agents --home "$sb/nobody-home" 2>&1)"
 has "an account without them: absent" "INFO ai-agent hermes: absent" "$out"
 
+echo "── git-excludes: the home's global excludes ignore Claude Code's settings.local.json"
+gh_="$sb/githome"; xl='**/.claude/settings.local.json'
+mkdir -p "$gh_"
+gx() { out="$(env -u XDG_CONFIG_HOME bash "$probe" --sections git-excludes --home "$gh_" 2>&1)"; st=$?; }
+gx
+expect_exit "informational: exit 0" 0 "$st"
+has "no excludes file: does NOT ignore" "INFO git-excludes: does NOT ignore $xl" "$out"
+mkdir -p "$gh_/.config/git"; printf 'target/\n**/.claude/settings.json\n' > "$gh_/.config/git/ignore"
+gx
+has "another pattern is not this one" "INFO git-excludes: does NOT ignore $xl" "$out"
+printf 'target/\r\n%s  \r\n' "$xl" > "$gh_/.config/git/ignore"
+gx
+has "git's default ~/.config/git/ignore, CRLF and trailing blanks forgiven" "INFO git-excludes: ignores $xl" "$out"
+hasnt "one line, never both" "does NOT" "$out"
+printf '[core]\n\texcludesFile = ~/.gitignore_global\n' > "$gh_/.gitconfig"
+gx
+has "core.excludesFile set: the default file no longer counts" "INFO git-excludes: does NOT ignore $xl" "$out"
+printf '%s' "$xl" > "$gh_/.gitignore_global"
+gx
+has "the file core.excludesFile names (~/ expanded), no final newline" "INFO git-excludes: ignores $xl" "$out"
+printf '[core]\n\texcludesFile = %s\n' "$sb/abs-ignore" > "$gh_/.gitconfig"; printf '%s\n' "$xl" > "$sb/abs-ignore"
+gx
+has "an absolute core.excludesFile" "INFO git-excludes: ignores $xl" "$out"
+
 echo "── suspend attempts refused: reported as INFO, by a stub journalctl"
 # The masks stop the sleep but not the attempt: a desktop's own idle-suspend still calls logind,
 # which broadcasts the wall message and only then finds the target masked. The probe counts the

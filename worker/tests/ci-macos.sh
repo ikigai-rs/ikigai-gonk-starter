@@ -105,6 +105,30 @@ expect_exit "check passes" 0 "$st"; printf '%s\n' "$out" | sed 's/^/     | /'
 has "hubdiag reads the work view" "PASS view: hubdiag reads /Users/Shared/hubdiag/work" "$out"
 has "hubdiag cannot write it" "PASS view-write: hubdiag cannot write /Users/Shared/hubdiag/work" "$out"
 
+echo "── the agent's global git excludes ignore Claude Code's settings.local.json (ledger item 3347)"
+xl='**/.claude/settings.local.json'
+as_agent() { (cd / && sudo -n -H -u agent "$@"); }
+n="$(grep -cxF -- "$xl" /Users/agent/.config/git/ignore 2>/dev/null)"
+if [ "$n" = 1 ]; then ok "two setups put the line in ~/.config/git/ignore once"; else bad "~/.config/git/ignore holds the line ${n:-0} time(s), wanted 1"; fi
+if [ "$(stat -f %Su /Users/agent/.config/git/ignore 2>/dev/null)" = agent ]; then ok "the excludes file is the agent's own"; else bad "the excludes file is not owned by agent"; fi
+if as_agent sh -c 'd="$HOME/xrepo" && git init -q "$d" && mkdir -p "$d/.claude" && : > "$d/.claude/settings.local.json" && cd "$d" && git check-ignore -q .claude/settings.local.json'; then
+    ok "git, as the agent, ignores .claude/settings.local.json in a fresh repository"
+else bad "git, as the agent, does not ignore .claude/settings.local.json"; fi
+rm -rf /Users/agent/xrepo
+has "--check reports it" "INFO git-excludes: ignores $xl" "$out"
+has "in the facts the hub reads" "INFO git-excludes: ignores $xl" "$(cat /Users/Shared/hubdiag/facts)"
+: > /Users/agent/.config/git/ignore
+check
+has "RED: --check says when it is missing" "INFO git-excludes: does NOT ignore $xl" "$out"
+as_agent git config --global core.excludesFile '~/.gitignore_global'
+out="$("$setup" --admin fixadmin --key "$T/hub.pub" "${views[@]}" 2>&1)"; st=$?
+expect_exit "setup with core.excludesFile set" 0 "$st"
+n="$(grep -cxF -- "$xl" /Users/agent/.gitignore_global 2>/dev/null)"
+if [ "$n" = 1 ]; then ok "the line goes to the file core.excludesFile names"; else bad "~/.gitignore_global holds the line ${n:-0} time(s), wanted 1"; fi
+check
+has "and --check reads that file" "INFO git-excludes: ignores $xl" "$out"
+expect_exit "check green" 0 "$st"
+
 echo "── the deny holds with hubdiag IN staff (the check still fails, on membership)"
 dseditgroup -o edit -a hubdiag -t user staff
 check

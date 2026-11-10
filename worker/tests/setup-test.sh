@@ -46,6 +46,10 @@ has "the drop-in ends its Match block" "Match all" "$out"
 has "the default view is the agent's work" "view work: " "$out"
 has "closes the admin's home" "the admin's home" "$out"
 has "counts and promises nothing changed" "nothing was changed" "$out"
+# Ledger item 3347: the agent's global excludes ignore Claude Code's per-project settings, in
+# git's default file when core.excludesFile is not set (an account not yet made has none).
+has "plans the agent's git excludes line" "/$A/.config/git/ignore: ignore **/.claude/settings.local.json" "$out"
+has "written as the agent, not as root" "\$ as_user $A sh -c" "$out"
 case "$(uname -s)" in
     Darwin)
         has "macOS: an own primary group, so not staff" "its own primary group, so it is NOT in staff" "$out"
