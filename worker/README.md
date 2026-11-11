@@ -821,6 +821,10 @@ except = ["sensitive-repo"]  # optional names, compared without case
 An unlisted `repo:<name>` becomes `https://github.com/<org>/<name>.git`, GitHub `<org>/<name>`,
 base `main`. Each candidate is checked with `gh api repos/<org>/<name>` for existence, matching
 identity (a redirect outside the configured repository is refused) and `permissions.push`.
+The identity must match exactly, case included: GitHub's names ignore case, so `repo:Lib`
+would otherwise reach `lib` under a second name, past its `[repos.lib]` stanza and the
+one-agent-per-repository fence, which both go by the label as written. Label an item with the
+name as GitHub spells it.
 Failures are skipped with the reason, said once on the dispatched item. Router authorization
 and this configuration fence both apply. An explicit `[repos.<name>]` always wins, including
 remote, owner, base and exclusions. Names cannot include an owner or path.

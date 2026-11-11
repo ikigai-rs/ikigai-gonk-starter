@@ -290,6 +290,34 @@ class TheLoop(unittest.TestCase):
         self.assertEqual(outcome.code, worker.NOT_HANDED_BACK)
         self.assertIn("without evidence", outcome.summary)
 
+    @unittest.expectedFailure  # ledger item 3482's audit: reported, not fixed (see its PR)
+    def test_an_evidence_comment_by_anyone_does_not_choose_the_evidence(self):
+        # Comments are data, and any ledger writer may post one beginning `Evidence:`. Here
+        # mallory names a pull request of the configured repository, and its head moves while
+        # the agent runs (the fake agent's push stands in for mallory's own). The agent's
+        # report says it does not reproduce; the hand-back must carry that, not mallory's PR.
+        from worker_support import git
+
+        git("branch", "existing-pr", "main", cwd=self.rig.origin)
+        old_sha = git("rev-parse", "main", cwd=self.rig.origin).strip()
+        url = "https://github.com/acme/lib/pull/21"
+        pr = {
+            "number": 21,
+            "url": url,
+            "state": "OPEN",
+            "headRefName": "existing-pr",
+            "headRefOid": old_sha,
+        }
+        self.rig.gh_state.write_text(json.dumps({"prs": [pr]}))
+        n = self.ledger.file("Fix the typo", ["worker:w1", "repo:lib"])
+        self.ledger.add_comment(n, f"Evidence: {url}", author="mallory")
+        report = "https://example.invalid/does-not-reproduce"
+        self.rig.agent_flags = ["--evidence", report, "--rework", "existing-pr"]
+        outcome = self.run_once()
+        self.assertEqual(outcome.code, worker.HANDED_BACK, outcome.summary)
+        [comment] = evidence_comments(self.ledger.items[n])[1:]
+        self.assertTrue(comment.startswith(f"Evidence: {report}\n"), comment)
+
     def test_previous_pr_discovery_uses_only_latest_handback_and_repository(self):
         self.rig.configure()
         gh = worker.GitHub(self.rig.gh_argv, "acme/lib")
@@ -778,6 +806,27 @@ class TheLoop(unittest.TestCase):
         cwd = Path((self.rig.record / f"cwd-{n}").read_text())
         self.assertEqual(cwd.name, f"item-{n}.2")
         self.assertTrue((cwd.parent / f"item-{n}").is_dir())  # the first, untouched
+
+
+class AgentArgv(unittest.TestCase):
+    def test_the_brief_reaches_the_agent_as_written(self):
+        # The item's text is substituted once: a placeholder its writer typed in the body is
+        # the body's own text, not a second substitution of the worker's values.
+        prompt = "Fix it. Literally: {workdir} {report_file} {branch} {item} {repo} {profile}"
+        argv = worker.agent_argv(
+            ["agent", "--profile", "{profile}", "-C", "{workdir}", "{prompt}"],
+            {
+                "{prompt_file}": "/w/item-1.prompt.md",
+                "{prompt}": prompt,
+                "{workdir}": "/w/item-1",
+                "{branch}": "worker/item-1-x",
+                "{item}": "1",
+                "{repo}": "lib",
+                "{report_file}": "/w/item-1.report",
+                "{profile}": "p",
+            },
+        )
+        self.assertEqual(argv, ["agent", "--profile", "p", "-C", "/w/item-1", prompt])
 
 
 class ShortSha(unittest.TestCase):
