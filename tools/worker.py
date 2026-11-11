@@ -2723,6 +2723,52 @@ def build(args, make_ikigai, home: Path | None) -> Worker:
     return Worker(cfg, wc, make_ikigai(cfg.target), home=home)
 
 
+CLAUDE_LOCAL = "**/.claude/settings.local.json"
+
+
+def global_excludes(env: dict[str, str] | None = None) -> Path:
+    """This account's global git excludes file, as git resolves it: the file `core.excludesFile`
+    names, else `$XDG_CONFIG_HOME/git/ignore`, else `~/.config/git/ignore`."""
+    env = dict(os.environ if env is None else env)
+    home = Path(env.get("HOME") or Path.home())
+    try:
+        named = subprocess.run(
+            ["git", "config", "--global", "--get", "core.excludesFile"],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        named = ""
+    if named:
+        if named == "~" or named.startswith("~/"):
+            return home / named[2:]
+        return Path(named) if Path(named).is_absolute() else home / named
+    xdg = env.get("XDG_CONFIG_HOME")
+    return (Path(xdg) if xdg else home / ".config") / "git" / "ignore"
+
+
+def unignored_claude_settings(env: dict[str, str] | None = None) -> str | None:
+    """None when this account's global git excludes ignore Claude Code's per-project settings;
+    else why not and how to fix it. Claude Code saves the commands a person approves, secrets
+    included, to .claude/settings.local.json inside a project, and the agent commits there."""
+    path = global_excludes(env)
+    try:
+        lines = [line.rstrip() for line in path.read_text(encoding="utf-8").splitlines()]
+    except (OSError, UnicodeDecodeError):
+        lines = []
+    if CLAUDE_LOCAL in lines:
+        return None
+    return (
+        f"refusing to start a loop: this account's global git excludes ({path}) do not ignore "
+        f"{CLAUDE_LOCAL}, where Claude Code saves the commands a person approves, secrets "
+        "included, so an agent could commit it. Fix: run worker/worker-setup.sh again as root, "
+        f"or as this account: mkdir -p {shlex.quote(str(path.parent))} && "
+        f"printf '%s\\n' '{CLAUDE_LOCAL}' >> {shlex.quote(str(path))}"
+    )
+
+
 def cmd_run(args, make_ikigai, home) -> int:
     if hasattr(os, "geteuid") and os.geteuid() == 0:
         try:
@@ -2734,6 +2780,10 @@ def cmd_run(args, make_ikigai, home) -> int:
             repo,
             "refusing to run as root: a worker runs as an account of its own",
         )
+    if not args.once:
+        why = unignored_claude_settings()
+        if why:
+            raise gonk.ConfigError(why)
     worker = build(args, make_ikigai, home)
     worker.announce()
     if args.once:

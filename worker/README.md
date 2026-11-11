@@ -135,6 +135,7 @@ with an older gh still works: it reads CI from the Actions runs instead, the les
 | `INFO tool <name>: <path>  (<version>)` or `… absent` | the tools in that account's home and on the system |
 | `INFO ai-agent <claude\|codex\|hermes>: <path>  (<version>) · login: …` | the coding agents, and whether a login is held, **by the presence of its credential file only** (`~/.claude/.credentials.json`, `~/.codex/auth.json`, `~/.hermes/auth.json` or `.env`; never opened) |
 | `INFO ai-agent hermes-profile <name>[ (active)]: provider …, model … · login: …` | each hermes profile, with only those two keys of its `config.yaml` |
+| `INFO git-excludes: ignores **/.claude/settings.local.json` or `… does NOT ignore …` | `[agent]` only: whether the agent's global git excludes (the file `core.excludesFile` names, else `~/.config/git/ignore`) ignore Claude Code's `.claude/settings.local.json`, where it saves the commands a person approves, secrets included. The setup adds the line, and `tools/worker.py run` refuses to start a loop without it |
 | `newest-bin: <UTC time> <path>` | the newest program in that account's `~/.cargo/bin` and `~/.local/bin` at the check |
 | `[windows]`, then `INFO\|WARN wsl-idle: …`, `INFO wsl-network: …` | WSL only: what root read in the Windows user's `.wslconfig`, which hubdiag must not be able to read |
 

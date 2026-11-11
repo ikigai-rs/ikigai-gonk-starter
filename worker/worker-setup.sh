@@ -342,6 +342,39 @@ EOF
 # itself creates (RuntimeDirectory=sshd), so creating it empty changes nothing persistent.
 privsep() { if [ "$os" = Linux ] && [ ! -d /run/sshd ] && [ "$(id -u)" = 0 ]; then mkdir -p -m 0755 /run/sshd; fi; }
 
+# ── the agent's global git excludes ignore Claude Code's per-project settings ─────────────────
+# Claude Code saves the commands a person approves, secrets included, to
+# .claude/settings.local.json inside a project, and the agent commits to the repositories it
+# works on. So the agent's global excludes ignore that file everywhere: the file its
+# core.excludesFile names, else git's default ~/.config/git/ignore. Read and written AS the
+# agent, so the file is the agent's own and root follows no link in the agent's home. --check
+# reports it as one facts line (probe.sh, the git-excludes section).
+claude_local='**/.claude/settings.local.json'
+agent_excludes() { # → the agent's global excludes file, as git resolves core.excludesFile
+    local xf=""
+    if user_exists "$agent" && [ "$(id -u)" = 0 ]; then
+        xf="$(as_user "$agent" env -u XDG_CONFIG_HOME -u GIT_CONFIG_GLOBAL HOME="$agent_home" GIT_CONFIG_NOSYSTEM=1 \
+            git config --global --get core.excludesFile 2>/dev/null)"
+    fi
+    case "$xf" in
+        "") echo "$agent_home/.config/git/ignore" ;;
+        "~/"*) echo "$agent_home/${xf#\~/}" ;;
+        /*) echo "$xf" ;;
+        *) echo "$agent_home/$xf" ;;
+    esac
+}
+git_excludes() {
+    local xf; xf="$(agent_excludes)"
+    if user_exists "$agent" && [ "$(id -u)" = 0 ] \
+        && as_user "$agent" sh -c 'tr -d "\r" < "$1" | sed "s/[[:space:]]*\$//" | grep -qxF -- "$2"' sh "$xf" "$claude_local" 2>/dev/null; then
+        have "$xf ignores $claude_local"
+    else
+        # A line of its own, at the end, once: a file whose last line has no newline gets one.
+        change "$xf: ignore $claude_local (Claude Code's approved commands, secrets included, never committed)" \
+            as_user "$agent" sh -c 'mkdir -p "$(dirname "$1")" && { [ ! -s "$1" ] || [ -z "$(tail -c 1 "$1")" ] || echo >> "$1"; } && printf "%s\n" "$2" >> "$1"' sh "$xf" "$claude_local"
+    fi
+}
+
 # ════════════════════════════════════════════════════════════════════════════════════════════
 # --check: the boundary self-test, as each account, plus facts the hub cannot read for itself.
 # ════════════════════════════════════════════════════════════════════════════════════════════
@@ -471,7 +504,9 @@ EOF
         for u in "$agent" "$admin"; do
             user_exists "$u" || continue
             echo "[$u]"
-            probe_as "$u" --sections gh,tools,agents --home "$(home_of "$u")" < /dev/null 2>/dev/null | grep '^INFO'
+            # git-excludes for the agent alone: it is the account that commits (one line).
+            secs=gh,tools,agents; [ "$u" = "$agent" ] && secs="$secs,git-excludes"
+            probe_as "$u" --sections "$secs" --home "$(home_of "$u")" < /dev/null 2>/dev/null | grep '^INFO'
             # The newest program in this account's own bin directories, now. hubdiag cannot see
             # them (the home is closed to it), so this is how worker-check can say what an
             # install made after this check would NOT be reflected in.
@@ -484,7 +519,7 @@ EOF
             grep -E '^(INFO|WARN)' "$tmp/wslconfig.out"
         fi
     } > "$tmp/facts"
-    cat "$tmp/facts" | grep -E '^(checked|result|\[|INFO gh-token)'
+    cat "$tmp/facts" | grep -E '^(checked|result|\[|INFO gh-token|INFO git-excludes)'
     if [ -d "$view_root" ]; then
         install -m 0640 -o root -g "$(id -gn "$hubdiag")" "$tmp/facts" "$facts" && echo "   wrote $facts"
     else
@@ -832,6 +867,9 @@ else
         sh -c "install -d '$view_root' && chown root:'$hubdiag' '$view_root' && chmod 0751 '$view_root'"; fi
     for v in "${views[@]}"; do mac_view "${v%%=*}" "${v#*=}"; done
 fi
+
+echo; echo "── the agent's git excludes"
+git_excludes
 
 echo; echo "── sshd"
 install_sshd
