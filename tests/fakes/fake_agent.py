@@ -37,6 +37,7 @@ def main() -> int:
     p.add_argument("--item", required=True)
     p.add_argument("--sleep", type=float, default=0)
     p.add_argument("--no-pr", action="store_true")
+    p.add_argument("--rework", help="existing PR branch to update without a report or new PR")
     p.add_argument("--evidence")
     p.add_argument("--report-file")
     p.add_argument("--exit", type=int, default=0)
@@ -68,14 +69,25 @@ def main() -> int:
         git("commit", "-q", "-m", "A reviewer's commit")
     if args.evidence:
         Path(args.report_file).write_text(f"{args.evidence}\nIt does not reproduce: see the run.\n")
-    if not args.no_pr:
+    if args.rework:
+        git("fetch", "origin", args.rework)
+        git("checkout", "-B", args.rework, "FETCH_HEAD")
+    if not args.no_pr or args.rework:
         Path("WORKED.txt").write_text(f"item {args.item}\n")
         git("add", "WORKED.txt")
         git("commit", "-q", "-m", f"Work on item {args.item}")
-        git("push", "-q", "origin", f"HEAD:refs/heads/{args.branch}")
+        git("push", "-q", "origin", f"HEAD:refs/heads/{args.rework or args.branch}")
         gh = shlex.split(args.gh)
         subprocess.run(
-            [*gh, "pr", "create", "--head", args.branch, "--title", f"item {args.item}"],
+            [
+                *gh,
+                "pr",
+                "update-head" if args.rework else "create",
+                "--head",
+                args.rework or args.branch,
+                "--title",
+                f"item {args.item}",
+            ],
             check=True,
             capture_output=True,
         )
