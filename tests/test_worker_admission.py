@@ -128,6 +128,24 @@ class Admission(unittest.TestCase):
         self.assertEqual(take[0][1], self.w.wc.repos["lib"])
         api.assert_not_called()
 
+    def test_case_variant_of_an_explicit_repo_is_not_derived(self):
+        # GitHub answers `repos/acme/LIB` with the repository's own name, acme/lib: the label
+        # must not reach lib by a second name past its stanza (remote, base) and its lock.
+        (take, skip, _), _ = self.candidates(
+            "LIB", {"full_name": "acme/lib", "permissions": {"push": True}}
+        )
+        self.assertEqual(take, [])
+        self.assertIn("acme/lib", skip[0][1])
+
+    def test_case_variant_cannot_dodge_one_agent_per_repository(self):
+        busy = self.ledger.file("Someone is on new", ["repo:new"])
+        self.ledger.force_claim(busy, "chris")
+        (take, skip, _), _ = self.candidates(
+            "New", {"full_name": "acme/new", "permissions": {"push": True}}
+        )
+        self.assertEqual(take, [])
+        self.assertEqual(len(skip), 1)
+
     def test_new_repositories_are_resolved_on_the_same_running_worker(self):
         (take, skip, _), _ = self.candidates("new")
         self.assertEqual([r.name for _, r in take], ["new"])

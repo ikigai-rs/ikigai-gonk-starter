@@ -1196,17 +1196,21 @@ class GitHub:
             return subprocess.CompletedProcess(argv, 124, "", "gh did not answer within 120s")
 
     def admission_problem(self) -> str | None:
-        """Never follow a moved repository outside the config fence, or infer push access."""
+        """Never follow a moved repository outside the config fence, or infer push access.
+        GitHub's own name must match exactly: names are case-blind there, so `repo:Lib` would
+        otherwise reach `lib` by a second name, past its `[repos.lib]` stanza, its lock and
+        its one-agent-per-repository check, which all go by the label's name."""
         done = self.run("api", f"repos/{self.slug}")
         if done.returncode:
             error = (done.stderr or done.stdout).strip() or f"gh exit {done.returncode}"
             return f"cannot verify derived repository {self.slug}: {error}"
         try:
             doc = json.loads(done.stdout)
-            if doc.get("full_name", "").casefold() != self.slug.casefold():
+            if doc.get("full_name", "") != self.slug:
                 return (
                     f"derived repository {self.slug} resolved outside its configured identity: "
-                    f"{doc.get('full_name')!r}"
+                    f"{doc.get('full_name')!r} (a repo: label names a repository as GitHub "
+                    "spells it)"
                 )
             if (doc.get("permissions") or {}).get("push") is not True:
                 return (
@@ -1792,12 +1796,10 @@ def brief(
 
 
 def agent_argv(command: list[str], values: dict[str, str]) -> list[str]:
-    out = []
-    for word in command:
-        for token, value in values.items():
-            word = word.replace(token, value)
-        out.append(word)
-    return out
+    """The command with its placeholders filled, in ONE pass: a value is never read again for
+    placeholders, so the item's text (in `{prompt}`) reaches the agent exactly as written."""
+    pattern = re.compile("|".join(re.escape(token) for token in values))
+    return [pattern.sub(lambda m: values[m.group(0)], word) for word in command]
 
 
 def stop_process(proc: subprocess.Popen, grace: int) -> None:
