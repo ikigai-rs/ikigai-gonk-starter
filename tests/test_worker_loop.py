@@ -203,6 +203,19 @@ class TheLoop(unittest.TestCase):
             self.assertIn(rule, prompt)
         self.assertTrue(prompt.rstrip().endswith("# Fix the due dates\n\nThey are off."))
 
+    def test_an_orphan_report_is_not_evidence_for_a_new_run(self):
+        n = self.ledger.file("Retry", ["worker:w1", "repo:lib"])
+        home = self.rig.home / "work" / "lib"
+        home.mkdir(parents=True)
+        report = home / f"item-{n}.report"
+        report.write_text("https://github.com/acme/lib/pull/21\nAn earlier run.\n")
+        self.rig.agent_flags = ["--no-pr", "--exit", "1"]
+        outcome = self.run_once()
+        self.assertEqual(outcome.code, worker.NOT_HANDED_BACK, outcome.summary)
+        self.assertEqual(evidence_comments(self.ledger.items[n]), [])
+        self.assertIsNone(self.ledger.items[n]["awaiting"])
+        self.assertFalse(report.exists())
+
     def test_rework_finds_the_changed_previous_pr_without_a_report(self):
         from worker_support import git
 

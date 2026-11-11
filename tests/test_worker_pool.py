@@ -97,6 +97,21 @@ class TheRouting(Quiet):
         self.ledger.file("For codex", ["worker:pool", "agent:codex", "repo:lib"])
         self.assertEqual(self.taken(self.loop()), [])
 
+    def test_conflicting_agent_dispatch_is_not_a_candidate_for_either_agent(self):
+        n = self.ledger.file(
+            "Ambiguous", ["worker:pool", "agent:claude", "agent:codex", "repo:lib"]
+        )
+        for agent in ("claude", "codex"):
+            loop = self.loop(labels=json.dumps(["worker:more", f"agent:{agent}"]))
+            self.assertEqual(self.taken(loop), [], agent)
+            self.assertIn("agent:", loop.skipped_items[0][2])
+        self.assertIsNone(self.ledger.items[n]["claim"])
+
+    def test_a_machine_loop_without_an_agent_does_not_take_agent_specific_work(self):
+        self.ledger.file("For codex", ["worker:w1", "agent:codex", "repo:lib"])
+        self.rig.configure()
+        self.assertEqual(self.taken(self.rig.worker(self.ledger)), [])
+
     def test_pinning_after_the_pool_takes_it_out_of_the_pool(self):
         n = self.ledger.file("Fix", ["worker:pool", "agent:claude", "repo:lib"])
         item = self.ledger.items[n]
@@ -264,6 +279,13 @@ class TheDispatch(unittest.TestCase):
         code, said = self.dispatch("--labels", "worker:mac,agent:claude")
         self.assertEqual(code, 0, said)
         self.assertEqual(self.named(), ["worker:mac", "agent:claude", "repo:lib"])
+
+    def test_conflicting_agents_are_refused_before_any_write(self):
+        code, said = self.dispatch("--labels", "agent:claude,agent:codex")
+        self.assertEqual(code, 2, said)
+        self.assertIn("agent:", said)
+        self.assertEqual(self.ledger.items[self.n]["labels"], ["repo:lib"])
+        self.assertEqual(self.ledger.items[self.n]["comments"], [])
 
     def test_the_pool_needs_an_agent_or_no_loop_would_take_it(self):
         for args in ([], ["--labels", "worker:pool"], ["--labels", "worker:mac"]):

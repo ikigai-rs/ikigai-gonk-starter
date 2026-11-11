@@ -809,6 +809,18 @@ def dispatch_problem(item: dict, routers: list[str], labels: list[str]) -> str |
     newest = max(dispatches, key=lambda c: c.get("time") or "")
     named, digest = gonk.parse_dispatch(newest.get("text") or "")
     by = f"{newest.get('author')} at {newest.get('time')}"
+    agents = {w for w in named if w.startswith("agent:")}
+    selected_agents = {w for w in labels if w.startswith("agent:")}
+    if len(agents) > 1:
+        return (
+            f"its newest dispatch, by {by}, names conflicting agents: "
+            f"{', '.join(sorted(agents))}; a router dispatches it again to one agent:<kind>"
+        )
+    if agents and agents != selected_agents:
+        return (
+            f"its newest dispatch, by {by}, names {', '.join(sorted(agents))}, "
+            "which this loop does not select; use a loop with that agent:<kind> label"
+        )
     need = list(dict.fromkeys([*labels, *(f"repo:{r}" for r in repo_labels(item))]))
     missing = [w for w in need if w not in named]
     if missing:
@@ -2210,10 +2222,10 @@ class Worker:
             ws.holder.write_text(holder + "\n", encoding="utf-8")
             job = review_job(item, ws)
             job.branches = must(local_branches(ws.source), "reading the branches")
-            ws.report.unlink(missing_ok=True)  # only what this run writes is its report
         else:
             ws = make_workspace(self.root, repo, number)
             ws.holder.write_text(holder + "\n", encoding="utf-8")
+        ws.report.unlink(missing_ok=True)  # only what this run writes is its report
         gh = GitHub(self.wc.gh, repo.github)
         previous = gh.previous_heads(item) if job is None else []
         text = brief(item, self.cfg.ledger, ws, repo, self.wc.budget, self.wc.routers, job)

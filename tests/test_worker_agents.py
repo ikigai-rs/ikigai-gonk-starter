@@ -145,7 +145,7 @@ class LoopsSideBySide(unittest.TestCase):
         item = self.ledger.items[n]
         item["awaiting"] = None
         item["labels"] = sorted(["worker:w1", "agent:claude", "repo:lib"])
-        self.ledger.dispatch(n, labels=[*item["labels"], "agent:codex"])
+        self.ledger.dispatch(n, labels=item["labels"])
         take, skip, _ = self.loop(self.claude_toml).candidates()
         self.assertEqual([i["number"] for i, _ in take], [n], skip)
         # The claude loop took it without the codex loop's memory in the way; that memory is
