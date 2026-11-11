@@ -2090,6 +2090,11 @@ def routing_labels(text: str | None) -> list[str]:
         )
     if not any(w.startswith("worker:") for w in labels):
         labels.insert(0, POOL_LABEL)
+    agents = sorted({w for w in labels if w.startswith("agent:")})
+    if len(agents) > 1:
+        raise ConfigError(
+            f"--labels names conflicting agents: {', '.join(agents)}; dispatch to one agent:<kind>"
+        )
     shared = [w for w in labels if w in SHARED_WORKER_LABELS]
     if shared and not any(w.startswith("agent:") for w in labels):
         raise ConfigError(
