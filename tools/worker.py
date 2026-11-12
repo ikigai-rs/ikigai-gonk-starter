@@ -1626,7 +1626,12 @@ its rules hold beside these.
    See its CI to green, fixing what fails. NEVER merge it, never enable auto-merge, and
    never close the item: the dispatcher does both after checking your evidence.
 5. The pull request is your evidence. Say in its description what you reproduced, what you
-   changed and how CI proves it. For a rework, write the existing PR URL on the FIRST line
+   changed and how CI proves it. When the change touches what people see, include a
+   `## Accessibility` section with a Check | Result | Evidence table, one row per check.
+   Every named accessibility check has a result: Pass, Fail or Blocked, with evidence (the
+   test or command, tool and version used, or why it could not run). Keep unrun checks as
+   Blocked; a screen reader nobody ran is Blocked, never "not applicable".
+   For a rework, write the existing PR URL on the FIRST line
    of {report_file}, then the pushed full head commit SHA and what changed on the lines after.
    If you could not finish, say so there plainly.
 6. You have {budget} of wall-clock time; at the end the worker stops you.

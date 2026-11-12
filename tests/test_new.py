@@ -545,7 +545,10 @@ class GenerateGo(unittest.TestCase):
 
 
 # The rule every generated AGENTS.md carries (profiles/sections/accessibility.md).
-ACCESSIBILITY_RULE = "Read `ACCESSIBILITY.md` before any change to a user interface"
+ACCESSIBILITY_RULE = (
+    "Read `ACCESSIBILITY.md` before any change to a user interface or to rendered output: a page,\n"
+    "a view, terminal text, generated markup or a picture."
+)
 
 
 class Accessibility(unittest.TestCase):
@@ -561,10 +564,18 @@ class Accessibility(unittest.TestCase):
             self.assertEqual(text, template.read_text(encoding="utf-8"), target)
             self.assertIn("WCAG 2.2 Level AA", text, target)
             self.assertIn("Evaluation in progress. No conformance claim.", text, target)
-            self.assertIn("**Nothing in this repository has been tested", text, target)
+            self.assertIn("| Check | Result | Evidence |", text, target)
+            self.assertIn("| Screen reader | Blocked |", text, target)
+            self.assertIn("Pass, Fail or Blocked", text, target)
             self.assertIn("within 7 days", text, target)
             self.assertNotIn("{{", text, target)
-            self.assertIn(ACCESSIBILITY_RULE, (repo / "AGENTS.md").read_text(), target)
+            agents = (repo / "AGENTS.md").read_text()
+            self.assertIn(ACCESSIBILITY_RULE, agents, target)
+            self.assertIn("Pass, Fail or Blocked", agents, target)
+            self.assertIn("Check | Result | Evidence", agents, target)
+            self.assertIn(
+                'screen reader nobody ran is Blocked, never "not applicable"', agents, target
+            )
             harness = (repo / ".gonk" / "harness" / "harness.ttl").read_text()
             self.assertIn("guide:read-accessibility-first", harness, target)
 

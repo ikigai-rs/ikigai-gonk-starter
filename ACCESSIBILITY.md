@@ -10,7 +10,7 @@ how it is tested, and how to report a barrier. It is not a conformance claim. Ad
 | Status | Evaluation in progress. No conformance claim. |
 | Owner | the maintainers of this repository |
 | Report a barrier | [a GitHub issue](https://github.com/ikigai-rs/ikigai-gonk-starter/issues/new) with the `accessibility` label; anything security-sensitive through [private vulnerability reporting](https://github.com/ikigai-rs/ikigai-gonk-starter/security/advisories/new) |
-| Last reviewed | 2026-11-08 |
+| Last reviewed | 2026-11-12 |
 
 ## What it shows people
 
@@ -59,31 +59,25 @@ agent's own interface is its maker's.
 
 ## How it is tested
 
-- `tests/test_new.py` and `tests/test_profiles.py` check that every generated repository, for
-  each target and each profile, carries that `ACCESSIBILITY.md`, with its target and no
-  conformance claim, and the `AGENTS.md` rule. That is a check that the file is there, not of
-  accessibility.
-- `tests/test_faces.py` checks every face's HTML for what the door's CSP refuses (inline
-  script, `<style>`, `style=` and `on…=` attributes), that each page has `lang`, an `h1` and
-  the polite status region, and that only servable extensions are present. That is a static
-  check of the markup, not of accessibility. From `app.css` it computes the contrast of every
-  text and non-text token in each theme, and checks that every color comes from the tokens and
-  that "auto" falls back to the same palettes. Its Deno test (`tests/faces/logic_test.js`)
-  checks which column or step each recorded item lands in, the words that say how many members
-  could not be read and why, and the order of a count's chips; it renders nothing.
-- The `board` face was driven once in headless Chromium (2026-11-08, by script, against a stand-in
-  for gonk answering under the door's CSP): tab order, no CSP violation, no sideways scroll at
-  320 px with long titles, and the column borders' computed colors in light and dark. That is
-  not a person's keyboard pass and CI does not repeat it.
-- All five faces were driven once in headless Chromium (2026-11-08, by script, against the same
-  kind of stand-in): no CSP violation and no sideways scroll at 320 and 687 px, in dark. The
-  project view was also measured and looked at in screenshots at 375, 687 and 1280 px, in
-  light, dark and high contrast by `data-theme`, and the `auto` fallback by emulated
-  `prefers-color-scheme` and `prefers-contrast`. No keyboard pass was made in this run, and no
-  axe run has been done on any face; `faces/README.md` lists those checks for whoever deploys one.
-- No automated accessibility checker and no assistive technology has been used on any of this
-  output, and no browser on any of it but those passes. **No screen reader, screen magnifier, speech-input or switch-access
-  software has been used to test this repository.**
+Every named check has a result: Pass, Fail or Blocked, with evidence. A Pass covers only
+the stated check, not overall accessibility. Historical browser runs below were recorded on
+2026-11-08; their Chromium version and invocation were not recorded, and CI does not repeat
+them. They remain context, not current verification.
+
+| Check | Result | Evidence |
+|---|---|---|
+| Generated accessibility record and agent rule, across targets and profiles | Pass | `python3 -m unittest discover -s tests -p test_new.py` and `python3 -m unittest discover -s tests -p test_profiles.py`, Python 3.12.3, 2026-11-12. Checks presence, reporting instructions and generated text; not an accessibility evaluation. |
+| Face markup and theme contrast | Pass | `python3 -m unittest discover -s tests -p test_faces.py`, Python 3.12.3, 2026-11-12. Static checks of CSP restrictions, language, heading, polite status region, servable extensions, token contrast and automatic theme fallback; does not render pages. |
+| Face logic | Pass | `python3 -m unittest discover -s tests -p test_faces.py` runs `deno test --no-config --no-lock --quiet tests/faces/`, Deno 2.9.7, 2026-11-12. Checks column/step membership, unread-member messages and count-chip order; renders nothing. |
+| Board browser tab order, CSP, 320 px overflow and column colors | Blocked | No current browser run. Historical scripted headless Chromium run on 2026-11-08 used a stand-in for gonk under its CSP, with long titles in light and dark. Browser version and command were not recorded; no person's keyboard pass. |
+| All faces browser CSP and overflow; project layout and themes | Blocked | No current browser run. Historical scripted headless Chromium run on 2026-11-08 covered all five faces at 320 and 687 px in dark; project measurements and screenshots at 375, 687 and 1280 px covered light, dark, high contrast and emulated automatic theme preferences. Browser version and command were not recorded; no keyboard pass. |
+| Manual keyboard | Blocked | No person has performed a keyboard pass; no interactive browser session was available for this update. |
+| Automated accessibility checker (axe) | Blocked | No axe or other automated accessibility checker has been run on this output; no browser checker was configured for this update. `faces/README.md` lists deployment checks. |
+| Screen reader | Blocked | No screen reader has been used on this output; no screen reader session was available for this update. |
+| Screen magnifier | Blocked | No screen magnifier has been used on this output; no magnifier session was available for this update. |
+| Speech input | Blocked | No speech-input software has been used on this output; no speech-input session was available for this update. |
+| Switch access | Blocked | No switch-access software has been used on this output; no switch-access session was available for this update. |
+| Braille display | Blocked | No braille display has been used on this output; no braille display was available for this update. |
 
 ## Known limitations
 
@@ -96,8 +90,11 @@ Found by reading the files on 2026-10-15, not by testing:
 
 ## Contributing
 
-Read this file before changing anything listed above. Keep the rules above, and say in the pull
-request what was tested, with what, and what was not.
+Read this file before changing anything listed above. Keep the rules above. In the pull
+request's `## Accessibility` section, give each check a row in a Check | Result | Evidence
+table: Pass, Fail or Blocked, with the test or command, tool and version used, or why it could
+not run. Keep unrun checks as Blocked, including a screen reader nobody ran; never call it
+"not applicable".
 
 ## Reporting a barrier
 
