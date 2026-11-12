@@ -1,0 +1,2 @@
+warning: a made-up line on stderr
+{"type":"result", this is not json

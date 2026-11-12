@@ -55,6 +55,11 @@ poll = "60s"           # between polls of `next` when nothing is ready
 # or a command of your own, as a list; placeholders: {prompt} {prompt_file} {workdir}
 # {branch} {item} {repo} {report_file} {profile}. An unattended agent also needs its own
 # permission settings; the worker does not choose them for you.
+# A command that runs `claude` or `codex` by that name is given its JSON output
+# (--output-format json, --json), read for the session summary the hand-back records
+# (worker/README.md, "The session summary"). One of your own that runs either under another
+# name says which, and asks for that output itself:
+# harness = "claude"
 preset = "claude"
 # Unattended, an agent commits, pushes and opens a pull request, so it runs with its own
 # checks opened and the agent's Unix account as the boundary (worker/README.md, step 8).

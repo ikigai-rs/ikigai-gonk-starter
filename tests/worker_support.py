@@ -72,6 +72,8 @@ class FakeLedger:
         self.tick = 0
         self.aliases: dict[str, str] = {}
         self.refuse_aliases = False
+        self.refuse_sessions: str | None = None  # the error a sessions sink answers, if any
+        self.sessions: dict[int, list[dict]] = {}
 
     # -- the test's own hands on it
     def file(
@@ -301,6 +303,8 @@ class FakeLedger:
                 return gonk.Answer(1, "", f"no item {name[5:]}")
             return gonk.Answer(0, json.dumps({"schema": 1, "item": served(item)}), "")
 
+        if verb == "sink" and name.startswith("item:") and name.endswith(":sessions"):
+            return self.record_session(int(name[5 : -len(":sessions")]), stdin)
         if verb == "sink" and name.startswith("item:"):
             item = self.items.get(int(name[5:]))
             if item is None:
@@ -413,6 +417,45 @@ class FakeLedger:
             return gonk.Answer(0, f"closed {display}\n", "")
         return gonk.Answer(1, "", f"the fake ledger does not answer {command!r}")
 
+    # The keys of `ledger:SessionSummaryShape` a worker sends (ikigai-ledger #3022): required,
+    # then optional. The shape is closed, so any other key is refused.
+    SESSION_REQUIRED = ("session", "machineName", "harness", "model", "exitStatus", "wallClockMs")
+    SESSION_OPTIONAL = (
+        "turns",
+        "toolCalls",
+        "inputTokens",
+        "cachedInputTokens",
+        "cacheCreationTokens",
+        "outputTokens",
+    )
+
+    def record_session(self, number: int, content: str) -> gonk.Answer:
+        """As the ledger's `item:{id}:sessions` Sink does: one JSON object, checked against the
+        closed shape, recorded on the item's newest hand-back, of which there must be one."""
+        item = self.items.get(number)
+        if item is None:
+            return gonk.Answer(1, "", "no such item")
+        if self.refuse_sessions:
+            return gonk.Answer(1, "", self.refuse_sessions)
+        try:
+            summary = json.loads(content)
+        except ValueError as e:
+            return gonk.Answer(1, "", f"invalid argument `content`: not JSON: {e}")
+        allowed = self.SESSION_REQUIRED + self.SESSION_OPTIONAL
+        for key in summary:
+            if key not in allowed:
+                return gonk.Answer(1, "", f"invalid argument `content`: ledger:{key} is refused")
+        for key in self.SESSION_REQUIRED:
+            if key not in summary:
+                return gonk.Answer(1, "", f"invalid argument `content`: needs ledger:{key}")
+        if summary["harness"] not in ("claude", "codex"):
+            return gonk.Answer(1, "", "invalid argument `content`: harness")
+        handbacks = [c for c in item["comments"] if c["text"].startswith("Evidence:")]
+        if not handbacks:
+            return gonk.Answer(1, "", f"conflict: {item['display']} has no hand-back")
+        self.sessions.setdefault(number, []).append(summary)
+        return gonk.Answer(0, f"{item['display']} session {summary['session']} recorded\n", "")
+
     def append(self, stdin: str, args: dict[str, str]) -> gonk.Answer:
         """As the ledger's `append` does: the first line is the title, an `about` must be
         absolute IRIs, a key already held files nothing and says `existing`, and an argument it
@@ -486,6 +529,7 @@ class Rig:
             f'transport = "socket"\nsocket = "{sock}"\nholder = "w1"\n'
         )
         self.agent_flags: list[str] = []
+        self.harness: str | None = None  # `[agent] harness`, for the fake agent's JSON output
 
     @property
     def gh_argv(self) -> list[str]:
@@ -527,6 +571,8 @@ class Rig:
         lines = [f"{k} = {v}" for k, v in settings.items()]
         lines.append(f"gh = {json.dumps(self.gh_argv)}")
         lines += ["", "[agent]", f"command = {json.dumps(command)}"]
+        if self.harness:
+            lines.append(f"harness = {json.dumps(self.harness)}")
         lines += ["", "[repos.lib]", f'remote = "{self.origin}"', 'github = "acme/lib"']
         lines += ["", "[repos.other]", f'remote = "{self.origin}"', 'github = "acme/other"']
         lines += ["", "[disk]", disk]
