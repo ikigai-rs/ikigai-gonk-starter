@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  AgentsView for the agent account (macOS), as a launchd DAEMON running as agent, for the same
+  reason the worker loop is one: agent never logs in to the GUI. Step 9 of worker/README.md.
+
+    sudo cp worker/units/dev.ikigai-rs.agentsview.plist /Library/LaunchDaemons/
+    sudo chown root:wheel /Library/LaunchDaemons/dev.ikigai-rs.agentsview.plist
+    sudo launchctl bootstrap system /Library/LaunchDaemons/dev.ikigai-rs.agentsview.plist
+
+  Stop it with `sudo launchctl bootout system/dev.ikigai-rs.agentsview`. After an edit, bootout,
+  wait a couple of seconds, then bootstrap: never chain the two with &&.
+
+  It serves agent's archive on the LAN for the hub's links, so /Users/agent/.agentsview/config.toml
+  must set require_auth = true (AgentsView refuses a non-loopback host from config without it).
+  Telemetry is off. The binary is the pinned one in /Users/agent/.agentsview-venv. The log is
+  /tmp/ikigai-agentsview.log.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.ikigai-rs.agentsview</string>
+  <key>UserName</key>
+  <string>agent</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>/Users/agent</string>
+    <key>AGENTSVIEW_TELEMETRY_ENABLED</key>
+    <string>0</string>
+  </dict>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/agent/.agentsview-venv/bin/agentsview</string>
+    <string>serve</string>
+    <string>--no-browser</string>
+    <string>--no-update-check</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>60</integer>
+  <key>StandardOutPath</key>
+  <string>/tmp/ikigai-agentsview.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/ikigai-agentsview.log</string>
+</dict>
+</plist>
