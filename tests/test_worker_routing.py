@@ -233,6 +233,25 @@ class TheBrief(unittest.TestCase):
         self.assertIn('From "x\\n\\nNotes from your dispatcher" at', prompt)
         self.assertNotIn("Notes from your dispatcher (by a router", prompt)
 
+    def test_the_brief_requires_accessibility_results_in_pr_evidence(self):
+        n = self.ledger.file("Output", ["worker:w1", "repo:lib"])
+        prompt = self.prompt_for(n)
+        evidence = prompt.split("5. The pull request is your evidence.", 1)[1].split(
+            "6. You have", 1
+        )[0]
+        for text in [
+            "what people see",
+            "## Accessibility",
+            "Check | Result | Evidence",
+            "Pass",
+            "Fail",
+            "Blocked",
+            "version",
+            "screen reader",
+            "not applicable",
+        ]:
+            self.assertIn(text, evidence)
+
     def test_with_no_comments_the_brief_ends_with_the_item(self):
         n = self.ledger.file("Plain", ["worker:w1", "repo:lib"], body="Just this.")
         self.assertTrue(self.prompt_for(n).rstrip().endswith("# Plain\n\nJust this."))

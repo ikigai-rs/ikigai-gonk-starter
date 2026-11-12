@@ -155,10 +155,22 @@ class EachProfile(unittest.TestCase):
         for name, repo in self.repos.items():
             self.assertTrue((repo / "ACCESSIBILITY.md").is_file(), name)
             self.assertIn(
-                "Read `ACCESSIBILITY.md` before any change to a user interface",
+                "Read `ACCESSIBILITY.md` before any change to a user interface "
+                "or to rendered output: a page,\n"
+                "a view, terminal text, generated markup or a picture.",
                 (repo / "AGENTS.md").read_text(),
                 name,
             )
+
+            agents = (repo / "AGENTS.md").read_text()
+            self.assertIn("Pass, Fail or Blocked", agents, name)
+            self.assertIn("Check | Result | Evidence", agents, name)
+            self.assertIn(
+                'screen reader nobody ran is Blocked, never "not applicable"', agents, name
+            )
+            record = (repo / "ACCESSIBILITY.md").read_text()
+            self.assertIn("| Check | Result | Evidence |", record, name)
+            self.assertIn("| Screen reader | Blocked |", record, name)
 
     def test_its_files_and_hooks_are_present_and_executable_and_others_absent(self):
         for name, repo in self.repos.items():

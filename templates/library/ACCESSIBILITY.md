@@ -4,11 +4,13 @@ sample as generated. Grow it with the project, keep these rules, and delete this
 the file describes your project rather than the sample:
 
 - Every sentence is TRUE of this repository today, with evidence you can point at. Run every
-  check you name, on the main branch, and read its skips and exemptions before you write
-  "Known limitations".
+  check you can, on the main branch, and read its skips and exemptions before you write
+  "Known limitations". Record checks you could not run as Blocked with the reason.
 - Target WCAG 2.2 Level AA. Status "Evaluation in progress". Never a conformance claim.
-- "How it is tested" lists ONLY what was actually run, with its version. While no screen
-  reader, magnifier, speech-input or switch-access software has been used, say so in bold.
+- "How it is tested" uses a Check | Result | Evidence table: every named check has a result
+  of Pass, Fail or Blocked, with the test or command, tool and version used, or why it could
+  not run. Keep unrun checks as Blocked, never omit them. A screen reader nobody ran is
+  Blocked, never "not applicable". Never claim testing that did not happen.
 - The owner is "the maintainers of this repository". Name no person.
 - Reporting: an issue with the `accessibility` label; anything security-sensitive through a
   private channel (on GitHub, private vulnerability reporting), never a public issue.
@@ -48,8 +50,17 @@ report a barrier. It is not a conformance claim.
 
 ## How it is tested
 
-**Nothing in this repository has been tested for accessibility yet**: no automated checker,
-no browser, and no screen reader, magnifier, speech-input or switch-access software.
+Every named check has a result: Pass, Fail or Blocked, with evidence. No accessibility
+checks have been run on the generated sample yet.
+
+| Check | Result | Evidence |
+|---|---|---|
+| Automated accessibility checker | Blocked | No checker has been run on the generated sample yet. |
+| Browser | Blocked | No browser check has been run on the generated sample yet. |
+| Screen reader | Blocked | No screen reader has been run on the generated sample yet. |
+| Screen magnifier | Blocked | No magnifier has been run on the generated sample yet. |
+| Speech input | Blocked | No speech-input software has been run on the generated sample yet. |
+| Switch access | Blocked | No switch-access software has been run on the generated sample yet. |
 
 ## Known limitations
 
@@ -57,8 +68,11 @@ None recorded yet. That is not the same as none existing; please report what you
 
 ## Contributing
 
-Read this file before changing anything a person sees. Keep the rules above, and say in the
-pull request what was tested, with what, and what was not.
+Read this file before changing anything a person sees. Keep the rules above. In the
+pull request's `## Accessibility` section, give each check a row in a Check | Result | Evidence
+table: Pass, Fail or Blocked, with the test or command, tool and version used, or why it could
+not run. Keep unrun checks as Blocked, including a screen reader nobody ran; never call it
+"not applicable".
 
 ## Reporting a barrier
 
