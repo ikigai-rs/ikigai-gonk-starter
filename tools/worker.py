@@ -100,6 +100,7 @@ import re
 import shlex
 import shutil
 import signal
+import socket
 import stat
 import subprocess
 import sys
@@ -124,6 +125,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import gonk  # noqa: E402  (beside this file; the path above makes it importable)
 import review_findings  # noqa: E402
 import worker_onboard  # noqa: E402
+import worker_session  # noqa: E402
 import worker_usage  # noqa: E402
 
 # --------------------------------------------------------------------------- durations
@@ -232,6 +234,7 @@ class WorkerConfig:
     holder: str | None = None  # overrides .gonk/local.toml's holder for this loop's claims
     disk: dict = field(default_factory=dict)  # the [disk] table: see load_disk
     pool: list[str] = field(default_factory=list)  # the shared labels it also reads: default_pool
+    harness: str | None = None  # claude or codex: whose session summary the hand-back carries
 
     def __post_init__(self) -> None:
         self.loop_dir = self.loop_dir or self.state_dir
@@ -442,6 +445,12 @@ def load_worker(cfg: gonk.Config, path: Path | None = None) -> WorkerConfig:
         raise gonk.ConfigError(
             f"{where}: the agent's command names {{profile}}: set [agent] profile"
         )
+    harness = agent.get("harness")
+    if harness is not None and harness not in worker_session.HARNESSES:
+        raise gonk.ConfigError(
+            f"{where}: [agent] harness = {harness!r}; one of "
+            f"{', '.join(worker_session.HARNESSES)}, for a command of your own that runs one"
+        )
 
     gh = t.get("gh", "gh")
     gh = shlex.split(gh) if isinstance(gh, str) else list(gh)
@@ -529,6 +538,7 @@ def load_worker(cfg: gonk.Config, path: Path | None = None) -> WorkerConfig:
         holder=holder,
         usage=load_usage(t.get("usage", {}), where, command),
         disk=load_disk(t.get("disk", {}), where),
+        harness=worker_session.harness_of(command, harness),
     )
 
 
@@ -2245,6 +2255,11 @@ class Worker:
                 "{profile}": self.wc.profile or "",
             },
         )
+        # Claude Code and Codex are asked for their machine-readable output, which the worker
+        # reads for the session summary (worker_session.py); the agent's words still go to the log.
+        harness = self.wc.harness
+        argv = worker_session.with_json_output(harness, argv)
+        seen = worker_session.collector(harness)
         log(f"{display}: running `{argv[0]}` in {ws.path} on {ws.branch} (log {ws.log})")
         started = time.monotonic()
         with ws.log.open("w", encoding="utf-8") as out:
@@ -2256,22 +2271,33 @@ class Worker:
                     # or cargo configuration says: loops on one machine never share a build.
                     env={**os.environ, "CARGO_TARGET_DIR": str(ws.path / "target")},
                     stdin=subprocess.DEVNULL,
-                    stdout=out,
+                    stdout=subprocess.PIPE if seen else out,
                     stderr=subprocess.STDOUT,
                     start_new_session=True,
                 )
             except OSError as e:
                 raise StepFailed(f"the agent `{argv[0]}` did not start: {e}") from e
+            reader = worker_session.Reader(proc.stdout, out, seen) if seen else None
+            if reader:
+                reader.start()
             ended, code = self.watch(proc, started, beat)
+            if reader:
+                # The agent's process group is gone, so its output ends; a descendant that
+                # left the group and holds the pipe open is not waited for.
+                reader.join(timeout=30)
+                if not reader.is_alive():
+                    proc.stdout.close()
         exited = datetime.now(UTC)
         took = spoken(time.monotonic() - started)
+        wall_ms = int((time.monotonic() - started) * 1000)
+        session = self.session(harness, seen, argv, ended, code, wall_ms)
         where = (
             f"the worktree is kept at {ws.path} (branch {ws.branch}, log {ws.log}) until the "
             "item closes or another holder claims it"
         )
         if job is not None:
             ran = f"`{argv[0]}` exited {code} after {took}"
-            return self.finish_review(item, repo, ws, job, beat, ended, ran, code, where)
+            return self.finish_review(item, repo, ws, job, beat, ended, ran, code, where, session)
         if ended == "lost":
             # Not ours any more: say so on the item, release NOTHING (it is someone else's,
             # or nobody's by the dispatcher's choice), keep the work.
@@ -2329,6 +2355,7 @@ class Worker:
                     f"gonk worker `{holder}` stopped the agent on {display} after {took}: {why}. "
                     f"It hands the item back without evidence; {where}.",
                     *lines,
+                    session.line,
                 ]
             )
             self.release_if_ours(number, note)
@@ -2344,6 +2371,12 @@ class Worker:
             )
             if pr_err:
                 note += f" (The pull requests could not be listed: {pr_err})"
+            note += "\n" + (
+                session.line
+                if session.summary is None
+                else "No session summary: one is recorded on a hand-back with evidence, and this "
+                "run has none."
+            )
             self.release_if_ours(number, note)
             return Outcome(NOT_HANDED_BACK, note, prs=prs)
 
@@ -2367,8 +2400,9 @@ class Worker:
             f"Branch {ws.branch}; "
             + (f"worktree removed; log {ws.log}" if removed else where)
             + ".",
+            session.line,
         ]
-        posted = self.hand_back(number, "\n".join(body))
+        posted = self.hand_back(number, "\n".join(body), session)
         if not posted.ok:
             note = (
                 f"gonk worker `{holder}` could not post its evidence on {display} "
@@ -2395,6 +2429,7 @@ class Worker:
         ran: str,
         code: int | None,
         where: str,
+        session: worker_session.Session,
     ) -> Outcome:
         """After a review job's agent: refuse what must not go further, and hand the findings back
         for the dispatcher to file. The worker writes comments here and nothing else: its grant
@@ -2468,6 +2503,7 @@ class Worker:
                 f"`gonk.py findings {number} --close`.",
                 "",
                 f"Branch {ws.branch}; {kept}.",
+                session.line,
             ]
         )
         size = len(text.encode("utf-8"))
@@ -2477,7 +2513,7 @@ class Worker:
                 f"{review_findings.MAX_HAND_BACK_BYTES} one comment carries, and it truncates "
                 f"nothing: they are all in the report file {ws.report}, kept with the worktree"
             )
-        posted = self.hand_back(number, text)
+        posted = self.hand_back(number, text, session)
         if not posted.ok:
             return give_back(
                 f"its findings could not be posted ({posted.text()}); they are in the report file "
@@ -2527,8 +2563,35 @@ class Worker:
         url = first[0].strip() if first else ""
         return url if gonk.EVIDENCE_SHAPE.match(url) else None
 
-    def hand_back(self, number: int, text: str) -> gonk.Answer:
-        """Post the hand-back comment, marked with `handback=true`.
+    def session(self, harness, seen, argv, ended: str, code, wall_ms: int):
+        """The session summary of this run, or why it has none (worker_session.py). Only a run
+        that ended by itself has one: a stopped agent never wrote its result, and a run that is
+        not handed back with evidence has no hand-back to record one on."""
+        if ended != "agent":
+            return worker_session.Session(
+                harness, why="the agent was stopped before its harness reported the session"
+            )
+        machine = socket.gethostname().split(".")[0].lower() or "unknown"
+        return worker_session.summarize(harness, seen, argv, code, wall_ms, machine)
+
+    def record_session(self, number: int, session: worker_session.Session) -> None:
+        """Record the summary on the hand-back just posted: `…:item:{N}:sessions`, a request of
+        its own, so a refused summary leaves the hand-back standing (ikigai-ledger #3022). A
+        refusal is logged and nothing more: a comment after the hand-back would be the item's
+        newest, which an older ledger reads as the hand-back itself."""
+        if session.summary is None or self.ledger.refused(number) is not None:
+            return
+        resource = self.cfg.resource(f"item:{number}:sessions")
+        answer = self.ledger.ikigai.run(f"sink {resource}", stdin=json.dumps(session.summary))
+        if answer.ok:
+            log(f"item {number}: recorded {session.harness} session {session.summary['session']}")
+        else:
+            log(f"item {number}: the session summary was not recorded: {answer.text()}")
+
+    def hand_back(
+        self, number: int, text: str, session: worker_session.Session | None = None
+    ) -> gonk.Answer:
+        """Post the hand-back comment, marked with `handback=true`, then the session summary.
 
         `handback=true` (ledger 0.8.0, ledger item 1199) is what tells `next` the item waits
         for its dispatcher rather than being free for the next worker. A ledger older than 0.8.0
@@ -2536,7 +2599,10 @@ class Worker:
         prefix in `text` is the hand-back there, and the worker's own `awaiting_dispatcher`
         reads it back.
         """
-        return self.ledger.comment(number, text, handback="true")
+        posted = self.ledger.comment(number, text, handback="true")
+        if posted.ok and session is not None:
+            self.record_session(number, session)
+        return posted
 
     def release_if_ours(self, number: int, note: str) -> bool:
         """Post the note, then release only a claim that is still this worker's. The note is

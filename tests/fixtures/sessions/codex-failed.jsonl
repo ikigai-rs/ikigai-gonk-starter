@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"0199a213-fa11-7000-8000-000000000001"}
+{"type":"turn.started"}
+{"type":"error","message":"made-up stream disconnected"}
+{"type":"turn.failed","error":{"message":"made-up stream disconnected"}}

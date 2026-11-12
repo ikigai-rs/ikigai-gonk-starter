@@ -5,10 +5,13 @@ branch and "open a pull request" through the stub gh, or report evidence without
 
     fake_agent.py --record <dir> --gh "<argv of the stub gh>" --branch B --item N
                   [--sleep S] [--no-pr] [--evidence URL --report-file P] [--exit N]
-                  [--report TEXT] [--dirty] [--ignored] [--commit-only] -- <prompt>
+                  [--report TEXT] [--dirty] [--ignored] [--commit-only]
+                  [--emit FILE] [--model NAME] -- <prompt>
 
-The last four are a reviewer's: write TEXT to the report file, leave an untracked file, leave a
-file `.gitignore` covers, or commit and push nothing further.
+The report, dirty, ignored and commit-only flags are a reviewer's: write TEXT to the report file,
+leave an untracked file, leave a file `.gitignore` covers, or commit and push nothing further.
+`--emit` prints FILE to stdout before anything else, as a harness prints its JSON output (the
+recorded fixtures in tests/fixtures/sessions/); `--model` is read by the worker, not here.
 """
 
 from __future__ import annotations
@@ -45,9 +48,14 @@ def main() -> int:
     p.add_argument("--dirty", action="store_true")
     p.add_argument("--ignored", action="store_true")
     p.add_argument("--commit-only", action="store_true")
+    p.add_argument("--emit")
+    p.add_argument("--model")
     p.add_argument("prompt")
     args = p.parse_args()
 
+    if args.emit:
+        sys.stdout.write(Path(args.emit).read_text())
+        sys.stdout.flush()
     record = Path(args.record)
     record.mkdir(parents=True, exist_ok=True)
     (record / f"prompt-{args.item}.md").write_text(args.prompt)

@@ -877,7 +877,7 @@ account that could push with another credential. The first push is the final wor
 | `without` | none | items carrying ANY of these are never taken |
 | `[repos_from]` | none; sample uses `ikigai-rs` | `github` is one allowed organization; optional `except` excludes names; requires this table or an explicit repository |
 | `[repos.<name>]` | none | `remote` (what `git clone` takes), `github` (`owner/name`, read from a github.com remote when omitted), `base` (default `main`) |
-| `[agent]` | (required) | `preset` (`claude`, `codex`, `hermes`, `hermes-profile` with `profile`) or `command`, a list with placeholders `{prompt}` `{prompt_file}` `{workdir}` `{branch}` `{item}` `{repo}` `{report_file}` `{profile}` |
+| `[agent]` | (required) | `preset` (`claude`, `codex`, `hermes`, `hermes-profile` with `profile`) or `command`, a list with placeholders `{prompt}` `{prompt_file}` `{workdir}` `{branch}` `{item}` `{repo}` `{report_file}` `{profile}`; `harness` (`claude` or `codex`) for a command of your own that runs one under another name, so its session summary is read (see "The session summary") |
 | `work_root` | `~/work` | worktrees go to `<work_root>/<repo>/item-<N>`; must be under agent's home |
 | `lease`, `renew_every` | `30m`, a third of the lease | the claim's lease, and the heartbeat that renews it |
 | `budget` | `45m` | wall-clock per item; the agent is stopped when it runs out |
@@ -967,7 +967,10 @@ the Pop!_OS 24.04 worker, `run --once`) showed, and what is still to try:
 5. **Agent.** The prompt is a fixed preamble (AGENTS.md's rules: reproduce first; work only
    in this worktree; a pull request with green CI; never merge, never close; the evidence
    file when it is not a defect or updates an existing PR), then the item's title and body. Its output goes to
-   `<work_root>/<repo>/item-<N>.log`, beside the worktree, inside hubdiag's view. When the
+   `<work_root>/<repo>/item-<N>.log`, beside the worktree, inside hubdiag's view. Claude Code
+   and Codex are run with their JSON output (`claude --output-format json`, `codex exec
+   --json`), which the worker reads for the session summary, and the log gets the agent's own
+   words from it and every line that is not a JSON event, as before. When the
    budget runs out the worker stops its whole process group (SIGTERM, then SIGKILL after
    `grace`).
 6. **Hand-back.** The pull requests on the branch (`gh pr list --head`), and their CI:
@@ -991,6 +994,10 @@ the Pop!_OS 24.04 worker, `run --once`) showed, and what is still to try:
    hand-back there. With no pull request, the first line of the agent's report file (a URL) is
    the evidence; with neither, the item goes back with a note and no evidence. An overrun goes
    back the same way, naming the overrun.
+   The hand-back's last line is about the run's **session summary** (below): `Session
+   summary: claude session <id> (<model>, exit <N>), sent to the item's sessions after this
+   hand-back.`, or `No session summary: <why>.` A note without evidence carries the same `No
+   session summary:` line, since a summary is recorded on a hand-back.
 7. **Disk.** Before each item the loop reads the free space on the volume holding the work
    root. Under `[disk] floor_gb` (default 30) it takes no new item, logs why once, and posts
    `Disk: free=<GB>GB floor=<GB>GB state=held read=<time> (<why>)` on its status item; it
@@ -1023,6 +1030,45 @@ the Pop!_OS 24.04 worker, `run --once`) showed, and what is still to try:
    `prune_after` of `"0s"` turn the removals off; the floor's `target/` drop still runs, since a
    build can be made again. To look at a kept worktree before it goes, copy what matters out of
    it or push its branch.
+
+#### The session summary
+
+With a hand-back, a Claude Code or Codex run records its **session summary** on the item:
+the raw, content-free facts of the run, which the ledger defines (ikigai-ledger #3022,
+`ledger:SessionSummaryShape` in its vocabulary 0.22.0) and serves at
+`urn:iki:ledger:<ledger>:item:<N>:sessions`. The worker reads them from the harness's own
+machine-readable output ([`tools/worker_session.py`](../tools/worker_session.py)):
+
+| Key | Claude Code (`claude -p --output-format json`, or `stream-json`) | Codex (`codex exec --json`) |
+| --- | --- | --- |
+| `session` | the result's `session_id` | `thread.started`'s `thread_id` (older releases: `session_configured`'s `session_id`) |
+| `machineName` | this machine's short host name | the same |
+| `harness` | `claude` | `codex` |
+| `model` | stream-json's init event, else the model in the result's `modelUsage` with the most tokens, else the command's `--model` | an event's `model`, else the command's `-m`/`--model`/`-c model=`, else `model` in Codex's `config.toml` |
+| `exitStatus` | the process's exit status | the same |
+| `wallClockMs` | the result's `duration_ms` | measured by the worker |
+| `turns` | `num_turns` | `turn.started` events |
+| `toolCalls` | `tool_use` blocks (stream-json only) | command, file-change, MCP and web-search items |
+| `inputTokens`, `cachedInputTokens`, `cacheCreationTokens`, `outputTokens` | `usage`'s `input_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `output_tokens` | `turn.completed` usage, summed (older releases: the last `token_count` total); input less its cached part, cached input, output |
+
+- **Raw facts only.** Ids, names and counts. The result's cost is never read or sent, nor any
+  price; `is_error` is said on the hand-back line (`claude reported an error`), not sent,
+  since the shape has no key for it. No transcript text, prompt, tool result or file content
+  leaves the worker, nothing is copied anywhere, and no AgentsView capture is used. The
+  agent's own words go to the item's log on this machine, as they did before.
+- **Checked before it is sent.** The summary is checked against the shape (closed: any other
+  key is refused; the six above `turns` required; counts whole and 0 or more), then posted,
+  after the hand-back comment, as a request of its own. A refusal (a ledger before 0.22.0, or
+  a grant without `urn:cap:ledger:session:<ledger>`, which ikigai-ledger's published worker
+  grant carries) is logged, and the hand-back stands.
+- **Never a failed run.** A missing or unparseable result, a summary the shape would refuse,
+  an agent stopped at its budget or by a shutdown, or an agent that is neither (hermes) posts
+  the hand-back, or the note, without a summary, saying why in one `No session summary:` line.
+- **The command.** A preset or `init-agents` command that runs `claude` or `codex` by that name
+  is given `--output-format json` or `--json` when it does not ask for an output format itself
+  (`--output-format stream-json`, which Claude Code runs only with `--verbose`, is read too).
+  A command of your own that runs one under another name sets `[agent] harness`, and asks for
+  the JSON output itself.
 
 `run --once` exits 0 when it handed an item back with evidence, 3 when there was nothing to
 take, 4 when it took one and could not hand it back with evidence (lost, overrun, stopped,
@@ -1364,6 +1410,7 @@ holds it for closing. The same decision as for pull request aliases.
 | [`probe.sh`](probe.sh) | as the probed account | what this account can reach; read-only by construction |
 | [`../tools/worker.py`](../tools/worker.py) | on the worker, as agent | the worker loop (step 8); `init-agents` and `plist` for a loop per agent |
 | [`../tools/worker_repos.py`](../tools/worker_repos.py) | on the worker, as agent | enrolls an owner's repositories in every loop's configuration; `--check-push` |
+| [`../tools/worker_session.py`](../tools/worker_session.py) | inside the worker loop | reads Claude Code's and Codex's JSON output for the session summary a hand-back records |
 | [`worker.sample.toml`](worker.sample.toml) | copied to `.gonk/worker.toml`, or by `init-agents` to `.gonk/worker-<agent>.toml` | the loop's configuration, commented |
 | [`units/gonk-worker@.service`](units/gonk-worker@.service) | as agent, by systemd | a loop per agent, `gonk-worker@<agent>` |
 | [`units/gonk-worker.service`](units/gonk-worker.service), [`units/dev.ikigai-rs.gonk-worker.plist`](units/dev.ikigai-rs.gonk-worker.plist) | as agent, by systemd or launchd | the single loop as a service, with its PATH; the plist is also what `worker.py plist` generates each agent's daemon from |
