@@ -36,7 +36,7 @@ def read(name: str, harness: str) -> tuple[worker_session.Collector, str]:
 def summarize(name: str, harness: str, argv=None, code: int = 0) -> worker_session.Session:
     seen, _ = read(name, harness)
     argv = argv or [harness]
-    return worker_session.summarize(harness, seen, argv, code, 1234, "lawnboy", env={})
+    return worker_session.summarize(harness, seen, argv, code, 1234, "worker-box", env={})
 
 
 class TheCommand(unittest.TestCase):
@@ -88,7 +88,7 @@ class Claude(unittest.TestCase):
             session.summary,
             {
                 "session": "0b5e1c2d-3f40-4a5b-8c6d-7e8f9a0b1c2d",
-                "machineName": "lawnboy",
+                "machineName": "worker-box",
                 "harness": "claude",
                 "model": "claude-opus-5-5",  # the model with the most tokens in modelUsage
                 "exitStatus": 0,
@@ -148,7 +148,7 @@ class Codex(unittest.TestCase):
             session.summary,
             {
                 "session": "0199a213-81c0-7800-8aa1-bbab2a035a53",
-                "machineName": "lawnboy",
+                "machineName": "worker-box",
                 "harness": "codex",
                 "model": "gpt-5.5-codex",  # from the command: these events name none
                 "exitStatus": 0,
