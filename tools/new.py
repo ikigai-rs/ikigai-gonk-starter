@@ -75,6 +75,7 @@ STARTER_FILES = [
     ".gonk/layout.toml",
     ".gonk/gonk.toml",
     ".gonk/harness/vocabulary.ttl",
+    ".gonk/harness/shapes.ttl",
     ".gonk/queries/README.md",
     ".gonk/queries/harness-sensors-never-fired.rq",
     ".gonk/queries/harness-guides-without-sensor.rq",

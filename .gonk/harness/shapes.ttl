@@ -1,0 +1,150 @@
+# The shapes of a harness entry: closed SHACL node shapes for harness:Guide and harness:Control,
+# the form `.gonk/harness/harness.ttl` (and any entry authored for it) must take.
+# `python3 tools/harness.py check` validates the harness graph against this file and refuses an
+# entry that breaks a shape with a sentence naming the shape's message and the property.
+#
+# The shapes are SHACL Core (https://www.w3.org/TR/shacl/), in the Turtle subset tools/harness.py
+# reads: no blank nodes and no lists, so every property shape is named, a closed shape lists
+# rdf:type as one of its property shapes instead of in sh:ignoredProperties, and a rule that
+# holds only for a sensor ("a sensor states its outcome") is an sh:not of a shape describing the
+# breach ("feedback, with no outcome"), which needs no sh:or.
+#
+# The data graph is the harness graph alone. It states no rdfs:subClassOf, so sh:targetClass
+# harness:Control reaches the nodes typed harness:Control and not the guides, which
+# sh:targetClass harness:Guide reaches. Whether a value is a term of the vocabulary is the
+# check's own rule, beside these shapes.
+#
+# Every harness: term used here is defined in .gonk/harness/vocabulary.ttl; the shapes' own IRIs
+# are under https://ikigai-rs.dev/ns/harness/shapes# so the vocabulary stays self-contained.
+
+@prefix harness: <https://ikigai-rs.dev/ns/harness#> .
+@prefix hsh:     <https://ikigai-rs.dev/ns/harness/shapes#> .
+@prefix rdf:     <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix sh:      <http://www.w3.org/ns/shacl#> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+
+# ── a guide ────────────────────────────────────────────────────────────────────────────────
+
+hsh:GuideShape a sh:NodeShape ;
+    rdfs:label "guide" ;
+    sh:targetClass harness:Guide ;
+    sh:closed true ;
+    sh:property hsh:guide-type, hsh:guide-label, hsh:guide-comment, hsh:guide-direction,
+        hsh:guide-execution, hsh:guide-stage, hsh:guide-category, hsh:guide-statedIn,
+        hsh:guide-section, hsh:guide-existsFor .
+
+hsh:guide-type a sh:PropertyShape ; sh:path rdf:type ; sh:nodeKind sh:IRI .
+
+hsh:guide-label a sh:PropertyShape ; sh:path rdfs:label ;
+    sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:Literal ;
+    sh:message "a guide has one label, the rule in a few words" .
+
+hsh:guide-comment a sh:PropertyShape ; sh:path rdfs:comment ;
+    sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:Literal ;
+    sh:message "a guide has one comment, the rule in a sentence" .
+
+hsh:guide-direction a sh:PropertyShape ; sh:path harness:direction ;
+    sh:minCount 1 ; sh:maxCount 1 ; sh:hasValue harness:feedforward ;
+    sh:message "a guide is feedforward, and says so in one direction" .
+
+hsh:guide-execution a sh:PropertyShape ; sh:path harness:execution ;
+    sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+    sh:message "a guide has one execution (computational or inferential)" .
+
+hsh:guide-stage a sh:PropertyShape ; sh:path harness:stage ;
+    sh:minCount 1 ; sh:nodeKind sh:IRI ;
+    sh:message "a guide names the stage it acts at" .
+
+hsh:guide-category a sh:PropertyShape ; sh:path harness:category ;
+    sh:minCount 1 ; sh:nodeKind sh:IRI ;
+    sh:message "a guide names the category it regulates" .
+
+hsh:guide-statedIn a sh:PropertyShape ; sh:path harness:statedIn ;
+    sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ;
+    sh:message "a guide names the one file it is stated in" .
+
+hsh:guide-section a sh:PropertyShape ; sh:path harness:section ;
+    sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ;
+    sh:message "a guide names the one section of that file it is stated in" .
+
+hsh:guide-existsFor a sh:PropertyShape ; sh:path harness:existsFor ; sh:nodeKind sh:IRI .
+
+# ── any other control: a sensor, or a computational feedforward control ────────────────────
+
+hsh:ControlShape a sh:NodeShape ;
+    rdfs:label "control" ;
+    sh:targetClass harness:Control ;
+    sh:closed true ;
+    sh:property hsh:control-type, hsh:control-label, hsh:control-comment,
+        hsh:control-direction, hsh:control-execution, hsh:control-stage,
+        hsh:control-category, hsh:control-outcome, hsh:control-statedBy,
+        hsh:control-enforcedAt, hsh:control-existsFor, hsh:control-firedBy,
+        hsh:control-noFiringTest, hsh:control-wiredBy, hsh:control-wired,
+        hsh:control-example, hsh:control-counterExample .
+
+hsh:control-type a sh:PropertyShape ; sh:path rdf:type ; sh:nodeKind sh:IRI .
+
+hsh:control-label a sh:PropertyShape ; sh:path rdfs:label ;
+    sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:Literal ;
+    sh:message "a control has one label" .
+
+hsh:control-comment a sh:PropertyShape ; sh:path rdfs:comment ;
+    sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:Literal ;
+    sh:message "a control has one comment, what it does in a sentence" .
+
+hsh:control-direction a sh:PropertyShape ; sh:path harness:direction ;
+    sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+    sh:message "a control has one direction (feedforward or feedback)" .
+
+hsh:control-execution a sh:PropertyShape ; sh:path harness:execution ;
+    sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+    sh:message "a control has one execution (computational or inferential)" .
+
+hsh:control-stage a sh:PropertyShape ; sh:path harness:stage ;
+    sh:minCount 1 ; sh:nodeKind sh:IRI ;
+    sh:message "a control names the stage it acts at" .
+
+hsh:control-category a sh:PropertyShape ; sh:path harness:category ;
+    sh:minCount 1 ; sh:nodeKind sh:IRI ;
+    sh:message "a control names the category it regulates" .
+
+hsh:control-outcome a sh:PropertyShape ; sh:path harness:outcome ; sh:nodeKind sh:IRI .
+hsh:control-statedBy a sh:PropertyShape ; sh:path harness:statedBy ; sh:nodeKind sh:IRI .
+hsh:control-enforcedAt a sh:PropertyShape ; sh:path harness:enforcedAt ; sh:datatype xsd:string .
+hsh:control-existsFor a sh:PropertyShape ; sh:path harness:existsFor ; sh:nodeKind sh:IRI .
+hsh:control-firedBy a sh:PropertyShape ; sh:path harness:firedBy ; sh:nodeKind sh:IRI .
+hsh:control-noFiringTest a sh:PropertyShape ; sh:path harness:noFiringTest ;
+    sh:maxCount 1 ; sh:datatype xsd:string .
+hsh:control-wiredBy a sh:PropertyShape ; sh:path harness:wiredBy ; sh:datatype xsd:string .
+hsh:control-wired a sh:PropertyShape ; sh:path harness:wired ;
+    sh:maxCount 1 ; sh:datatype xsd:boolean .
+hsh:control-example a sh:PropertyShape ; sh:path harness:example ; sh:datatype xsd:string .
+hsh:control-counterExample a sh:PropertyShape ; sh:path harness:counterExample ;
+    sh:datatype xsd:string .
+
+# ── what a sensor (a control whose direction is feedback) must say ─────────────────────────
+
+hsh:SensorStatesOutcome a sh:NodeShape ;
+    rdfs:label "sensor's outcome" ;
+    sh:targetClass harness:Control ;
+    sh:not hsh:FeedbackWithoutOutcome ;
+    sh:message "a sensor states its outcome (refuse, warn, report) in harness:outcome" .
+
+hsh:FeedbackWithoutOutcome a sh:NodeShape ;
+    rdfs:label "feedback with no harness:outcome" ;
+    sh:property hsh:is-feedback, hsh:no-outcome .
+
+hsh:SensorStatesGuide a sh:NodeShape ;
+    rdfs:label "sensor's guide" ;
+    sh:targetClass harness:Control ;
+    sh:not hsh:FeedbackWithoutGuide ;
+    sh:message "a sensor names the guide it enforces in harness:statedBy" .
+
+hsh:FeedbackWithoutGuide a sh:NodeShape ;
+    rdfs:label "feedback with no harness:statedBy" ;
+    sh:property hsh:is-feedback, hsh:no-statedBy .
+
+hsh:is-feedback a sh:PropertyShape ; sh:path harness:direction ; sh:hasValue harness:feedback .
+hsh:no-outcome a sh:PropertyShape ; sh:path harness:outcome ; sh:maxCount 0 .
+hsh:no-statedBy a sh:PropertyShape ; sh:path harness:statedBy ; sh:maxCount 0 .

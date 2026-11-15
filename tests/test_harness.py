@@ -15,6 +15,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -373,6 +374,140 @@ class TheGraphAgrees(unittest.TestCase):
         self.assertEqual(len(bad), 1)
         tree = ast.parse("def fire_it(x):\n    fire(x, 'refusal', None)\n")
         self.assertEqual(harness._emitters_in(tree, "tools/x.py")[1], [])
+
+
+class TheShapes(unittest.TestCase):
+    """.gonk/harness/shapes.ttl: closed SHACL shapes for a guide and a control, which `check`
+    validates the graph against, refusing a breach with a sentence naming the field."""
+
+    GUIDE = "guide:reproduce-before-fix"
+    SENSOR = "ctl:reject-needs-reason"
+
+    def setUp(self):
+        self.shapes = harness.read_graph(ROOT / harness.SHAPES_FILE)
+        self.text = (ROOT / harness.GRAPH_FILE).read_text(encoding="utf-8")
+
+    def entry(self, curie: str) -> tuple[int, int]:
+        """The span of `curie`'s statement in the starter's graph: its first line to its `.`."""
+        start = self.text.index(f"\n{curie} a ") + 1
+        return start, self.text.index(" .\n", start) + 3
+
+    def problems(self, text: str) -> list[str]:
+        return harness.validate(self.shapes, harness.Graph(harness.parse_turtle(text)[0]))
+
+    def edited(self, curie: str, old: str, new: str) -> list[str]:
+        start, end = self.entry(curie)
+        body = self.text[start:end]
+        self.assertIn(old, body)
+        return self.problems(self.text[:start] + body.replace(old, new, 1) + self.text[end:])
+
+    def test_the_starters_own_harness_conforms(self):
+        self.assertEqual(self.problems(self.text), [])
+        self.assertEqual(harness.check(ROOT), [])
+
+    def test_a_guide_missing_a_required_field_is_refused_naming_it(self):
+        required = {
+            'rdfs:label "reproduce before you fix" ;': "rdfs:label",
+            'harness:statedIn "AGENTS.md" ;': "harness:statedIn",
+            "harness:direction harness:feedforward ;": "harness:direction",
+            "harness:execution harness:inferential ;": "harness:execution",
+        }
+        iri = harness.GUIDE_NS + "reproduce-before-fix"
+        for field, name in required.items():
+            with self.subTest(field=name):
+                out = self.edited(self.GUIDE, field, "")
+                self.assertEqual(len(out), 1, out)
+                self.assertTrue(out[0].startswith(f"{iri}: a guide "), out)
+                self.assertIn(f"({name}: has none, needs at least 1)", out[0])
+        out = self.edited(self.GUIDE, 'harness:statedIn "AGENTS.md" ;', "")
+        self.assertEqual(
+            out,
+            [
+                f"{iri}: a guide names the one file it is stated in "
+                "(harness:statedIn: has none, needs at least 1)"
+            ],
+        )
+
+    def test_the_shapes_are_closed(self):
+        out = self.edited(
+            self.GUIDE, "harness:statedIn", 'harness:enforcedAt "x" ; harness:statedIn'
+        )
+        self.assertEqual(len(out), 1, out)
+        self.assertIn("harness:enforcedAt is not a property a guide has", out[0])
+        out = self.edited(self.SENSOR, "harness:outcome", 'rdfs:seeAlso "x" ; harness:outcome')
+        self.assertIn("rdfs:seeAlso is not a property a control has", "\n".join(out))
+
+    def test_counts_kinds_and_values(self):
+        out = self.edited(self.GUIDE, 'harness:statedIn "AGENTS.md"', 'harness:statedIn "A", "B"')
+        self.assertIn("harness:statedIn: has 2, may have at most 1", "\n".join(out))
+        out = self.edited(self.GUIDE, "harness:feedforward", "harness:feedback")
+        self.assertIn("a guide is feedforward", "\n".join(out))
+        out = self.edited(self.GUIDE, 'harness:statedIn "AGENTS.md"', "harness:statedIn harness:x")
+        self.assertIn("is not of type string", "\n".join(out))
+
+    def test_a_sensor_states_its_outcome_and_its_guide(self):
+        iri = harness.CONTROL_NS + "reject-needs-reason"
+        out = self.edited(self.SENSOR, "harness:outcome harness:refuse ;", "")
+        self.assertEqual(len(out), 1, out)
+        self.assertTrue(out[0].startswith(f"{iri}: a sensor states its outcome"), out)
+        start, end = self.entry(self.SENSOR)
+        body = re.sub(r"harness:statedBy [^;]*;", "", self.text[start:end])
+        out = self.problems(self.text[:start] + body + self.text[end:])
+        self.assertEqual(len(out), 1, out)
+        self.assertIn("a sensor names the guide it enforces in harness:statedBy", out[0])
+        # A control that is not a sensor needs neither.
+        self.assertNotIn("seed-orders-tasks", "\n".join(self.problems(self.text)))
+
+    def test_examples_belong_to_sensors(self):
+        ok_ = self.edited(
+            self.SENSOR,
+            "harness:outcome",
+            'harness:example "reject 12" ;\n'
+            '    harness:counterExample "reject 12 --note why" ; harness:outcome',
+        )
+        self.assertEqual(ok_, [])
+        out = self.edited(self.GUIDE, "harness:statedIn", 'harness:example "x" ; harness:statedIn')
+        self.assertIn("harness:example is not a property a guide has", "\n".join(out))
+
+    def test_check_refuses_a_guide_without_its_field(self):
+        repo = generated(self, ["solo"])
+        graph = repo / harness.GRAPH_FILE
+        text = graph.read_text()
+        start = text.index("\nguide:reproduce-before-fix a ")
+        graph.write_text(text[:start] + text[start:].replace(' harness:section "', ' rdfs:x "', 1))
+        out = "\n".join(harness.check(repo))
+        self.assertIn("guide:reproduce-before-fix: a guide names the one section", out)
+        self.assertIn("(harness:section: has none, needs at least 1)", out)
+        self.assertIn("rdfs:x is not a property a guide has", out)
+
+    def test_a_shape_saying_more_than_is_evaluated_is_refused(self):
+        extra = harness.parse_turtle(
+            "@prefix sh: <http://www.w3.org/ns/shacl#> .\n<urn:x> sh:or <urn:y> .\n"
+        )[0]
+        shapes = harness.Graph(self.shapes.triples + extra)
+        out = harness.validate(shapes, harness.Graph([]))
+        self.assertEqual(len(out), 1, out)
+        self.assertIn("shacl#or, which tools/harness.py does not evaluate", out[0])
+
+    def test_the_shapes_name_only_terms_the_vocabulary_defines(self):
+        """The vocabulary is self-contained: every harness: IRI the shapes use is a term of it,
+        and the shapes' own IRIs are outside its namespace."""
+        vocab = harness.read_graph(ROOT / harness.VOCAB_FILE)
+        terms = {s.value for s in vocab.by_subject}
+        used = {
+            t.value
+            for triple in self.shapes.triples
+            for t in triple
+            if isinstance(t, harness.I) and t.value.startswith(H)
+        }
+        self.assertTrue(used)
+        self.assertEqual(used - terms, set())
+        self.assertFalse(any(s.value.startswith(H) for s in self.shapes.by_subject))
+        for term in ("example", "counterExample"):
+            self.assertIn(H + term, terms)
+            self.assertEqual(
+                vocab.values(harness.I(H + term), harness.RDFS + "domain"), [H + "Control"]
+            )
 
 
 class TheCommandLine(unittest.TestCase):

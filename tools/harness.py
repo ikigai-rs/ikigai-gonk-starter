@@ -15,8 +15,10 @@ THE GRAPH. `.gonk/harness/harness.ttl` describes every control this repository's
 assembled by `tools/new.py` from `profiles/harness/<section>.ttl`, one fragment per AGENTS.md
 section, exactly as AGENTS.md is assembled from `profiles/sections/<section>.md`: a repository
 describes the rules it follows and the sensors it carries, and nothing else. The terms are
-`.gonk/harness/vocabulary.ttl`, `https://ikigai-rs.dev/ns/harness#` (`harness:`). Every control
-has a stable IRI, `urn:iki:harness:starter:control:{id}` (a guide `…:guide:{id}`), whose id
+`.gonk/harness/vocabulary.ttl`, `https://ikigai-rs.dev/ns/harness#` (`harness:`), and the form
+an entry takes is `.gonk/harness/shapes.ttl`, closed SHACL shapes for a guide and a control,
+which `check` validates the graph against (`validate` says which SHACL Core it reads). Every
+control has a stable IRI, `urn:iki:harness:starter:control:{id}` (a guide `…:guide:{id}`), whose id
 never changes: firings recorded under it stay joined to it. No blank nodes.
 
 THE FIRING LOG. Every refusal or warning a sensor makes in this repository's own tools writes
@@ -75,6 +77,7 @@ RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
 RDFS = "http://www.w3.org/2000/01/rdf-schema#"
 XSD = "http://www.w3.org/2001/XMLSchema#"
 RDF_TYPE = RDF + "type"
+SH = "http://www.w3.org/ns/shacl#"
 
 CONTROL_NS = "urn:iki:harness:starter:control:"
 GUIDE_NS = "urn:iki:harness:starter:guide:"
@@ -86,6 +89,7 @@ GRAPH_NS = "urn:iki:harness:graph:"
 
 GRAPH_FILE = Path(".gonk") / "harness" / "harness.ttl"
 VOCAB_FILE = Path(".gonk") / "harness" / "vocabulary.ttl"
+SHAPES_FILE = Path(".gonk") / "harness" / "shapes.ttl"
 FIRINGS_FILE = Path(".gonk") / "state" / "harness" / "firings.log"
 
 ID = re.compile(r"\A[a-z][a-z0-9]*(?:-[a-z0-9]+)*\Z")
@@ -553,6 +557,133 @@ def load_update(graph: str, description: list[tuple], firings: list[tuple]) -> s
     return drop + " ;\n" + insert_data(graph, [*description, *firings])
 
 
+# --------------------------------------------------------------------------- the shapes
+
+# Why a private SHACL subset rather than a shared validator: the starter's tools are standard
+# library only (README, "Python (standard library only)"), so no SHACL library can be a
+# dependency here. Hosts that need the full standard use ikigai-shacl; this is the subset the
+# harness shapes need and nothing more.
+#
+# The SHACL Core this file evaluates. A shape using any other sh: term is refused, never
+# skipped, so a shape cannot say more than is checked.
+SH_TERMS = {
+    SH + t
+    for t in (
+        "targetClass closed property path minCount maxCount nodeKind datatype hasValue not message"
+    ).split()
+}
+SH_KINDS = {SH + "IRI": I, SH + "Literal": L}
+
+
+def curie(iri: str) -> str:
+    for prefix, ns in (("harness", H), ("rdfs", RDFS), ("rdf", RDF)):
+        if iri.startswith(ns):
+            return f"{prefix}:{iri[len(ns) :]}"
+    return iri
+
+
+def _datatype(o) -> str | None:
+    if not isinstance(o, L):
+        return None
+    if o.lang:
+        return RDF + "langString"
+    return o.datatype or XSD + "string"
+
+
+def _property_breaches(shapes: Graph, ps: I, g: Graph, focus: I) -> list[str]:
+    """How the values of `focus` at the property shape `ps`'s path break it, as phrases."""
+    paths = shapes.objects(ps, SH + "path")
+    if len(paths) != 1 or not isinstance(paths[0], I):
+        return [f"property shape {ps.value} has no single IRI sh:path"]
+    path = paths[0].value
+    values = g.objects(focus, path)
+    out = []
+    for n in shapes.values(ps, SH + "minCount"):
+        if len(values) < int(n):
+            out.append(f"{curie(path)}: has {len(values) or 'none'}, needs at least {n}")
+    for n in shapes.values(ps, SH + "maxCount"):
+        if len(values) > int(n):
+            out.append(f"{curie(path)}: has {len(values)}, may have at most {n}")
+    for kind in shapes.values(ps, SH + "nodeKind"):
+        for v in values:
+            if not isinstance(v, SH_KINDS[kind]):
+                what = "an IRI" if kind == SH + "IRI" else "a literal"
+                out.append(f"{curie(path)}: {v.value!r} is not {what}")
+    for dt in shapes.values(ps, SH + "datatype"):
+        for v in values:
+            if _datatype(v) != dt:
+                out.append(f"{curie(path)}: {v.value!r} is not of type {dt.rsplit('#', 1)[-1]}")
+    missing = len(values) < min((int(n) for n in shapes.values(ps, SH + "minCount")), default=0)
+    for want in shapes.objects(ps, SH + "hasValue"):
+        if want not in values and not missing:  # a missing value is said once, as a count
+            out.append(f"{curie(path)}: needs {curie(want.value)}")
+    return out
+
+
+def breaches(shapes: Graph, shape: I, g: Graph, focus: I) -> list[tuple[str, I | None]]:
+    """Each way `focus` breaks the node shape `shape` (its targets aside): a phrase, and the
+    property shape it came from (whose sh:message says it), or None for the node shape's own."""
+    out: list[tuple[str, I | None]] = []
+    allowed = set()
+    for ps in shapes.objects(shape, SH + "property"):
+        allowed.update(shapes.values(ps, SH + "path"))
+        out += [(phrase, ps) for phrase in _property_breaches(shapes, ps, g, focus)]
+    if shapes.values(shape, SH + "closed") == ["true"]:
+        for p in dict.fromkeys(p for p, _ in g.by_subject.get(focus, [])):
+            if p.value not in allowed:
+                out.append(
+                    (f"{curie(p.value)} is not a property a {_name(shapes, shape)} has", None)
+                )
+    for inner in shapes.objects(shape, SH + "not"):
+        if not breaches(shapes, inner, g, focus):
+            out.append((f"it is {_name(shapes, inner)}", None))
+    return out
+
+
+def _name(shapes: Graph, shape: I) -> str:
+    return (shapes.values(shape, RDFS + "label") or [shape.value.rsplit("#", 1)[-1]])[0]
+
+
+def shape_problems(shapes: Graph) -> list[str]:
+    """The shapes graph's own faults: a sh: term this file does not evaluate, or a node kind
+    other than sh:IRI or sh:Literal."""
+    bad = []
+    for s, p, o in shapes.triples:
+        if p.value.startswith(SH) and p.value not in SH_TERMS:
+            bad.append(
+                f"{SHAPES_FILE}: {s.value} uses {p.value}, which tools/harness.py does not evaluate"
+            )
+        if p.value == SH + "nodeKind" and o.value not in SH_KINDS:
+            bad.append(
+                f"{SHAPES_FILE}: {s.value} has sh:nodeKind {o.value}; only sh:IRI or sh:Literal"
+            )
+    return bad
+
+
+def validate(shapes: Graph, g: Graph) -> list[str]:
+    """Validate the data graph `g` against `shapes`: one sentence per breach, naming the focus
+    node, the shape's message (or its label) and each property that breaks it. Empty conforms.
+
+    SHACL Core, the part a list-free, blank-node-free shapes graph needs: node shapes with
+    sh:targetClass (instances by their asserted rdf:type; the data graph states no subclasses),
+    sh:closed, sh:property, sh:not and sh:message; property shapes with an IRI sh:path,
+    sh:minCount, sh:maxCount, sh:nodeKind (sh:IRI, sh:Literal), sh:datatype and sh:hasValue.
+    Each breach is its own sentence, so a guide missing two fields gets two, each naming its
+    property."""
+    bad = shape_problems(shapes)
+    if bad:
+        return bad
+    targeted = {s for s, p, _ in shapes.triples if p.value == SH + "targetClass"}
+    for shape in sorted(targeted, key=lambda t: t.value):
+        own = shapes.values(shape, SH + "message") or [f"a {_name(shapes, shape)} breaks its shape"]
+        for cls in shapes.values(shape, SH + "targetClass"):
+            for focus in sorted(set(g.of_type(cls)), key=lambda t: t.value):
+                for phrase, ps in breaches(shapes, shape, g, focus):
+                    said = (shapes.values(ps, SH + "message") if ps else []) or own
+                    bad.append(f"{focus.value}: {said[0]} ({phrase})")
+    return bad
+
+
 # --------------------------------------------------------------------------- the check
 
 # The `## ` headings of AGENTS.md that state no rule: the loop is a walk-through, and the
@@ -656,14 +787,18 @@ def defined_in(path: Path, name: str) -> bool:
 
 
 def check(repo: Path) -> list[str]:
-    """Everything that disagrees between this repository's harness graph, its vocabulary, its
-    code and its AGENTS.md, as sentences. Empty is agreement."""
+    """Everything that disagrees between this repository's harness graph, its shapes, its
+    vocabulary, its code and its AGENTS.md, as sentences. Empty is agreement."""
     bad: list[str] = []
     try:
         vocab = read_graph(repo / VOCAB_FILE)
+        shapes = read_graph(repo / SHAPES_FILE)
         g = read_graph(repo / GRAPH_FILE)
     except (OSError, TurtleError) as e:
         return [str(e)]
+    # The form of every entry: .gonk/harness/shapes.ttl's closed shapes (required fields,
+    # how many, of what kind, and no property a guide or a control does not have).
+    bad += validate(shapes, g)
     terms = {s.value for s, _, _ in vocab.triples if s.value.startswith(H)}
     # The parts of the process a sensor can be wired by: the hooks and checks
     # .gonk/process.toml names, which is what `harness:wiredBy` may cite.
@@ -680,27 +815,10 @@ def check(repo: Path) -> list[str]:
         ns = GUIDE_NS if s in guides else CONTROL_NS
         if not s.value.startswith(ns) or cid is None or not ID.match(cid):
             bad.append(f"{s.value}: a {'guide' if s in guides else 'control'} is {ns}<kebab-id>")
-        for p, how in [
-            (RDFS + "label", "one"),
-            (RDFS + "comment", "one"),
-            (H + "direction", "one"),
-            (H + "execution", "one"),
-            (H + "stage", "some"),
-            (H + "category", "some"),
-        ]:
-            n = len(g.objects(s, p))
-            if n == 0 or (how == "one" and n > 1):
-                bad.append(f"{s.value}: needs {how} {p.rsplit('#', 1)[-1]}, has {n}")
         sensor_ = H + "feedback" in g.values(s, H + "direction")
-        if sensor_ and not g.values(s, H + "outcome"):
-            bad.append(f"{s.value}: a sensor states its outcome (refuse, warn, report)")
-        if not sensor_ and (g.values(s, H + "outcome") or g.values(s, H + "noFiringTest")):
-            bad.append(f"{s.value}: only a sensor has an outcome or a noFiringTest")
-        if s in guides:
-            if g.values(s, H + "direction") != [H + "feedforward"]:
-                bad.append(f"{s.value}: a guide is feedforward")
-            if not g.values(s, H + "statedIn") or not g.values(s, H + "section"):
-                bad.append(f"{s.value}: a guide says where it is stated (statedIn, section)")
+        only_sensors = ("outcome", "noFiringTest", "example", "counterExample")
+        if not sensor_ and any(g.values(s, H + p) for p in only_sensors):
+            bad.append(f"{s.value}: only a sensor has an outcome, a noFiringTest or an example")
         for target in g.objects(s, H + "statedBy"):
             if target not in guides:
                 bad.append(f"{s.value}: statedBy {target.value}, which is no guide here")
@@ -788,7 +906,10 @@ def cmd_check(repo: Path) -> int:
         return 1
     guides = len(g.of_type(H + "Guide"))
     controls = len(g.of_type(H + "Control"))
-    print(f"harness check: {guides} guide(s) and {controls} other control(s) agree with the code")
+    print(
+        f"harness check: {guides} guide(s) and {controls} other control(s) conform to "
+        f"{SHAPES_FILE.name} and agree with the code"
+    )
     return 0
 
 
