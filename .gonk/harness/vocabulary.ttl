@@ -38,7 +38,7 @@
 <https://ikigai-rs.dev/ns/harness#> a owl:Ontology ;
     rdfs:label "ikigai harness vocabulary" ;
     rdfs:comment "Terms for describing the harness a coding agent works in: its controls (guides and sensors), where and when each acts, what it regulates, the tests that show a sensor can fire, the log of every time one does, and the coverage questions asked of both." ;
-    owl:versionInfo "0.3.0" .
+    owl:versionInfo "0.4.0" .
 
 # ── controls ───────────────────────────────────────────────────────────────────────────────
 
@@ -264,6 +264,68 @@ harness:counterExample a rdf:Property ;
     rdfs:range xsd:string ;
     rdfs:label "counterExample" ;
     rdfs:comment "An input that must NOT make this sensor fire: the near miss that keeps a declarative sensor from refusing too much. Repeated for each such input." .
+
+# ── hook rules: a sensor stated as data ────────────────────────────────────────────────────
+#
+# A hook rule is a sensor whose decision is data rather than code: the agent hook loads every
+# harness:HookRule of the repository's graph when it starts and applies each before the tool
+# calls it names. Its examples are its proofs: `tools/harness.py check` runs each one through
+# the rule and fails when an example does not fire or a counter-example does.
+
+harness:HookRule a rdfs:Class ;
+    rdfs:subClassOf harness:Control ;
+    rdfs:label "HookRule" ;
+    rdfs:comment "A sensor stated as data, applied by an agent hook before a tool call: the tools it applies to, a pattern over the call's command or path in a stated dialect, refuse or warn, the sentence the agent sees, the guide it enforces, and at least one example that must fire. Typed harness:Control as well, since the graph states no subclass inference." .
+
+harness:ToolInput a rdfs:Class ;
+    rdfs:label "ToolInput" ;
+    rdfs:comment "The part of a tool call a hook rule's pattern is matched against." .
+
+harness:commandText a harness:ToolInput ;
+    rdfs:label "command" ;
+    rdfs:comment "The shell command a tool runs (Claude Code's Bash `command`), as the agent wrote it." .
+
+harness:filePath a harness:ToolInput ;
+    rdfs:label "path" ;
+    rdfs:comment "The file a tool writes or reads (`file_path`, `notebook_path` or `path`), relative to the repository when it is inside it, with `/` separators." .
+
+harness:PatternDialect a rdfs:Class ;
+    rdfs:label "PatternDialect" ;
+    rdfs:comment "The regular-expression language a hook rule's pattern is written in." .
+
+harness:pythonRe a harness:PatternDialect ;
+    rdfs:label "Python re" ;
+    rdfs:comment "Python's `re` module, no flags but those written inline (`(?s)` and the like), searched anywhere in the input (`re.search`)." .
+
+harness:appliesTo a rdf:Property ;
+    rdfs:domain harness:HookRule ;
+    rdfs:range xsd:string ;
+    rdfs:label "appliesTo" ;
+    rdfs:comment "The name of a tool this rule applies to, as the agent's harness names it (`Bash`, `Edit`). Repeated for each tool." .
+
+harness:matchesOn a rdf:Property ;
+    rdfs:domain harness:HookRule ;
+    rdfs:range harness:ToolInput ;
+    rdfs:label "matchesOn" ;
+    rdfs:comment "What the pattern is matched against: the command, or the path." .
+
+harness:pattern a rdf:Property ;
+    rdfs:domain harness:HookRule ;
+    rdfs:range xsd:string ;
+    rdfs:label "pattern" ;
+    rdfs:comment "The regular expression that, found in the input, makes the rule fire." .
+
+harness:patternDialect a rdf:Property ;
+    rdfs:domain harness:HookRule ;
+    rdfs:range harness:PatternDialect ;
+    rdfs:label "patternDialect" ;
+    rdfs:comment "The language the pattern is written in. A rule in a dialect the hook does not read is reported and ignored, never applied." .
+
+harness:says a rdf:Property ;
+    rdfs:domain harness:HookRule ;
+    rdfs:range xsd:string ;
+    rdfs:label "says" ;
+    rdfs:comment "The sentence the agent sees when the rule fires: what was wrong and what to do instead." .
 
 # ── the firing log: an ikigai-log extension ────────────────────────────────────────────────
 #

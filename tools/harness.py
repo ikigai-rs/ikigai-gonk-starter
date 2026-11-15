@@ -39,6 +39,12 @@ waits more than LOCK_WAIT seconds for the file. A failure is reported on standar
 once per process, and the decision it was recording is unchanged: tests/test_harness.py proves
 it with an unwritable directory, a failing write and a corrupt segment.
 
+HOOK RULES are sensors stated as data (`harness:HookRule`): the tools a rule applies to, a
+pattern over the call's command or path in a stated dialect, refuse or warn, the sentence the
+agent sees, the guide it enforces, and examples that must fire. The agent hook loads them with
+`load_hook_rules` and applies them with `fire_hook_rules`; `check` runs every example and
+counter-example as the rule's proof. A malformed rule is reported and ignored, never applied.
+
 COVERAGE is asked of gonk, where SPARQL runs: `python3 tools/gonk.py harness` loads the graph,
 the wiring of each sensor in this working tree (`harness:wired`) and the firings into the named
 graph `urn:iki:harness:graph:{ledger}`, and asks the saved questions in
@@ -684,6 +690,163 @@ def validate(shapes: Graph, g: Graph) -> list[str]:
     return bad
 
 
+# --------------------------------------------------------------------------- hook rules
+
+# A hook rule is a sensor stated as data (harness:HookRule): the agent hook reads every one in
+# the repository's graph when it starts, and applies each before the tool calls it names. The
+# dialects and inputs below are the whole set this file reads: a rule naming any other is
+# reported and ignored, never applied by a guess.
+DIALECTS = {H + "pythonRe"}
+INPUTS = {H + "commandText": "command", H + "filePath": "path"}
+RULE_OUTCOMES = {H + "refuse": "refusal", H + "warn": "warning"}
+
+
+@dataclass(frozen=True)
+class HookRule:
+    """One hook rule, loaded and proved: its pattern compiles and every example fires."""
+
+    id: str
+    tools: tuple[str, ...]
+    over: str  # "command" or "path"
+    pattern: re.Pattern
+    kind: str  # "refusal" or "warning", the firing it records
+    says: str
+    examples: tuple[str, ...]
+    counter_examples: tuple[str, ...]
+
+    def fires(self, text: str) -> bool:
+        return self.pattern.search(text) is not None
+
+
+def _one(g: Graph, s: I, p: str, what: str, problems: list[str]) -> str | None:
+    found = g.values(s, H + p)
+    if len(found) != 1:
+        problems.append(f"{s.value}: has {len(found) or 'no'} {what}; a hook rule has one")
+        return None
+    return found[0]
+
+
+def hook_rule(g: Graph, s: I) -> tuple[HookRule | None, list[str]]:
+    """The hook rule `s` describes, or None and why it cannot be applied, in sentences."""
+    bad: list[str] = []
+    cid = control_id(s) if s.value.startswith(CONTROL_NS) else None
+    if cid is None or not ID.match(cid):
+        bad.append(f"{s.value}: a hook rule is {CONTROL_NS}<kebab-id>")
+    tools = tuple(g.values(s, H + "appliesTo"))
+    if not tools:
+        bad.append(f"{s.value}: names no tool it applies to (harness:appliesTo)")
+    over = _one(g, s, "matchesOn", "harness:matchesOn", bad)
+    if over is not None and over not in INPUTS:
+        bad.append(
+            f"{s.value}: matchesOn {over}, which is neither harness:commandText nor filePath"
+        )
+    dialect = _one(g, s, "patternDialect", "harness:patternDialect", bad)
+    if dialect is not None and dialect not in DIALECTS:
+        bad.append(f"{s.value}: its pattern is in {dialect}, a dialect this hook does not read")
+    source = _one(g, s, "pattern", "harness:pattern", bad)
+    pattern = None
+    if source is not None:
+        try:
+            pattern = re.compile(source)
+        except re.error as e:
+            bad.append(f"{s.value}: its pattern is not a Python regular expression ({e})")
+    outcome = _one(g, s, "outcome", "harness:outcome", bad)
+    if outcome is not None and outcome not in RULE_OUTCOMES:
+        bad.append(f"{s.value}: a hook rule refuses or warns, and its outcome is {outcome}")
+    says = _one(g, s, "says", "harness:says", bad)
+    examples = tuple(g.values(s, H + "example"))
+    counter = tuple(g.values(s, H + "counterExample"))
+    if not examples:
+        bad.append(f"{s.value}: has no example that must fire (harness:example)")
+    if pattern is not None:
+        for text in examples:
+            if not pattern.search(text):
+                bad.append(f"{s.value}: its example {text!r} does not fire")
+        for text in counter:
+            if pattern.search(text):
+                bad.append(f"{s.value}: its counter-example {text!r} fires")
+    if bad:
+        return None, bad
+    rule = HookRule(
+        cid, tools, INPUTS[over], pattern, RULE_OUTCOMES[outcome], says, examples, counter
+    )
+    return rule, []
+
+
+def hook_rules(g: Graph) -> tuple[list[HookRule], list[str]]:
+    """Every hook rule of `g` that can be applied, and one sentence for each problem of those
+    that cannot. A malformed rule is ignored, never applied: its pattern may not compile, its
+    dialect may be one this file does not read, or an example of it may not fire."""
+    rules, bad = [], []
+    for s in sorted(set(g.of_type(H + "HookRule")), key=lambda t: t.value):
+        rule, problems = hook_rule(g, s)
+        bad += problems
+        if rule is not None:
+            rules.append(rule)
+    return rules, bad
+
+
+def load_hook_rules(repo: Path) -> tuple[list[HookRule], list[str]]:
+    """The hook rules of `repo`'s graph, and what was wrong with it. A repository with no
+    graph has no rules and nothing to report; a graph that does not parse gives no rules and
+    says why."""
+    path = Path(repo) / GRAPH_FILE
+    if not path.is_file():
+        return [], []
+    try:
+        g = read_graph(path)
+    except (OSError, UnicodeError, TurtleError) as e:
+        return [], [f"{GRAPH_FILE} does not load, so no hook rule applies: {e}"]
+    return hook_rules(g)
+
+
+def rule_input(event: dict, over: str, repo: Path | None) -> str | None:
+    """The part of a tool call a rule matches: its command, or its path (repository-relative
+    with `/` when inside `repo`)."""
+    tool_input = event.get("tool_input") or {}
+    if over == "command":
+        command = tool_input.get("command")
+        return command if isinstance(command, str) else None
+    raw = tool_input.get("file_path") or tool_input.get("notebook_path") or tool_input.get("path")
+    if not isinstance(raw, str) or not raw:
+        return None
+    path = Path(raw)
+    if not path.is_absolute():
+        path = Path(event.get("cwd") or ".") / path
+    path = Path(os.path.normpath(path))
+    if repo is not None:
+        try:
+            return path.relative_to(Path(repo)).as_posix()
+        except ValueError:
+            pass
+    return path.as_posix()
+
+
+def fire_hook_rules(
+    rules: list[HookRule], event: dict, repo: Path | None
+) -> tuple[list[HookRule], list[HookRule]]:
+    """(refusals, warnings): the rules that fire on this tool call, each recorded as a firing
+    (the command's digest, never its text; never the path)."""
+    refused, warned = [], []
+    tool = event.get("tool_name")
+    for rule in rules:
+        if tool not in rule.tools:
+            continue
+        text = rule_input(event, rule.over, repo)
+        if text is None or not rule.fires(text):
+            continue
+        (refused if rule.kind == "refusal" else warned).append(rule)
+        fire(
+            rule.id,
+            rule.kind,
+            repo,
+            tool=tool,
+            session=event.get("session_id"),
+            command=text if rule.over == "command" else None,
+        )
+    return refused, warned
+
+
 # --------------------------------------------------------------------------- the check
 
 # The `## ` headings of AGENTS.md that state no rule: the loop is a walk-through, and the
@@ -860,14 +1023,18 @@ def check(repo: Path) -> list[str]:
             bad.append(f"{rel} ({func}) fires `{cid}`, which is not a sensor that refuses or warns")
         elif f"{rel}#{func}" not in g.values(s, H + "enforcedAt"):
             bad.append(f"{rel} ({func}) fires `{cid}`; its enforcedAt does not name {rel}#{func}")
+    rules = set(g.of_type(H + "HookRule"))
     for s in controls:
-        if not fires_into_log(g, s):
-            continue
+        if not fires_into_log(g, s) or s in rules:
+            continue  # a hook rule fires by its data (fire_hook_rules), not by a literal id
         for where in g.values(s, H + "enforcedAt"):
             path = where.split("#", 1)[0]
             code = is_local(where) and path.endswith(".py") and path.startswith(CODE_ROOTS)
             if code and (where, control_id(s)) not in emitted:
                 bad.append(f"{s.value}: enforcedAt {where}, which fires no `{control_id(s)}`")
+
+    # The hook rules: each loads, and each example fires and no counter-example does.
+    bad += hook_rules(g)[1]
 
     # AGENTS.md: every guide cites a heading it has, and every rule heading has a guide.
     agents = repo / "AGENTS.md"

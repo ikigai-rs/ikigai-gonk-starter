@@ -81,7 +81,8 @@ hsh:ControlShape a sh:NodeShape ;
         hsh:control-category, hsh:control-outcome, hsh:control-statedBy,
         hsh:control-enforcedAt, hsh:control-existsFor, hsh:control-firedBy,
         hsh:control-noFiringTest, hsh:control-wiredBy, hsh:control-wired,
-        hsh:control-example, hsh:control-counterExample .
+        hsh:control-example, hsh:control-counterExample, hsh:control-appliesTo,
+        hsh:control-matchesOn, hsh:control-pattern, hsh:control-patternDialect, hsh:control-says .
 
 hsh:control-type a sh:PropertyShape ; sh:path rdf:type ; sh:nodeKind sh:IRI .
 
@@ -122,6 +123,54 @@ hsh:control-wired a sh:PropertyShape ; sh:path harness:wired ;
 hsh:control-example a sh:PropertyShape ; sh:path harness:example ; sh:datatype xsd:string .
 hsh:control-counterExample a sh:PropertyShape ; sh:path harness:counterExample ;
     sh:datatype xsd:string .
+hsh:control-appliesTo a sh:PropertyShape ; sh:path harness:appliesTo ; sh:datatype xsd:string .
+hsh:control-matchesOn a sh:PropertyShape ; sh:path harness:matchesOn ; sh:nodeKind sh:IRI .
+hsh:control-pattern a sh:PropertyShape ; sh:path harness:pattern ; sh:datatype xsd:string .
+hsh:control-patternDialect a sh:PropertyShape ; sh:path harness:patternDialect ;
+    sh:nodeKind sh:IRI .
+hsh:control-says a sh:PropertyShape ; sh:path harness:says ; sh:nodeKind sh:Literal .
+
+# ── a hook rule: a sensor stated as data (also typed harness:Control, so ControlShape holds) ─
+
+hsh:HookRuleShape a sh:NodeShape ;
+    rdfs:label "hook rule" ;
+    sh:targetClass harness:HookRule ;
+    sh:property hsh:rule-feedback, hsh:rule-control, hsh:rule-appliesTo, hsh:rule-matchesOn,
+        hsh:rule-pattern, hsh:rule-patternDialect, hsh:rule-says, hsh:rule-outcome,
+        hsh:rule-example .
+
+hsh:rule-feedback a sh:PropertyShape ; sh:path harness:direction ;
+    sh:minCount 1 ; sh:hasValue harness:feedback ;
+    sh:message "a hook rule is a sensor: its direction is feedback" .
+
+hsh:rule-control a sh:PropertyShape ; sh:path rdf:type ; sh:hasValue harness:Control ;
+    sh:message "a hook rule is typed harness:Control too, so the control's shape holds it" .
+
+hsh:rule-appliesTo a sh:PropertyShape ; sh:path harness:appliesTo ; sh:minCount 1 ;
+    sh:message "a hook rule names each tool it applies to in harness:appliesTo" .
+
+hsh:rule-matchesOn a sh:PropertyShape ; sh:path harness:matchesOn ;
+    sh:minCount 1 ; sh:maxCount 1 ;
+    sh:message "a hook rule matches one part of the call (harness:commandText or harness:filePath)" .
+
+hsh:rule-pattern a sh:PropertyShape ; sh:path harness:pattern ;
+    sh:minCount 1 ; sh:maxCount 1 ;
+    sh:message "a hook rule has one pattern" .
+
+hsh:rule-patternDialect a sh:PropertyShape ; sh:path harness:patternDialect ;
+    sh:minCount 1 ; sh:maxCount 1 ;
+    sh:message "a hook rule states the one dialect its pattern is written in" .
+
+hsh:rule-says a sh:PropertyShape ; sh:path harness:says ;
+    sh:minCount 1 ; sh:maxCount 1 ;
+    sh:message "a hook rule has one sentence the agent sees (harness:says)" .
+
+hsh:rule-outcome a sh:PropertyShape ; sh:path harness:outcome ;
+    sh:minCount 1 ; sh:maxCount 1 ;
+    sh:message "a hook rule has one outcome, refuse or warn" .
+
+hsh:rule-example a sh:PropertyShape ; sh:path harness:example ; sh:minCount 1 ;
+    sh:message "a hook rule has at least one example that must fire" .
 
 # ── what a sensor (a control whose direction is feedback) must say ─────────────────────────
 

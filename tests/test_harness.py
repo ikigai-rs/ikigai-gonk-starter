@@ -635,6 +635,36 @@ class SensorsFire(unittest.TestCase):
         self.assertEqual(done.returncode, 2, done.stderr)
         assert_fired(self, self.repo, "edit-hook-unreadable-input")
 
+    # -- hook rules (tools/harness.py#fire_hook_rules, through the hook)
+
+    def bash(self, command: str) -> dict:
+        return {
+            "tool_name": "Bash",
+            "session_id": "s-1",
+            "cwd": str(self.repo),
+            "tool_input": {"command": command},
+        }
+
+    def with_graph(self) -> None:
+        (self.repo / harness.GRAPH_FILE).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(ROOT / harness.GRAPH_FILE, self.repo / harness.GRAPH_FILE)
+
+    def test_hook_pipe_hides_status(self):
+        self.with_graph()
+        code, message = load_hook().decide(self.bash("just gates | tail -n 40"), FakeIkigai())
+        self.assertEqual(code, 2)
+        self.assertIn("exit status is its last command's", message)
+        assert_fired(self, self.repo, "hook-pipe-hides-status")
+        [f] = harness.read_firings(self.repo).firings
+        self.assertEqual(f.fields["cmd"], harness.digest("just gates | tail -n 40"))
+
+    def test_hook_git_add_all(self):
+        self.with_graph()
+        code, message = load_hook().decide(self.bash("git add -A"), FakeIkigai())
+        self.assertEqual(code, 2)
+        self.assertIn("by name", message)
+        assert_fired(self, self.repo, "hook-git-add-all")
+
     # -- tools/worker.py
 
     def worker_rig(self, **config) -> Rig:
@@ -855,6 +885,244 @@ class SensorsFire(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- the proofs
+
+
+RULE = """
+ctl:{id} a harness:Control , harness:HookRule ;
+    rdfs:label "a rule" ; rdfs:comment "A rule for a test." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:toolCall ; harness:category harness:behavior ;
+    harness:outcome harness:{outcome} ;
+    harness:appliesTo "{tool}" ; harness:matchesOn harness:{over} ;
+    harness:patternDialect harness:{dialect} ; harness:pattern "{pattern}" ;
+    harness:says "{says}" ;
+    harness:example "{example}" ;
+    harness:statedBy guide:a-guide .
+"""
+
+
+def rule(id: str, **kw) -> str:
+    fields = dict(
+        outcome="refuse",
+        tool="Bash",
+        over="commandText",
+        dialect="pythonRe",
+        pattern="danger",
+        says="not that",
+        example="a danger here",
+    )
+    fields.update(kw)
+    return RULE.format(id=id, **fields)
+
+
+class HookRules(unittest.TestCase):
+    """A hook rule is data: loaded from the graph when the hook starts, applied before each tool
+    call, proved by its examples, and never applied when it is malformed."""
+
+    def setUp(self):
+        self.repo = scratch_repo(self)
+        harness._reported = False
+        self.addCleanup(setattr, harness, "_reported", False)
+
+    def graph(self, *rules: str) -> None:
+        prefixes = "\n".join(f"@prefix {p}: <{ns}> ." for p, ns in new.HARNESS_PREFIXES)
+        path = self.repo / harness.GRAPH_FILE
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(prefixes + "\n" + "".join(rules))
+
+    def call(self, event: dict) -> tuple[int, str, str]:
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code, message = load_hook().decide(event, FakeIkigai())
+        return code, message, err.getvalue()
+
+    def bash(self, command: str) -> dict:
+        return {"tool_name": "Bash", "cwd": str(self.repo), "tool_input": {"command": command}}
+
+    def test_each_shipped_rule_refuses_its_examples_and_passes_its_counter_examples(self):
+        shutil.copytree(ROOT / ".gonk" / "harness", self.repo / ".gonk" / "harness")
+        rules, problems = harness.load_hook_rules(self.repo)
+        self.assertEqual(problems, [])
+        self.assertEqual(
+            sorted(r.id for r in rules), ["hook-git-add-all", "hook-pipe-hides-status"]
+        )
+        for r in rules:
+            self.assertTrue(r.examples and r.counter_examples, r.id)
+            for text in r.examples:
+                code, message, _ = self.call(self.bash(text))
+                self.assertEqual(code, 2, (r.id, text))
+                self.assertIn(r.id, message)
+            for text in r.counter_examples:
+                self.assertEqual(self.call(self.bash(text))[:2], (0, ""), (r.id, text))
+        self.assertEqual(
+            {f.control for f in harness.read_firings(self.repo).firings},
+            {"hook-git-add-all", "hook-pipe-hides-status"},
+        )
+
+    def test_a_rule_applies_only_to_the_tools_it_names(self):
+        self.graph(rule("only-bash"))
+        event = {"tool_name": "Grep", "cwd": str(self.repo), "tool_input": {"command": "danger"}}
+        self.assertEqual(self.call(event)[:2], (0, ""))
+        self.assertEqual(self.call(self.bash("danger"))[0], 2)
+
+    def test_a_malformed_rule_is_reported_at_load_and_ignored(self):
+        self.graph(
+            rule("good", pattern="danger"),
+            rule("bad-regex", pattern="(danger", example="(danger"),
+            rule("bad-dialect", dialect="pythonRe2", pattern="rm", example="rm"),
+            rule("example-misses", pattern="rm -rf", example="rm -r"),
+            rule("bad-input", over="filePathz", pattern="rm", example="rm"),
+        )
+        rules, problems = harness.load_hook_rules(self.repo)
+        self.assertEqual([r.id for r in rules], ["good"])
+        said = "\n".join(problems)
+        for cid, words in [
+            ("bad-regex", "not a Python regular expression"),
+            ("bad-dialect", "a dialect this hook does not read"),
+            ("example-misses", "does not fire"),
+            ("bad-input", "neither harness:commandText"),
+        ]:
+            self.assertIn(cid, said)
+            self.assertIn(words, said)
+        # Ignored, never silently applied: what the malformed rules would match passes, and
+        # the hook says on standard error which rules it ignored.
+        code, message, err = self.call(self.bash("(danger rm -r -rf"))
+        self.assertEqual(code, 2)
+        self.assertEqual(message, "good: not that")
+        self.assertEqual(self.call(self.bash("rm -rf /tmp/x"))[:2], (0, ""))
+        self.assertIn("hook rule ignored", err)
+        self.assertIn("bad-regex", err)
+        self.assertEqual(fired_ids(self.repo), ["good"])
+
+    def test_a_counter_example_that_fires_makes_the_rule_malformed(self):
+        text = rule("too-wide", pattern="add").replace(
+            'harness:example "a danger here"',
+            'harness:example "git add -A" ; harness:counterExample "git add README.md"',
+        )
+        self.graph(text)
+        rules, problems = harness.load_hook_rules(self.repo)
+        self.assertEqual(rules, [])
+        self.assertIn("counter-example 'git add README.md' fires", problems[0])
+
+    def test_a_missing_field_is_malformed(self):
+        self.graph(rule("no-says").replace('harness:says "not that" ;', ""))
+        rules, problems = harness.load_hook_rules(self.repo)
+        self.assertEqual(rules, [])
+        self.assertIn("no harness:says", problems[0])
+
+    def test_a_graph_that_does_not_parse_applies_no_rule_and_says_so(self):
+        self.graph(rule("good"), "ctl:x ctl:y [ ] .\n")
+        rules, problems = harness.load_hook_rules(self.repo)
+        self.assertEqual(rules, [])
+        self.assertIn("does not load", problems[0])
+        code, message, err = self.call(self.bash("danger"))
+        self.assertEqual((code, message), (0, ""))
+        self.assertIn("does not load", err)
+
+    def test_no_graph_is_no_rules_and_nothing_said(self):
+        self.assertEqual(harness.load_hook_rules(self.repo), ([], []))
+        self.assertEqual(self.call(self.bash("just gates | tail")), (0, "", ""))
+
+    def test_a_warning_rule_over_a_path_lets_the_call_through_and_tells_the_agent(self):
+        self.graph(
+            rule(
+                "generated-file",
+                outcome="warn",
+                tool="Write",
+                over="filePath",
+                pattern="\\\\Agenerated/",
+                says="this file is generated",
+                example="generated/x.txt",
+            )
+        )
+        rules, problems = harness.load_hook_rules(self.repo)
+        self.assertEqual(problems, [])
+        # The path is matched relative to the repository, so a relative and an absolute path
+        # are the same; the firing names the tool and the session, never the path.
+        event = {
+            "tool_name": "Write",
+            "session_id": "s-2",
+            "cwd": str(self.repo),
+            "tool_input": {"file_path": "generated/x.txt"},
+        }
+        self.assertEqual(harness.fire_hook_rules(rules, event, self.repo), ([], rules))
+        [f] = harness.read_firings(self.repo).firings
+        self.assertEqual((f.control, f.kind), ("generated-file", "warning"))
+        self.assertEqual(f.fields, {"session": "urn:agents:session:s-2", "tool": "Write"})
+        # Through the hook, in a tree not wired to gonk: the claim check refuses the edit, and the
+        # warning is said beside the refusal.
+        event["tool_input"]["file_path"] = str(self.repo / "generated" / "x.txt")
+        code, message, _ = self.call(event)
+        self.assertEqual(code, 2)
+        self.assertIn("generated-file: this file is generated", message)
+        self.assertIn("require-claim: this repository is not wired", message)
+        # A path the claim check exempts goes through, with the warning alone.
+        self.graph(
+            rule(
+                "state-file",
+                outcome="warn",
+                tool="Write",
+                over="filePath",
+                pattern="\\\\A\\\\.gonk/state/",
+                says="state file",
+                example=".gonk/state/x",
+            )
+        )
+        state = {
+            "tool_name": "Write",
+            "cwd": str(self.repo),
+            "tool_input": {"file_path": str(self.repo / ".gonk" / "state" / "x")},
+        }
+        self.assertEqual(self.call(state)[:2], (0, "state-file: state file"))
+
+    def test_a_warning_reaches_the_agent_as_context_on_standard_output(self):
+        (self.repo / "tools").mkdir()
+        shutil.copy(ROOT / "tools" / "gonk.py", self.repo / "tools" / "gonk.py")
+        shutil.copy(ROOT / "tools" / "harness.py", self.repo / "tools" / "harness.py")
+        self.graph(rule("loud", outcome="warn", pattern="echo", example="echo hi"))
+        done = subprocess.run(
+            [sys.executable, str(ROOT / "hooks" / "claude" / "require-claim.py")],
+            input=json.dumps(self.bash("echo hi")),
+            cwd=self.repo,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(done.returncode, 0, done.stderr)
+        out = json.loads(done.stdout)["hookSpecificOutput"]
+        self.assertEqual(
+            out, {"hookEventName": "PreToolUse", "additionalContext": "loud: not that"}
+        )
+
+    def test_check_runs_the_examples_as_proofs(self):
+        shutil.copytree(ROOT / ".gonk" / "harness", self.repo / ".gonk" / "harness")
+        path = self.repo / harness.GRAPH_FILE
+        text = path.read_text()
+        path.write_text(
+            text.replace('harness:example "git add -A" ;', 'harness:example "git status" ;')
+        )
+        problems = harness.check(self.repo)
+        self.assertIn(
+            f"{harness.CONTROL_NS}hook-git-add-all: its example 'git status' does not fire",
+            problems,
+        )
+
+    def test_the_shapes_hold_a_hook_rule_to_its_fields(self):
+        shapes = harness.read_graph(ROOT / harness.SHAPES_FILE)
+        prefixes = "\n".join(f"@prefix {p}: <{ns}> ." for p, ns in new.HARNESS_PREFIXES)
+        bare = (
+            rule("bare")
+            .replace('harness:says "not that" ;', "")
+            .replace('harness:example "a danger here" ;', "")
+        )
+        g = harness.Graph(harness.parse_turtle(prefixes + bare)[0])
+        said = "\n".join(harness.validate(shapes, g))
+        self.assertIn("one sentence the agent sees", said)
+        self.assertIn("at least one example", said)
+
+
+def fired_ids(repo: Path) -> list[str]:
+    segment = harness.read_firings(repo)
+    return [f.control for f in segment.firings] if segment else []
 
 
 class Proofs(unittest.TestCase):

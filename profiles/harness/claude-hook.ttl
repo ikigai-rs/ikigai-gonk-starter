@@ -4,7 +4,7 @@ ctl:edit-without-live-claim a harness:Control ;
     harness:direction harness:feedback ; harness:execution harness:computational ;
     harness:stage harness:toolCall ; harness:category harness:authoritySafety ;
     harness:outcome harness:refuse ;
-    harness:enforcedAt "hooks/claude/require-claim.py#decide" ;
+    harness:enforcedAt "hooks/claude/require-claim.py#check_edit" ;
     harness:wiredBy "claude:require-claim" ;
     harness:statedBy guide:claim-before-write , guide:stop-when-claim-gone ;
     harness:firedBy test:test_harness:SensorsFire.test_edit_without_live_claim .
@@ -15,7 +15,7 @@ ctl:edit-hook-not-wired a harness:Control ;
     harness:direction harness:feedback ; harness:execution harness:computational ;
     harness:stage harness:toolCall ; harness:category harness:authoritySafety ;
     harness:outcome harness:refuse ;
-    harness:enforcedAt "hooks/claude/require-claim.py#decide" ;
+    harness:enforcedAt "hooks/claude/require-claim.py#check_edit" ;
     harness:wiredBy "claude:require-claim" ;
     harness:statedBy guide:claim-before-write ;
     harness:firedBy test:test_harness:SensorsFire.test_edit_hook_not_wired .
@@ -30,3 +30,53 @@ ctl:edit-hook-unreadable-input a harness:Control ;
     harness:wiredBy "claude:require-claim" ;
     harness:statedBy guide:claim-before-write ;
     harness:firedBy test:test_harness:SensorsFire.test_edit_hook_unreadable_input .
+
+# Hook rules: sensors stated as data, which the hook loads from this graph and applies before
+# each tool call (tools/harness.py, `fire_hook_rules`). Their examples are their proofs:
+# `python3 tools/harness.py check` fails when an example does not fire or a counter-example does.
+
+ctl:hook-pipe-hides-status a harness:Control , harness:HookRule ;
+    rdfs:label "hook rule: a trusted command piped" ;
+    rdfs:comment "The claim hook refuses a shell command that pipes the gates or a test run into another command without pipefail, since the pipeline's exit status is then the last command's and a failing run reads as a pass." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:toolCall ; harness:category harness:behavior ;
+    harness:outcome harness:refuse ;
+    harness:appliesTo "Bash" ;
+    harness:matchesOn harness:commandText ;
+    harness:patternDialect harness:pythonRe ;
+    harness:pattern "(?s)\\A(?!.*\\bpipefail\\b).*?(?:\\bjust\\s+gates\\b|\\bscripts/gates\\.sh\\b|\\bpytest\\b|\\bunittest\\b|\\bcargo\\s+(?:test|clippy|build|check)\\b|\\bnpm\\s+(?:run\\s+)?test\\b)(?:[^|;&\\n]|[<>]&)*\\|(?!\\|)" ;
+    harness:says "a pipeline's exit status is its last command's, so this pipe would hide whether the checks passed: run them without the pipe (redirect to a file and read it), or `set -o pipefail` first." ;
+    harness:example "just gates | tail -n 40" ;
+    harness:example "python3 -m unittest discover -s tests 2>&1 | tail -5" ;
+    harness:example "cargo test --workspace | grep -v ok" ;
+    harness:counterExample "just gates" ;
+    harness:counterExample "just gates || echo failed" ;
+    harness:counterExample "set -o pipefail; just gates | tail -n 40" ;
+    harness:counterExample "just gates > /tmp/gates.log 2>&1; tail -n 40 /tmp/gates.log" ;
+    harness:counterExample "git log --oneline | head" ;
+    harness:enforcedAt "tools/harness.py#fire_hook_rules" ;
+    harness:wiredBy "claude:require-claim" ;
+    harness:statedBy guide:last-command-exit-status ;
+    harness:firedBy test:test_harness:SensorsFire.test_hook_pipe_hides_status .
+
+ctl:hook-git-add-all a harness:Control , harness:HookRule ;
+    rdfs:label "hook rule: staging everything" ;
+    rdfs:comment "The claim hook refuses `git add -A`, `git add --all` and `git add .`, which stage files that are not the change's." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:toolCall ; harness:category harness:authoritySafety ;
+    harness:outcome harness:refuse ;
+    harness:appliesTo "Bash" ;
+    harness:matchesOn harness:commandText ;
+    harness:patternDialect harness:pythonRe ;
+    harness:pattern "\\bgit\\s+(?:-C\\s+\\S+\\s+)?add\\s+(?:[^;&|\\n]*\\s)?(?:-A|--all|\\.)(?=\\s|$|[;&|])" ;
+    harness:says "stage the files you changed by name: `git add -A`, `--all` and `.` pick up files that are not yours." ;
+    harness:example "git add -A" ;
+    harness:example "git add --all && git commit -m wip" ;
+    harness:example "git -C ../repo add ." ;
+    harness:counterExample "git add tools/harness.py tests/test_harness.py" ;
+    harness:counterExample "git add ./tools/harness.py" ;
+    harness:counterExample "git add -p tools/harness.py" ;
+    harness:enforcedAt "tools/harness.py#fire_hook_rules" ;
+    harness:wiredBy "claude:require-claim" ;
+    harness:statedBy guide:stage-files-by-name ;
+    harness:firedBy test:test_harness:SensorsFire.test_hook_git_add_all .
