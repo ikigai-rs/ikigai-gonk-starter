@@ -22,6 +22,10 @@
 # and skips otherwise. owl:versionInfo below changes whenever a term is added or changed, so
 # one deployed definition can be told from the next.
 #
+# SHAPES: .gonk/harness/shapes.ttl, closed SHACL shapes for harness:Guide and harness:Control,
+# whose own IRIs are under https://ikigai-rs.dev/ns/harness/shapes#; this file names no term
+# outside this namespace but the W3C's (rdf, rdfs, owl, xsd) and ikigai-log's.
+#
 # FORMAT: the Turtle subset tools/harness.py reads (its docstring says which). No blank nodes.
 
 @prefix harness: <https://ikigai-rs.dev/ns/harness#> .
@@ -34,7 +38,7 @@
 <https://ikigai-rs.dev/ns/harness#> a owl:Ontology ;
     rdfs:label "ikigai harness vocabulary" ;
     rdfs:comment "Terms for describing the harness a coding agent works in: its controls (guides and sensors), where and when each acts, what it regulates, the tests that show a sensor can fire, the log of every time one does, and the coverage questions asked of both." ;
-    owl:versionInfo "0.2.0" .
+    owl:versionInfo "0.3.0" .
 
 # ── controls ───────────────────────────────────────────────────────────────────────────────
 
@@ -248,6 +252,18 @@ harness:firedBy a rdf:Property ;
     rdfs:range harness:Test ;
     rdfs:label "firedBy" ;
     rdfs:comment "A test that drove this sensor through its real code path and saw the firing recorded: the proof it CAN fire, so a silence in the firing log is quiet, not blindness." .
+
+harness:example a rdf:Property ;
+    rdfs:domain harness:Control ;
+    rdfs:range xsd:string ;
+    rdfs:label "example" ;
+    rdfs:comment "An input that must make this sensor fire: the proof for a declarative sensor, one with no code site a test could drive (a rule a reviewer, a scan or a query applies). Repeated for each such input. A tool that applies the sensor runs each example through it and fails when one does not fire." .
+
+harness:counterExample a rdf:Property ;
+    rdfs:domain harness:Control ;
+    rdfs:range xsd:string ;
+    rdfs:label "counterExample" ;
+    rdfs:comment "An input that must NOT make this sensor fire: the near miss that keeps a declarative sensor from refusing too much. Repeated for each such input." .
 
 # ── the firing log: an ikigai-log extension ────────────────────────────────────────────────
 #

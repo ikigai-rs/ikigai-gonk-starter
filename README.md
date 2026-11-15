@@ -231,6 +231,9 @@ runs it reads as *not wired*, never as a rule that has landed. Loading writes th
 not, so it is the dispatcher's, from gonk's machine.
 `.gonk/harness/vocabulary.ttl` is the public definition of the harness namespace,
 `https://ikigai-rs.dev/ns/harness#`: every term in it, including those a generated repository does not use.
+`.gonk/harness/shapes.ttl` holds closed SHACL shapes for a guide and a control (the fields
+each requires, and no others), and `check` refuses an entry that breaks one with a sentence
+naming the field.
 
 **Bringing existing work in.** A ledger kept elsewhere can be imported rather than retyped:
 gonk imports a kata export, for one (`ikigai-gonk kata import`, in gonk's README).
