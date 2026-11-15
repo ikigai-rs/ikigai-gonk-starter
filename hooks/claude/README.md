@@ -14,6 +14,24 @@ the first rule (claim before you write) into a refusal.
    (if it has one) has not run out. Otherwise it exits 2, which refuses the edit, and says
    why and what to run.
 
+## Hook rules: sensors as data
+
+Before the claim check, and for every tool call it is given (`Bash` too), the hook applies the
+repository's **hook rules**: the `harness:HookRule` entries of `.gonk/harness/harness.ttl`,
+loaded when it starts (`load_hook_rules` in `tools/harness.py`). Each rule names the tools it
+applies to (`harness:appliesTo`), what its pattern is matched against (the command, or the
+path relative to the repository), the pattern and its dialect (Python `re`, searched anywhere),
+refuse or warn, the sentence the agent sees (`harness:says`), the guide it enforces, and at
+least one example that must fire. A refusal exits 2 with the sentence; a warning lets the call
+through and gives the sentence to the agent as `additionalContext`. Every firing writes the same
+digest-only line as any other sensor: the command's digest, never its text, and never a path.
+
+Two rules ship: `hook-pipe-hides-status` (the gates or a test run piped without pipefail) and
+`hook-git-add-all` (`git add -A`, `--all` or `.`). `python3 tools/harness.py check` runs every
+rule's examples and counter-examples as its proofs. A malformed rule (a pattern that does not
+compile, a dialect or input the hook does not read, a missing field, an example that does not
+fire) is said on standard error and ignored, never applied.
+
 Edits to `.gonk/state/` and `.gonk/local.toml` are always allowed, since the protocol itself
 writes them. A file outside a repository made from this starter is not the hook's business.
 
@@ -30,7 +48,8 @@ version the repository carries.
 
 ## What it does not cover
 
-- **Shell writes.** A file written by a `Bash` command (`sed -i`, a redirect, a code
+- **Shell writes.** A hook rule reads a `Bash` command's text, not what it does: a file
+  written by a `Bash` command (`sed -i`, a redirect, a code
   generator) is not seen: no hook can reliably tell which files a shell command touches.
 - **Other agents.** Codex, pi, Hermes and the rest read `AGENTS.md`; this file means nothing
   to them.

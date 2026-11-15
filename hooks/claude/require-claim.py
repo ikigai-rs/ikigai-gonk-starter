@@ -12,6 +12,13 @@ This is a second layer. The protocol in AGENTS.md works without it, and every ot
 keeps it by following the rules. What it does not cover, stated so nobody relies on it:
 a write through a shell command (`Bash`), which no hook can attribute to a file reliably.
 
+Before any of that, and for every tool it is given (`Bash` too), it applies the repository's
+HOOK RULES: the `harness:HookRule` entries of `.gonk/harness/harness.ttl`, loaded when the hook
+starts (tools/harness.py, `load_hook_rules`). A rule names the tools it applies to, a pattern
+over the call's command or path, refuse or warn, and the sentence the agent sees. A refusal
+exits 2 with that sentence; a warning lets the call through and hands the sentence to the
+agent as context. A malformed rule is said on standard error and ignored, never applied.
+
 Each refusal is a sensor of the repository's harness (`.gonk/harness/harness.ttl`) and is
 recorded in its firing log, best effort: recording never changes what the hook decides.
 """
@@ -54,8 +61,50 @@ def fire(control: str, repo: Path | None, event: dict) -> None:
         pass
 
 
+def harness_of(repo: Path):
+    """The repository's own tools/harness.py, or None when it carries none."""
+    sys.path.insert(0, str(repo / "tools"))
+    try:
+        import harness  # the repository's own copy
+
+        return harness
+    except Exception:  # noqa: BLE001  (a broken harness never blocks; the claim check stands)
+        return None
+
+
+def apply_rules(event: dict) -> tuple[int, str]:
+    """(exit code, message) of the repository's hook rules on this call: 2 and the sentences
+    of the rules that refuse, else 0 and those of the rules that warn (empty when none fire).
+    The repository is the file's, for a path, else the working directory's."""
+    tool_input = event.get("tool_input") or {}
+    raw = tool_input.get("file_path") or tool_input.get("notebook_path") or tool_input.get("path")
+    cwd = Path(event.get("cwd") or ".")
+    start = (Path(raw) if Path(raw).is_absolute() else cwd / raw) if isinstance(raw, str) else cwd
+    repo = repo_of(start.resolve().parent if isinstance(raw, str) else start.resolve())
+    harness = harness_of(repo) if repo is not None else None
+    if harness is None:
+        return 0, ""
+    rules, problems = harness.load_hook_rules(repo)
+    for line in problems:
+        print(f"require-claim: hook rule ignored: {line}", file=sys.stderr)
+    refused, warned = harness.fire_hook_rules(rules, event, repo)
+    if refused:
+        return 2, "\n".join(f"{r.id}: {r.says}" for r in refused)
+    return 0, "\n".join(f"{r.id}: {r.says}" for r in warned)
+
+
 def decide(event: dict, make_ikigai=None) -> tuple[int, str]:
-    """(exit code, message) for one PreToolUse event."""
+    """(exit code, message) for one PreToolUse event: the hook rules first, then, for a file
+    edit, the claim. Exit 0 with a message is a warning, passed to the agent as context."""
+    code, said = apply_rules(event)
+    if code:
+        return code, said
+    code, message = check_edit(event, make_ikigai)
+    return code, "\n".join(m for m in (message, said) if m) if code else said
+
+
+def check_edit(event: dict, make_ikigai=None) -> tuple[int, str]:
+    """(exit code, message) of the claim check for one PreToolUse event."""
     if event.get("tool_name") not in EDITING_TOOLS:
         return 0, ""
     tool_input = event.get("tool_input") or {}
@@ -101,8 +150,11 @@ def main() -> int:
         print(f"require-claim: the hook input was not JSON ({e}); refusing", file=sys.stderr)
         return 2
     code, message = decide(event)
-    if message:
+    if message and code:
         print(message, file=sys.stderr)
+    elif message:  # a warning: the call goes ahead, and the agent is told why it was flagged
+        context = {"hookEventName": "PreToolUse", "additionalContext": message}
+        print(json.dumps({"hookSpecificOutput": context}))
     return code
 
 
