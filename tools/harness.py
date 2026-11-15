@@ -559,6 +559,11 @@ def load_update(graph: str, description: list[tuple], firings: list[tuple]) -> s
 
 # --------------------------------------------------------------------------- the shapes
 
+# Why a private SHACL subset rather than a shared validator: the starter's tools are standard
+# library only (README, "Python (standard library only)"), so no SHACL library can be a
+# dependency here. Hosts that need the full standard use ikigai-shacl; this is the subset the
+# harness shapes need and nothing more.
+#
 # The SHACL Core this file evaluates. A shape using any other sh: term is refused, never
 # skipped, so a shape cannot say more than is checked.
 SH_TERMS = {
