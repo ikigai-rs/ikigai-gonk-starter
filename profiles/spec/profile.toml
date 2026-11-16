@@ -1,3 +1,5 @@
 summary = "spec first: every change in behavior starts as an openspec change, seed files its tasks, next orders them"
 roles = []
 sections = ["spec-first"]
+# This starter's own files the profile carries: the pull request's spec check.
+starter_files = ["tools/spec_checks.py"]

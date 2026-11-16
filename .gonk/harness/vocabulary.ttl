@@ -38,7 +38,7 @@
 <https://ikigai-rs.dev/ns/harness#> a owl:Ontology ;
     rdfs:label "ikigai harness vocabulary" ;
     rdfs:comment "Terms for describing the harness a coding agent works in: its controls (guides and sensors), where and when each acts, what it regulates, the tests that show a sensor can fire, the log of every time one does, and the coverage questions asked of both." ;
-    owl:versionInfo "0.4.0" .
+    owl:versionInfo "0.5.0" .
 
 # ── controls ───────────────────────────────────────────────────────────────────────────────
 
@@ -222,6 +222,12 @@ harness:section a rdf:Property ;
     rdfs:range xsd:string ;
     rdfs:label "section" ;
     rdfs:comment "Where in that file, as a reader looks for it: for AGENTS.md, the text of its `## ` heading." .
+
+harness:uncheckedBecause a rdf:Property ;
+    rdfs:domain harness:Guide ;
+    rdfs:range xsd:string ;
+    rdfs:label "uncheckedBecause" ;
+    rdfs:comment "On a guide no computational control checks, why none does: a judgment no program can make, or a rule optional by design. A coverage answer shows it in place of a bare \"no control checks this guide\", so a gap left on purpose can be told from one nobody has looked at." .
 
 harness:noFiringTest a rdf:Property ;
     rdfs:domain harness:Control ;

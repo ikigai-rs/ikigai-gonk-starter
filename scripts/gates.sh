@@ -173,8 +173,21 @@ generated() {
         generate_and_test go-combined go "workers,spec,review-every-commit"
 }
 
+# The pull request's own checks (tools/checks.py pr): an `## Accessibility` section when it
+# changes what people see, the spec's folders whole, and a change folder when it is marked as
+# a behavior change. Only in CI on a pull request, where GitHub Actions writes the event;
+# locally there is no pull request to read, and it says so and passes.
+pr_checks() {
+    if [ "${GITHUB_EVENT_NAME:-}" = pull_request ] && [ -n "${GITHUB_EVENT_PATH:-}" ]; then
+        echo "-- the pull request's checks" && "$PY" tools/checks.py pr
+    else
+        echo "-- the pull request's checks: not a pull request in CI, so nothing to check"
+    fi
+}
+
 echo "gates: $("$PY" --version 2>&1), $("$RUFF" --version)"
-echo "-- ruff check" &&
+pr_checks &&
+    echo "-- ruff check" &&
     "$RUFF" check . &&
     echo "-- ruff format --check" &&
     "$RUFF" format --check . &&

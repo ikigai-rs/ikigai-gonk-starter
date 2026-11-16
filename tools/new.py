@@ -68,6 +68,8 @@ STARTER_FILES = [
     "tools/gonk.py",
     "tools/harness.py",
     "tools/review_findings.py",
+    "tools/checks.py",
+    "hooks/git/commit-msg",
     "hooks/claude/README.md",
     "hooks/claude/require-claim.py",
     "hooks/claude/settings.sample.json",
@@ -142,6 +144,8 @@ HOOKS = {
     "claude:require-claim",
     # hooks/git/post-commit: ask gonk to review each commit. On once `just hooks` has run.
     "git:post-commit",
+    # hooks/git/commit-msg: refuse a bare `#N`. On once core.hooksPath points at hooks/git.
+    "git:commit-msg",
 }
 CHECKS = {
     # `tools/gonk.py init`: is a worker configured here (.gonk/worker.toml)?

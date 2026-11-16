@@ -32,7 +32,7 @@ hsh:GuideShape a sh:NodeShape ;
     sh:closed true ;
     sh:property hsh:guide-type, hsh:guide-label, hsh:guide-comment, hsh:guide-direction,
         hsh:guide-execution, hsh:guide-stage, hsh:guide-category, hsh:guide-statedIn,
-        hsh:guide-section, hsh:guide-existsFor .
+        hsh:guide-section, hsh:guide-existsFor, hsh:guide-uncheckedBecause .
 
 hsh:guide-type a sh:PropertyShape ; sh:path rdf:type ; sh:nodeKind sh:IRI .
 
@@ -69,6 +69,10 @@ hsh:guide-section a sh:PropertyShape ; sh:path harness:section ;
     sh:message "a guide names the one section of that file it is stated in" .
 
 hsh:guide-existsFor a sh:PropertyShape ; sh:path harness:existsFor ; sh:nodeKind sh:IRI .
+
+hsh:guide-uncheckedBecause a sh:PropertyShape ; sh:path harness:uncheckedBecause ;
+    sh:maxCount 1 ; sh:datatype xsd:string ;
+    sh:message "a guide says at most once why no control checks it" .
 
 # ── any other control: a sensor, or a computational feedforward control ────────────────────
 

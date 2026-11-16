@@ -1651,6 +1651,18 @@ def process_rows(cfg: Config, process: dict | None, row) -> None:
             )
         else:
             row("ok", "hook", "post-commit asks gonk to review each commit (core.hooksPath)")
+    if "git:commit-msg" in hooks:
+        if not (repo / "hooks" / "git" / "commit-msg").is_file():
+            row("missing", "hook", "hooks/git/commit-msg is not in this repository")
+        elif git_out(repo, "rev-parse", "--git-dir") is None or not post_commit_installed(repo):
+            row(
+                "note",
+                "hook",
+                "the commit-msg hook that refuses a bare #N is off: "
+                "`git config core.hooksPath hooks/git` turns it on",
+            )
+        else:
+            row("ok", "hook", "commit-msg refuses a bare #N (core.hooksPath)")
     checks = process.get("checks", [])
     if "worker-config" in checks:
         if worker_configured(repo):
@@ -2613,11 +2625,13 @@ def sensor_wiring(cfg: Config, graph, process: dict | None) -> dict[str, bool]:
     parts = {
         "claude:require-claim": (process or {}).get("hooks", []),
         "git:post-commit": (process or {}).get("hooks", []),
+        "git:commit-msg": (process or {}).get("hooks", []),
         "worker-config": (process or {}).get("checks", []),
     }
     decides = {
         "claude:require-claim": hook_settings_on,
         "git:post-commit": post_commit_installed,
+        "git:commit-msg": post_commit_installed,
         "worker-config": worker_configured,
     }
     out: dict[str, bool] = {}
