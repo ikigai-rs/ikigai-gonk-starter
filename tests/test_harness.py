@@ -35,6 +35,10 @@ new = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(new)
 
 H = harness.H
+
+_checks_spec = importlib.util.spec_from_file_location("checks", ROOT / "tools" / "checks.py")
+checks = importlib.util.module_from_spec(_checks_spec)
+_checks_spec.loader.exec_module(checks)
 OWL = "http://www.w3.org/2002/07/owl#"
 # The authors' private harness vocabulary, read only when a checkout of it sits beside this one.
 PRIVATE_VOCAB = ROOT.parent / "ikigai-devtools" / "claude" / "harness" / "vocabulary.ttl"
@@ -664,6 +668,33 @@ class SensorsFire(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("by name", message)
         assert_fired(self, self.repo, "hook-git-add-all")
+
+    # -- tools/checks.py
+
+    def test_commit_bare_number(self):
+        msg = self.repo / "COMMIT_EDITMSG"
+        msg.write_text("Fix the hook (#12)\n", encoding="utf-8")
+        with contextlib.redirect_stderr(io.StringIO()):
+            code = checks.main(["--repo", str(self.repo), "commit-msg", str(msg)])
+        self.assertEqual(code, 1)
+        assert_fired(self, self.repo, "commit-bare-number")
+
+    def pr(self, pr: dict, changed: list[str]) -> int:
+        event = self.repo / "event.json"
+        event.write_text(json.dumps({"pull_request": pr}), encoding="utf-8")
+        files = self.repo / "changed.txt"
+        files.write_text("\n".join(changed), encoding="utf-8")
+        argv = ["--repo", str(self.repo), "pr", "--event", str(event), "--changed", str(files)]
+        with contextlib.redirect_stderr(io.StringIO()):
+            return checks.main(argv)
+
+    def test_pr_accessibility_section(self):
+        self.assertEqual(self.pr({"title": "x", "body": "no section"}, ["faces/a/page.html"]), 1)
+        assert_fired(self, self.repo, "pr-accessibility-section")
+
+    def test_pr_spec_change_folder(self):
+        self.assertEqual(self.pr({"title": "behavior: x", "body": ""}, ["tools/gonk.py"]), 1)
+        assert_fired(self, self.repo, "pr-spec-change-folder")
 
     # -- tools/worker.py
 

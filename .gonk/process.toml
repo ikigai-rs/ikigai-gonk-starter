@@ -4,7 +4,7 @@
 # decide it. AGENTS.md holds the rules of exactly these profiles, so change both together.
 version = 1
 process = ["solo", "workers", "spec"]
-hooks = ["claude:require-claim"]
+hooks = ["claude:require-claim", "git:commit-msg"]
 checks = ["worker-config"]
 
 [profile.solo]

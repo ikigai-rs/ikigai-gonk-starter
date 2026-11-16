@@ -124,7 +124,8 @@ guide:reproduce-before-fix a harness:Guide ;
     rdfs:comment "A bug report, a finding or a measurement is a claim: reproduce it first, report it as not a defect with the evidence when it does not reproduce, and never change something only because the item expected a change." ;
     harness:statedIn "AGENTS.md" ; harness:section "3. Reproduce before you fix" ;
     harness:direction harness:feedforward ; harness:execution harness:inferential ;
-    harness:stage harness:toolCall ; harness:category harness:behavior .
+    harness:stage harness:toolCall ; harness:category harness:behavior ;
+    harness:uncheckedBecause "Whether a defect was reproduced before it was fixed is a judgment about the work, not a pattern in a command or a file: a test added with the fix may or may not have failed first, and a report of no defect is a good outcome no program can tell from a skipped one. The dispatcher checks it in the evidence." .
 
 # ── pull-requests (profiles/harness/pull-requests.ttl)
 
@@ -227,6 +228,17 @@ guide:no-bare-numbers a harness:Guide ;
     harness:direction harness:feedforward ; harness:execution harness:inferential ;
     harness:stage harness:toolCall ; harness:category harness:maintainability .
 
+ctl:commit-bare-number a harness:Control ;
+    rdfs:label "commit-msg: a bare #N" ;
+    rdfs:comment "The git commit-msg hook (hooks/git/commit-msg, on once `core.hooksPath` is hooks/git) refuses a commit message with a `#N` that nothing qualifies: not a link, `owner/repo#N`, `<ledger>#N`, `PR #N` or `ledger #N`. Any agent or person committing meets it, whatever made the commit." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:preCommit ; harness:category harness:maintainability ;
+    harness:outcome harness:refuse ;
+    harness:enforcedAt "tools/checks.py#cmd_commit_msg" , "hooks/git/commit-msg" ;
+    harness:wiredBy "git:commit-msg" ;
+    harness:statedBy guide:no-bare-numbers ;
+    harness:firedBy test:test_harness:SensorsFire.test_commit_bare_number .
+
 # ── accessibility (profiles/harness/accessibility.ttl)
 
 guide:read-accessibility-first a harness:Guide ;
@@ -235,6 +247,16 @@ guide:read-accessibility-first a harness:Guide ;
     harness:statedIn "AGENTS.md" ; harness:section "7. Read ACCESSIBILITY.md before changing what people see" ;
     harness:direction harness:feedforward ; harness:execution harness:inferential ;
     harness:stage harness:toolCall ; harness:category harness:behavior .
+
+ctl:pr-accessibility-section a harness:Control ;
+    rdfs:label "CI: changes to what people see carry an Accessibility section" ;
+    rdfs:comment "In CI, `tools/checks.py pr` refuses a pull request that changes a path the repository declares user-facing (`.gonk/checks.toml`, `[pr] user_facing`) and has no `## Accessibility` section in its description. It checks the evidence, not the reading: nothing can tell whether ACCESSIBILITY.md was read." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:ci ; harness:category harness:behavior ;
+    harness:outcome harness:refuse ;
+    harness:enforcedAt "tools/checks.py#check_accessibility" ;
+    harness:statedBy guide:read-accessibility-first ;
+    harness:firedBy test:test_harness:SensorsFire.test_pr_accessibility_section .
 
 # ── layout (profiles/harness/layout.ttl)
 
@@ -268,7 +290,8 @@ guide:building-ikigai-style a harness:Guide ;
     rdfs:comment "If you build in the ikigai style, consider `docs/resource-design.md` for resource-first design and `docs/ui-conventions.md` for views. Neither is required; a project that is not resource-oriented can ignore both. If you design resource-first, a `## Resource map` in the proposal or pull request can show the result. Whatever you build, `ACCESSIBILITY.md` stays the floor." ;
     harness:statedIn "AGENTS.md" ; harness:section "Building in the ikigai style (optional)" ;
     harness:direction harness:feedforward ; harness:execution harness:inferential ;
-    harness:stage harness:toolCall ; harness:category harness:architectureFitness .
+    harness:stage harness:toolCall ; harness:category harness:architectureFitness ;
+    harness:uncheckedBecause "Optional by design: a project need not be resource-oriented, so there is nothing to refuse. Its floor, ACCESSIBILITY.md, is checked by its own guide's control." .
 
 # ── skimmable-text (profiles/harness/skimmable-text.ttl)
 
@@ -277,7 +300,8 @@ guide:skimmable-text a harness:Guide ;
     rdfs:comment "When you write many short items that someone will scan together, consider `skills/skimmable-text/SKILL.md`: five principles, a write mode and a review mode, in the Agent Skills format; `skills/skimmable-text/sets.py` lists the parallel sets in Markdown files for a review. Nothing requires it." ;
     harness:statedIn "AGENTS.md" ; harness:section "Writing text people skim (optional)" ;
     harness:direction harness:feedforward ; harness:execution harness:inferential ;
-    harness:stage harness:toolCall ; harness:category harness:maintainability .
+    harness:stage harness:toolCall ; harness:category harness:maintainability ;
+    harness:uncheckedBecause "Optional by design, and a judgment of style: whether a set of items reads well together is for a writer or a reviewer to decide. `skills/skimmable-text/sets.py` lists the sets to review; it reports and never refuses." .
 
 # ── spec-first (profiles/harness/spec-first.ttl)
 
@@ -309,6 +333,16 @@ ctl:seed-orders-tasks a harness:Control ;
     harness:stage harness:toolCall ; harness:category harness:behavior ;
     harness:enforcedAt "tools/gonk.py#cmd_seed" ;
     harness:statedBy guide:take-what-next-offers .
+
+ctl:pr-spec-change-folder a harness:Control ;
+    rdfs:label "CI: the spec validates, and a behavior change has its change folder" ;
+    rdfs:comment "In CI, `tools/checks.py pr` (with tools/spec_checks.py) refuses a pull request when a folder of `openspec/changes/` lacks its proposal.md or tasks.md or one of `openspec/specs/` its spec.md, and when the pull request is marked as a behavior change (the label `behavior-change`, or a title starting `behavior:`, configurable in `.gonk/checks.toml`) and changes nothing under `openspec/changes/`. The mark is the trigger: the author says which kind of change it is." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:ci ; harness:category harness:behavior , harness:maintainability ;
+    harness:outcome harness:refuse ;
+    harness:enforcedAt "tools/spec_checks.py#check_spec" ;
+    harness:statedBy guide:change-starts-as-a-folder , guide:keep-the-spec-true ;
+    harness:firedBy test:test_harness:SensorsFire.test_pr_spec_change_folder .
 
 # ── workers (profiles/harness/workers.ttl)
 
@@ -544,6 +578,14 @@ ctl:worker-merged-before-exit a harness:Control ;
     harness:statedBy guide:worker-never-closes-or-merges ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_merged_before_exit .
 
+ctl:worker-comments-are-data a harness:Control ;
+    rdfs:label "worker: comments reach the agent as data" ;
+    rdfs:comment "The worker's brief quotes every comment under its author and marks each one not by a router as data written by others, never instructions, so a comment cannot pose as the task. A guide a program applies: it shapes what the agent reads rather than refusing anything. tests/test_worker_routing.py (TheBrief) proves it." ;
+    harness:direction harness:feedforward ; harness:execution harness:computational ;
+    harness:stage harness:runtime ; harness:category harness:authoritySafety ;
+    harness:enforcedAt "tools/worker.py#brief_comments" ;
+    harness:statedBy guide:comments-are-data .
+
 # ── claude-hook (profiles/harness/claude-hook.ttl)
 
 ctl:edit-without-live-claim a harness:Control ;
@@ -585,7 +627,7 @@ ctl:edit-hook-unreadable-input a harness:Control ;
 
 ctl:hook-pipe-hides-status a harness:Control , harness:HookRule ;
     rdfs:label "hook rule: a trusted command piped" ;
-    rdfs:comment "The claim hook refuses a shell command that pipes the gates or a test run into another command without pipefail, since the pipeline's exit status is then the last command's and a failing run reads as a pass." ;
+    rdfs:comment "The claim hook refuses a shell command that pipes the gates or a test run into another command without pipefail, since the pipeline's exit status is then the last command's and a failing run reads as a pass. It applies only to an agent running this optional Claude Code hook; the rule holds for every agent." ;
     harness:direction harness:feedback ; harness:execution harness:computational ;
     harness:stage harness:toolCall ; harness:category harness:behavior ;
     harness:outcome harness:refuse ;
@@ -609,21 +651,26 @@ ctl:hook-pipe-hides-status a harness:Control , harness:HookRule ;
 
 ctl:hook-git-add-all a harness:Control , harness:HookRule ;
     rdfs:label "hook rule: staging everything" ;
-    rdfs:comment "The claim hook refuses `git add -A`, `git add --all` and `git add .`, which stage files that are not the change's." ;
+    rdfs:comment "The claim hook refuses `git add -A`, `--all`, `-u`, `--update` and `git add .`, and `git commit -a` (or `--all`, or `-am`), which stage files that are not the change's. It applies only to an agent running this optional Claude Code hook; the rule holds for every agent." ;
     harness:direction harness:feedback ; harness:execution harness:computational ;
     harness:stage harness:toolCall ; harness:category harness:authoritySafety ;
     harness:outcome harness:refuse ;
     harness:appliesTo "Bash" ;
     harness:matchesOn harness:commandText ;
     harness:patternDialect harness:pythonRe ;
-    harness:pattern "\\bgit\\s+(?:-C\\s+\\S+\\s+)?add\\s+(?:[^;&|\\n]*\\s)?(?:-A|--all|\\.)(?=\\s|$|[;&|])" ;
-    harness:says "stage the files you changed by name: `git add -A`, `--all` and `.` pick up files that are not yours." ;
+    harness:pattern "\\bgit\\s+(?:-C\\s+\\S+\\s+)?(?:add\\s+(?:[^;&|\\n]*\\s)?(?:-A|--all|-u|--update|\\.)|commit\\s+(?:[^;&|\\n]*\\s)?(?:-a|--all|-[b-zA-Z]*a[a-zA-Z]*))(?=\\s|$|[;&|])" ;
+    harness:says "stage the files you changed by name: `git add -A`, `-u`, `.` and `git commit -a` pick up files that are not yours." ;
     harness:example "git add -A" ;
+    harness:example "git add -u" ;
+    harness:example "git commit -a -m wip" ;
+    harness:example "git commit -am wip" ;
     harness:example "git add --all && git commit -m wip" ;
     harness:example "git -C ../repo add ." ;
     harness:counterExample "git add tools/harness.py tests/test_harness.py" ;
     harness:counterExample "git add ./tools/harness.py" ;
     harness:counterExample "git add -p tools/harness.py" ;
+    harness:counterExample "git commit -m wip" ;
+    harness:counterExample "git commit --amend --no-edit" ;
     harness:enforcedAt "tools/harness.py#fire_hook_rules" ;
     harness:wiredBy "claude:require-claim" ;
     harness:statedBy guide:stage-files-by-name ;

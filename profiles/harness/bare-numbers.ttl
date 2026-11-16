@@ -4,3 +4,14 @@ guide:no-bare-numbers a harness:Guide ;
     harness:statedIn "AGENTS.md" ; harness:section "6. Never a bare `#N`" ;
     harness:direction harness:feedforward ; harness:execution harness:inferential ;
     harness:stage harness:toolCall ; harness:category harness:maintainability .
+
+ctl:commit-bare-number a harness:Control ;
+    rdfs:label "commit-msg: a bare #N" ;
+    rdfs:comment "The git commit-msg hook (hooks/git/commit-msg, on once `core.hooksPath` is hooks/git) refuses a commit message with a `#N` that nothing qualifies: not a link, `owner/repo#N`, `<ledger>#N`, `PR #N` or `ledger #N`. Any agent or person committing meets it, whatever made the commit." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:preCommit ; harness:category harness:maintainability ;
+    harness:outcome harness:refuse ;
+    harness:enforcedAt "tools/checks.py#cmd_commit_msg" , "hooks/git/commit-msg" ;
+    harness:wiredBy "git:commit-msg" ;
+    harness:statedBy guide:no-bare-numbers ;
+    harness:firedBy test:test_harness:SensorsFire.test_commit_bare_number .

@@ -1,0 +1,11 @@
+#!/bin/sh
+# commit-msg: refuse a commit message with a bare `#N` (AGENTS.md, "6. Never a bare `#N`").
+# Any agent or person committing here meets it, whatever made the commit. Installed by
+# `git config core.hooksPath hooks/git`. The check is tools/checks.py, which records each
+# refusal in the firing log. Without python3 it lets the commit through and says so.
+top=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "commit-msg: no python3, so the bare-number check did not run" >&2
+    exit 0
+fi
+exec python3 "$top/tools/checks.py" --repo "$top" commit-msg "$1"

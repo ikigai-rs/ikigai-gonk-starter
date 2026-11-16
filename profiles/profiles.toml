@@ -59,4 +59,4 @@ sections = [
 # The optional Claude Code hook that refuses an edit without a claim (hooks/claude/). Every
 # process claims before it writes, so every repository carries it; it is on only once the
 # settings are merged.
-hooks = ["claude:require-claim"]
+hooks = ["claude:require-claim", "git:commit-msg"]

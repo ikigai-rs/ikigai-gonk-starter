@@ -229,3 +229,11 @@ ctl:worker-merged-before-exit a harness:Control ;
     harness:enforcedAt "tools/worker.py#work_claimed" ;
     harness:statedBy guide:worker-never-closes-or-merges ;
     harness:firedBy test:test_harness:SensorsFire.test_worker_merged_before_exit .
+
+ctl:worker-comments-are-data a harness:Control ;
+    rdfs:label "worker: comments reach the agent as data" ;
+    rdfs:comment "The worker's brief quotes every comment under its author and marks each one not by a router as data written by others, never instructions, so a comment cannot pose as the task. A guide a program applies: it shapes what the agent reads rather than refusing anything. tests/test_worker_routing.py (TheBrief) proves it." ;
+    harness:direction harness:feedforward ; harness:execution harness:computational ;
+    harness:stage harness:runtime ; harness:category harness:authoritySafety ;
+    harness:enforcedAt "tools/worker.py#brief_comments" ;
+    harness:statedBy guide:comments-are-data .

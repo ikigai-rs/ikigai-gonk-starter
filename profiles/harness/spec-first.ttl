@@ -26,3 +26,13 @@ ctl:seed-orders-tasks a harness:Control ;
     harness:stage harness:toolCall ; harness:category harness:behavior ;
     harness:enforcedAt "tools/gonk.py#cmd_seed" ;
     harness:statedBy guide:take-what-next-offers .
+
+ctl:pr-spec-change-folder a harness:Control ;
+    rdfs:label "CI: the spec validates, and a behavior change has its change folder" ;
+    rdfs:comment "In CI, `tools/checks.py pr` (with tools/spec_checks.py) refuses a pull request when a folder of `openspec/changes/` lacks its proposal.md or tasks.md or one of `openspec/specs/` its spec.md, and when the pull request is marked as a behavior change (the label `behavior-change`, or a title starting `behavior:`, configurable in `.gonk/checks.toml`) and changes nothing under `openspec/changes/`. The mark is the trigger: the author says which kind of change it is." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:ci ; harness:category harness:behavior , harness:maintainability ;
+    harness:outcome harness:refuse ;
+    harness:enforcedAt "tools/spec_checks.py#check_spec" ;
+    harness:statedBy guide:change-starts-as-a-folder , guide:keep-the-spec-true ;
+    harness:firedBy test:test_harness:SensorsFire.test_pr_spec_change_folder .
