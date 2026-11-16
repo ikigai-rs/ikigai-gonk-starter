@@ -65,7 +65,13 @@ class Generate(unittest.TestCase):
         units = sorted(p.name for p in (ROOT / "worker" / "units").iterdir())
         self.assertEqual(
             units,
-            ["dev.ikigai-rs.gonk-worker.plist", "gonk-worker.service", "gonk-worker@.service"],
+            [
+                "agentsview.service",
+                "dev.ikigai-rs.agentsview.plist",
+                "dev.ikigai-rs.gonk-worker.plist",
+                "gonk-worker.service",
+                "gonk-worker@.service",
+            ],
         )
         for rel in [
             "tools/worker.py",
