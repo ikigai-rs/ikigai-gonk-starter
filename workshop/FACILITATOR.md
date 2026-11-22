@@ -44,7 +44,7 @@ fixture's conceptual items, not an attendee's private ledger.
    for participants, certificates, storage and the QUIC door. Mount the layers in gonk using
    its Layers configuration if the group has a gonk instance; direct client access is enough
    for the exercise. Do not expose a local host to the network unintentionally.
-2. Install the [Python layer client](https://github.com/ikigai-rs/ikigai-layers-client#installation)
+2. Install the [Python layer client](https://github.com/ikigai-rs/ikigai-layers-client#getting-started-macos-or-ubuntu-on-wsl2-python-311-or-newer)
    and enroll a separate facilitator certificate and participant certificates with the host.
    Supply the host's pinned certificate in each certificate set as the client instructions
    require. Use the host's actual QUIC URL and certificate paths in these examples:
