@@ -20,7 +20,9 @@ exits 2 with that sentence; a warning lets the call through and hands the senten
 agent as context. A malformed rule is said on standard error and ignored, never applied.
 
 Each refusal is a sensor of the repository's harness (`.gonk/harness/harness.ttl`) and is
-recorded in its firing log, best effort: recording never changes what the hook decides.
+recorded in its firing log, best effort: recording never changes what the hook decides. A
+refused call is also one `outcome=refused` line in the session trail (tools/trail.py), which
+`tool-trail.py` writes for every other call; that is best effort too.
 """
 
 from __future__ import annotations
@@ -58,6 +60,20 @@ def fire(control: str, repo: Path | None, event: dict) -> None:
             session=event.get("session_id"),
         )
     except Exception:  # noqa: BLE001  (recording a firing never changes the decision)
+        pass
+
+
+def trail_refused(event: dict) -> None:
+    """Write the refused call to the session trail (tools/trail.py). Never raises."""
+    try:
+        repo = repo_of(Path(event.get("cwd") or ".").resolve())
+        if repo is None:
+            return
+        sys.path.insert(0, str(repo / "tools"))
+        import trail  # the repository's own copy
+
+        trail.hook_ended(repo, event, "refused")
+    except Exception:  # noqa: BLE001  (recording a call never changes the decision)
         pass
 
 
@@ -150,6 +166,8 @@ def main() -> int:
         print(f"require-claim: the hook input was not JSON ({e}); refusing", file=sys.stderr)
         return 2
     code, message = decide(event)
+    if code and isinstance(event, dict):
+        trail_refused(event)
     if message and code:
         print(message, file=sys.stderr)
     elif message:  # a warning: the call goes ahead, and the agent is told why it was flagged

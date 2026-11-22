@@ -27,6 +27,8 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import trail  # beside this file: the session trail's writer
+
 # The harnesses a session summary records: `ledger:harness sh:in ( "claude" "codex" )`.
 HARNESSES = ("claude", "codex")
 
@@ -48,6 +50,9 @@ SHAPE: tuple[tuple[str, str, bool], ...] = (
     ("outputTokens", "count", False),
 )
 SESSION_ID = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+
+# The session IRI each harness's tool-call lines carry (tools/trail.py), before its session id.
+SESSION_NS = {"claude": trail.CLAUDE_SESSION_NS, "codex": trail.CODEX_SESSION_NS}
 
 # Codex's tool calls, by the item (`codex exec --json`) or event (older releases) type.
 CODEX_TOOL_ITEMS = ("command_execution", "file_change", "mcp_tool_call", "web_search")
@@ -85,12 +90,15 @@ def flag_value(argv: list[str], *names: str) -> str | None:
 
 def with_json_output(harness: str | None, argv: list[str]) -> list[str]:
     """The command asking its harness for machine-readable output, when it runs that harness by
-    name and does not ask already: `claude --output-format json`, `codex exec --json`. A command
-    of one's own (a wrapper, with `[agent] harness` set) is never rewritten: it asks itself."""
+    name and does not ask already: `claude --output-format stream-json --verbose` (its events
+    name each tool call, for the session trail; `-p` needs `--verbose` to stream them), `codex
+    exec --json`. A command of one's own (a wrapper, with `[agent] harness` set) is never
+    rewritten: it asks itself."""
     if not argv or Path(argv[0]).name != harness:
         return argv
     if harness == "claude" and not has_flag(argv, "--output-format"):
-        return [argv[0], "--output-format", "json", *argv[1:]]
+        verbose = [] if has_flag(argv, "--verbose") else ["--verbose"]
+        return [argv[0], "--output-format", "stream-json", *verbose, *argv[1:]]
     if harness == "codex" and "exec" in argv:
         if has_flag(argv, "--json") or has_flag(argv, "--experimental-json"):
             return argv
@@ -135,9 +143,10 @@ class Collector:
 
     harness = ""
 
-    def __init__(self) -> None:
+    def __init__(self, calls: trail.Calls | None = None) -> None:
         self.events = 0
         self.problems: list[str] = []
+        self.calls = calls  # the session trail its tool calls are written to, or None
 
     def feed(self, line: str) -> str | None:
         """The text for the log from one line of output: the line itself when it is not a JSON
@@ -168,8 +177,8 @@ class ClaudeCollector(Collector):
 
     harness = "claude"
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, calls: trail.Calls | None = None) -> None:
+        super().__init__(calls)
         self.result: dict | None = None
         self.init_session: str | None = None
         self.init_model: str | None = None
@@ -178,17 +187,26 @@ class ClaudeCollector(Collector):
 
     def take(self, event: dict) -> str | None:
         kind = event.get("type")
+        if self.calls is not None and self.calls.session is None:
+            self.calls.name_session(event.get("session_id"))
         if kind == "system" and event.get("subtype") == "init":
             self.init_session = event.get("session_id") or self.init_session
             self.init_model = event.get("model") or self.init_model
         elif kind == "assistant":
             self.streamed = True
             content = (event.get("message") or {}).get("content") or []
-            self.tool_calls += sum(
-                1
-                for block in content
-                if isinstance(block, dict) and block.get("type") == "tool_use"
-            )
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_use":
+                    self.tool_calls += 1
+                    if self.calls is not None:
+                        name = block.get("name")
+                        self.calls.start(block.get("id"), name, block.get("input") or {})
+        elif kind == "user" and self.calls is not None:
+            content = (event.get("message") or {}).get("content") or []
+            for block in content if isinstance(content, list) else []:
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    outcome = "failed" if block.get("is_error") else "ok"
+                    self.calls.end(block.get("tool_use_id"), outcome, block.get("content"))
         elif kind == "result":
             self.result = event
             text = event.get("result")
@@ -247,8 +265,8 @@ class CodexCollector(Collector):
 
     harness = "codex"
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, calls: trail.Calls | None = None) -> None:
+        super().__init__(calls)
         self.session: str | None = None
         self.model: str | None = None
         self.turns = 0
@@ -266,8 +284,12 @@ class CodexCollector(Collector):
 
     def take(self, event: dict) -> str | None:
         kind = event.get("type")
+        if kind in ("item.started", "item.completed") and self.calls is not None:
+            self.trail_item(kind, event.get("item") or {})
         if kind == "thread.started":
             self.session = event.get("thread_id") or self.session
+            if self.calls is not None:
+                self.calls.name_session(self.session)
         elif kind == "turn.started":
             self.turns += 1
         elif kind == "turn.completed":
@@ -296,11 +318,60 @@ class CodexCollector(Collector):
             return self.take_msg(msg)
         return None
 
+    def trail_item(self, kind: str, item: dict) -> None:
+        """A tool item to the session trail: `item.started` begins it, `item.completed` ends it
+        (one seen only completed is written then, with no `dur=`)."""
+        if not isinstance(item, dict):
+            return
+        tool = item.get("type") or item.get("item_type")
+        call_id = item.get("id")
+        if tool not in CODEX_TOOL_ITEMS or not isinstance(call_id, str):
+            return
+        if tool == "mcp_tool_call" and item.get("server") and item.get("tool"):
+            tool = f"mcp__{item['server']}__{item['tool']}"
+        noise = ("id", "type", "item_type", "status", "aggregated_output", "exit_code", "result")
+        arguments = {k: v for k, v in item.items() if k not in noise}
+        if kind == "item.started":
+            self.calls.start(call_id, tool, arguments)
+            return
+        status, code = item.get("status"), item.get("exit_code")
+        if status == "declined":
+            outcome = "refused"
+        elif status == "failed" or (isinstance(code, int) and code != 0):
+            outcome = "failed"
+        else:
+            outcome = "ok"
+        result = item.get("aggregated_output", item.get("result"))
+        if call_id not in self.calls.open:
+            self.calls.start(call_id, tool, arguments)
+            self.calls.end(call_id, outcome, result, timed=False)
+        else:
+            self.calls.end(call_id, outcome, result)
+
+    def trail_msg(self, kind: str, msg: dict) -> None:
+        """An older release's `*_begin` / `*_end` events to the session trail, by `call_id`."""
+        call_id = msg.get("call_id")
+        if not isinstance(call_id, str):
+            return
+        if kind in CODEX_TOOL_EVENTS:
+            noise = ("type", "call_id")
+            self.calls.start(
+                call_id, kind[: -len("_begin")], {k: v for k, v in msg.items() if k not in noise}
+            )
+        elif kind.endswith("_end") and kind[: -len("_end")] + "_begin" in CODEX_TOOL_EVENTS:
+            code = msg.get("exit_code")
+            failed = msg.get("success") is False or (isinstance(code, int) and code != 0)
+            self.calls.end(call_id, "failed" if failed else "ok", msg.get("stdout"))
+
     def take_msg(self, msg: dict) -> str | None:
         kind = msg.get("type")
+        if self.calls is not None and isinstance(kind, str):
+            self.trail_msg(kind, msg)
         if kind == "session_configured":
             self.session = msg.get("session_id") or self.session
             self.model = msg.get("model") or self.model
+            if self.calls is not None:
+                self.calls.name_session(self.session)
         elif kind == "task_started":
             self.turns += 1
         elif kind == "token_count":
@@ -344,8 +415,10 @@ class CodexCollector(Collector):
         return self.failed
 
 
-def collector(harness: str | None) -> Collector | None:
-    return {"claude": ClaudeCollector, "codex": CodexCollector}.get(harness or "", lambda: None)()
+def collector(harness: str | None, calls: trail.Calls | None = None) -> Collector | None:
+    """The collector of `harness`'s output; `calls` is the session trail its tool calls go to."""
+    kind = {"claude": ClaudeCollector, "codex": CodexCollector}.get(harness or "")
+    return kind(calls) if kind else None
 
 
 def shape_problem(summary: dict) -> str | None:

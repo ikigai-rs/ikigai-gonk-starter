@@ -14,6 +14,7 @@ How this repository is wired to gonk, the ledger and review host it works with.
 | `dispatcher.toml` | no (git-ignored) | the dispatcher's own list of the workers whose review hand-backs `gonk.py findings` files (`workers = ["urn:iki:host:gonk:client:<fingerprint>"]`) |
 | `state/claim.toml` | no (git-ignored) | the claim this working tree holds; gonk is the truth, this is the note |
 | `state/harness/firings.log` | no (git-ignored) | one line each time a sensor here refused or warned: an ikigai-log segment, loaded into gonk by `tools/gonk.py harness` |
+| `state/trail/tools.log` | no (git-ignored) | the session trail: one `log:ToolCall` line per tool call the Claude Code hook saw (`hooks/claude/tool-trail.py`, `tools/trail.py`); digests only unless `local.toml` says `[trail] text = true` |
 | `queries/` | yes | saved SPARQL over the ledger and the spec graph, and the four harness questions (`harness-*.rq`) |
 | `scripts/` | yes | workflow scripts |
 

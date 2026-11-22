@@ -100,6 +100,13 @@ preset = "claude"
 # every = "6h"            # how often the Disk: line is posted between crossings of the floor
 # prune_after = "7d"      # "0s" keeps every worktree and log; under the floor a build still goes
 
+# The session trail (worker/README.md, "The session trail"): one ikigai-log line per tool call
+# the agent made, in .gonk/state/worker/trail/tools.log, with the arguments' and result's
+# digests and NO text. text = true adds the text to every line: take it only where that file
+# is as private as the arguments.
+# [trail]
+# text = false
+
 # The worker's own fence: derive repo:<name> as this GitHub organization's repository.
 # Edit this organization before running. New repositories need no stanza and no restart.
 # The token must have push permission; the worker checks GitHub before taking derived work.

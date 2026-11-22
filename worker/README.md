@@ -968,9 +968,10 @@ the Pop!_OS 24.04 worker, `run --once`) showed, and what is still to try:
    in this worktree; a pull request with green CI; never merge, never close; the evidence
    file when it is not a defect or updates an existing PR), then the item's title and body. Its output goes to
    `<work_root>/<repo>/item-<N>.log`, beside the worktree, inside hubdiag's view. Claude Code
-   and Codex are run with their JSON output (`claude --output-format json`, `codex exec
-   --json`), which the worker reads for the session summary, and the log gets the agent's own
-   words from it and every line that is not a JSON event, as before. When the
+   and Codex are run with their JSON output (`claude --output-format stream-json --verbose`,
+   `codex exec --json`), which the worker reads for the session summary and the session trail
+   (below), and the log gets the agent's own words from it and every line that is not a JSON
+   event, as before. When the
    budget runs out the worker stops its whole process group (SIGTERM, then SIGKILL after
    `grace`).
 6. **Hand-back.** The pull requests on the branch (`gh pr list --head`), and their CI:
@@ -1065,10 +1066,38 @@ machine-readable output ([`tools/worker_session.py`](../tools/worker_session.py)
   an agent stopped at its budget or by a shutdown, or an agent that is neither (hermes) posts
   the hand-back, or the note, without a summary, saying why in one `No session summary:` line.
 - **The command.** A preset or `init-agents` command that runs `claude` or `codex` by that name
-  is given `--output-format json` or `--json` when it does not ask for an output format itself
-  (`--output-format stream-json`, which Claude Code runs only with `--verbose`, is read too).
+  is given `--output-format stream-json --verbose` (Claude Code streams its events only with
+  `--verbose`) or `--json` when it does not ask for an output format itself; a command that
+  asks for `--output-format json` is read too, but names no tool call, so writes no trail.
   A command of your own that runs one under another name sets `[agent] harness`, and asks for
   the JSON output itself.
+
+#### The session trail
+
+From the same events, the worker writes **one line per tool call** the agent made to this
+checkout's `.gonk/state/worker/trail/tools.log` (git-ignored, shared by its loops), in
+ikigai-log's `log:ToolCall` format ([`tools/trail.py`](../tools/trail.py); ikigai-log 0.14.0,
+README "One tool-call line: an agent's trail"):
+
+```text
+2026-11-21T23:04:17.512Z log:ToolCall urn:log:tool:name:Bash seq=9 session=urn:claude:session:4f1c outcome=ok dur=184 args=sha256:9f86…
+```
+
+- **What a line holds.** The tool's name (`urn:log:tool:name:{name}`), the session's IRI
+  (`urn:claude:session:{session_id}`, `urn:codex:session:{thread id}`), `outcome=` (`ok`;
+  `failed` for an error result, a failed command, or a call whose result never came back;
+  `refused` for a call Codex declined), `dur=` the milliseconds between the request and its
+  result as the worker saw them, and the SHA-256 digests of the arguments and the result.
+- **No argument or result text unless the operator opts in.** `[trail] text = true` in the
+  worker's `.gonk/worker*.toml` adds `args-text=` and `result-text=`, cut at 4096 bytes, to
+  every line; off by default. A digest of a short or guessable argument is one guess away,
+  so it keeps text off the line, not out of reach.
+- **It stays on this machine.** Nothing here sends the trail anywhere. A host that mounts
+  ikigai-log over the directory answers one session's trail at
+  `urn:log:trail:session:{session}`. The segment is unsealed (no key here), which
+  `urn:log:verify` notes and does not count as broken.
+- **Best effort.** A line that cannot be written is said once on standard error; the run,
+  its hand-back and its summary are the same either way.
 
 `run --once` exits 0 when it handed an item back with evidence, 3 when there was nothing to
 take, 4 when it took one and could not hand it back with evidence (lost, overrun, stopped,

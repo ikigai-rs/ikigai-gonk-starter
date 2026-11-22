@@ -40,11 +40,36 @@ Each refusal is a sensor of the repository's harness (`edit-without-live-claim`,
 one line to `.gonk/state/harness/firings.log`, naming the tool and the session but never the
 file. Recording is best effort: the hook decides the same whether or not the line lands.
 
+## The session trail: one line per tool call
+
+`tool-trail.py` writes one line per tool call to this working tree's session trail,
+`.gonk/state/trail/tools.log` (git-ignored), in ikigai-log's `log:ToolCall` format
+(`tools/trail.py`; ikigai-log 0.14.0, README "One tool-call line: an agent's trail"):
+
+```text
+2026-11-21T23:04:17.512Z log:ToolCall urn:log:tool:name:Bash seq=9 session=urn:claude:session:4f1c outcome=ok dur=184 args=sha256:9f86…
+```
+
+It is wired to `PreToolUse` (notes when the call began), `PostToolUse` (`outcome=ok`, with the
+duration and the result's digest) and `PostToolUseFailure` (`outcome=failed`), for every tool.
+A call `require-claim.py` refuses is written by that hook as `outcome=refused`. A call a person
+declines at a permission prompt sends Claude Code no further event, so it leaves no line.
+
+- **No argument or result text by default.** A line holds the tool's name, the session's IRI
+  (`urn:claude:session:{session_id}`), the outcome, the duration and SHA-256 digests. The text
+  is added (`args-text=`, `result-text=`, cut at 4096 bytes) only when the operator opts in
+  for the tree with `[trail] text = true` in `.gonk/local.toml`.
+- **Read it** with `urn:log:trail:session:{session}` on a host that mounts ikigai-log over the
+  directory, or with `grep 'session=urn:claude:session:…'`. The segment is unsealed: nothing
+  here holds a key, and `urn:log:verify` notes that rather than calling it broken.
+- **Best effort.** It never refuses a call and always exits 0, whether or not its line lands.
+
 ## Turning it on
 
 Merge `settings.sample.json` into `.claude/settings.json` (shared with the team) or
-`.claude/settings.local.json` (just you). It runs the hook from the repository, so it is the
-version the repository carries.
+`.claude/settings.local.json` (just you). It runs both hooks from the repository, so they are
+the versions the repository carries; leave out the `tool-trail.py` entries to keep the claim
+check without the trail.
 
 ## What it does not cover
 
