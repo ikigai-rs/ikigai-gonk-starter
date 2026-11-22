@@ -164,6 +164,10 @@ old ledger intact. The separate [facilitator notes](workshop/FACILITATOR.md) exp
 intended decisions and evidence checks; keep them out of the material given to attendee agents.
 The exercises describe fictional requests, not permission to publish or change grants.
 
+Module 5 adds a shared task layer across teams without sharing their ledgers. The
+[facilitator notes](workshop/FACILITATOR.md#module-5-one-task-for-everyone) cover the
+layer definitions, grants, seed, reset, participant example and an offline fallback.
+
 ## Choosing a process
 
 The loop above is the same everywhere; who runs it, and around what, is not. A **process

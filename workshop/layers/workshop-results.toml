@@ -1,0 +1,4 @@
+model = "channel"
+label = "Workshop results"
+shapes = "workshop-results.shapes.ttl"
+context = "workshop-results.context.jsonld"

@@ -1,0 +1,12 @@
+# Replace these participant names with enrolled identities; repeat the participant lines.
+label = "Workshop"
+
+[[mount]]
+layer = "workshop-tasks"
+facilitator = ["read", "feed", "out", "take"] # take is used to reset pending tasks
+participant = ["read", "feed", "take"]
+
+[[mount]]
+layer = "workshop-results"
+facilitator = ["read", "feed"]
+participant = ["read", "feed", "say"]
