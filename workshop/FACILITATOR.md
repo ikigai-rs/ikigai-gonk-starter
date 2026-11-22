@@ -10,7 +10,8 @@ is fictional, and participants should verify claims against the actual sample be
 - **5, decision:** Present both options and tradeoffs for a person to decide. Neither is
   established policy.
 - **6, release:** Prepare evidence but leave publishing to a person; it is an external action.
-- **7, design:** Escalate the deviation and update the agreement before implementation.
+- **7, design:** The related closed decision, item 31, records a two-renewal limit.
+  Escalate the deviation and update the agreement before implementation.
 - **8, false hand-back:** Inspect [PR #1](https://github.com/ikigai-rs/ikigai-gonk-starter/pull/1)'s
   changed files. It does not add a barcode scanner; reject the evidence, do not close on trust.
 - **9, expired lease:** It remains held by `workshop-stalled`; investigate abandonment and

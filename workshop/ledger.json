@@ -299,20 +299,38 @@
         "workshop",
         "sample"
       ]
+    },
+    {
+      "id": "renewal-decision",
+      "title": "Decide the renewal limit",
+      "body": "Decide how many times a loan may be renewed.",
+      "priority": 3,
+      "labels": [
+        "workshop",
+        "sample"
+      ]
     }
   ],
   "links": [
     [
       "chain-plan",
-      "chain-build"
+      "chain-build",
+      "blocks"
     ],
     [
       "chain-build",
-      "chain-test"
+      "chain-test",
+      "blocks"
     ],
     [
       "done",
-      "duplicate"
+      "duplicate",
+      "blocks"
+    ],
+    [
+      "design",
+      "renewal-decision",
+      "related"
     ]
   ],
   "comments": [
@@ -334,6 +352,16 @@
       "text": "One run failed and a later run passed; no cause has been established."
     }
   ],
-  "closed": "done",
+  "closed": [
+    {
+      "item": "done",
+      "note": "",
+      "evidence": "https://github.com/ikigai-rs/ikigai-gonk-starter/pull/1"
+    },
+    {
+      "item": "renewal-decision",
+      "note": "Decided: a loan may be renewed twice."
+    }
+  ],
   "expired": "stalled"
 }

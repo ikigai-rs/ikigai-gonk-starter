@@ -17,6 +17,7 @@ class Ledger:
         self.comments = []
         self.claims = []
         self.calls = []
+        self.closed = []
 
     def run(self, command, stdin=None):
         self.calls.append((command, stdin))
@@ -33,7 +34,7 @@ class Ledger:
         elif ":claim " in command:
             self.claims.append((command, stdin))
         elif ":close " in command:
-            self.closed = command
+            self.closed.append((command, stdin))
         else:
             raise AssertionError(command)
         return ok()
@@ -47,22 +48,34 @@ class WorkshopSeed(unittest.TestCase):
         with patch("workshop_seed.time.sleep") as sleep:
             self.assertEqual(workshop_seed.seed(cfg, ledger, fixture, "workshop-library"), 0)
         sleep.assert_called_once_with(2)
-        self.assertEqual(len(ledger.items), 30)
+        self.assertEqual(len(ledger.items), 31)
         refs = {item["id"]: i for i, item in enumerate(fixture["items"], 1)}
         for (command, content), item in zip(ledger.items, fixture["items"], strict=True):
             self.assertIn(f"priority={item['priority']}", command)
             self.assertIn("labels=" + ",".join(item["labels"]) + ",repo:workshop-library", command)
             self.assertEqual(content, item["title"] + "\n\n" + item["body"])
-        for (command, target), (source_id, target_id) in zip(
+        for (command, target), (source_id, target_id, link_type) in zip(
             ledger.links, fixture["links"], strict=True
         ):
+            self.assertIn(f"type={link_type}", command)
             self.assertIn(f"item=urn:iki:ledger:workshop:item:0{refs[source_id]}", command)
             self.assertEqual(target, f"urn:iki:ledger:workshop:item:0{refs[target_id]}")
         for (command, content), comment in zip(ledger.comments, fixture["comments"], strict=True):
             self.assertIn(f"item={refs[comment['item']]}", command)
             self.assertEqual("handback=true" in command, bool(comment.get("handback")))
             self.assertEqual(content, comment["text"])
-        self.assertIn(f"item={refs[fixture['closed']]}", ledger.closed)
+        self.assertEqual(len(ledger.closed), 2)
+        self.assertIn(f"item={refs['done']}", ledger.closed[0][0])
+        self.assertIn(f"item={refs['renewal-decision']}", ledger.closed[1][0])
+        self.assertEqual(ledger.closed[1][1], "Decided: a loan may be renewed twice.")
+        self.assertIn(
+            (
+                f"sink {cfg.resource('link')} "
+                f"item=urn:iki:ledger:workshop:item:0{refs['design']} type=related",
+                f"urn:iki:ledger:workshop:item:0{refs['renewal-decision']}",
+            ),
+            ledger.links,
+        )
         self.assertEqual(len(ledger.claims), 1)
         self.assertIn(f"item={refs[fixture['expired']]} lease=1s", ledger.claims[0][0])
         self.assertEqual(ledger.claims[0][1], "workshop-stalled")

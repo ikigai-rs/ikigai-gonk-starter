@@ -40,8 +40,11 @@ def seed(cfg, ikigai, fixture, repo_name=None):
             if not match or match.group(3) or int(match.group(1).rsplit("#", 1)[1]) != index:
                 raise RuntimeError(f"unexpected append response for {item['id']}: {answer}")
             refs[item["id"]] = (index, match.group(2))
-        for source, target in fixture["links"]:
-            run(f"sink {cfg.resource('link')} item={refs[source][1]} type=blocks", refs[target][1])
+        for source, target, link_type in fixture["links"]:
+            run(
+                f"sink {cfg.resource('link')} item={refs[source][1]} type={link_type}",
+                refs[target][1],
+            )
         for index, comment in enumerate(fixture["comments"], 1):
             flag = " handback=true" if comment.get("handback") else ""
             run(
@@ -49,11 +52,12 @@ def seed(cfg, ikigai, fixture, repo_name=None):
                 f" key=urn:workshop:comment:{index}{flag}",
                 comment["text"],
             )
-        done = refs[fixture["closed"]][0]
-        run(
-            f"sink {cfg.resource('close')} item={done} reason=done "
-            'evidence="https://github.com/ikigai-rs/ikigai-gonk-starter/pull/1"'
-        )
+        for closed in fixture["closed"]:
+            number = refs[closed["item"]][0]
+            command = f"sink {cfg.resource('close')} item={number} reason=done"
+            if closed.get("evidence"):
+                command += f" evidence={json.dumps(closed['evidence'])}"
+            run(command, closed["note"])
         stalled = refs[fixture["expired"]][0]
         run(f"sink {cfg.resource('claim')} item={stalled} lease=1s", "workshop-stalled")
         time.sleep(2)
