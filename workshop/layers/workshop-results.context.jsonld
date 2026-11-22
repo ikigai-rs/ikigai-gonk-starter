@@ -1,0 +1,1 @@
+{"@context": {"ik": "https://ikigai-rs.dev/ns#", "WorkshopResult": "ik:WorkshopResult", "body": "ik:body", "offer": {"@id": "ik:offer", "@type": "@id"}}}

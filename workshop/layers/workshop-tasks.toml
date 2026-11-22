@@ -1,0 +1,5 @@
+model = "tuplespace"
+kind = "task"
+label = "Workshop tasks"
+shapes = "workshop-tasks.shapes.ttl"
+context = "workshop-tasks.context.jsonld"
