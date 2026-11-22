@@ -16,8 +16,8 @@ how it is tested, and how to report a barrier. It is not a conformance claim. Ad
 
 - **Documentation**: this README, `AGENTS.md`, the READMEs under `profiles/`, `templates/`,
   `worker/` and `.gonk/`, and `docs/windows.md`: Markdown, read on GitHub or in an editor.
-- **Terminal text** from `tools/gonk.py`, `tools/new.py`, `tools/harness.py`, `tools/worker.py`
-  and `scripts/gates.sh`: plain lines, with no color and no full-screen redraw.
+- **Terminal text** from `tools/gonk.py`, `tools/new.py`, `tools/harness.py`, `tools/worker.py`,
+  `tools/workshop_seed.py` and `scripts/gates.sh`: plain lines, with no color and no full-screen redraw.
 - **What it generates.** `tools/new.py` writes a repository holding the library-lending sample,
   whose client prints plain text and whose service answers JSON, and gives that repository an
   `ACCESSIBILITY.md` of its own to grow (`templates/library/ACCESSIBILITY.md`) and an

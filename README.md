@@ -134,6 +134,36 @@ and closing it makes the next one ready. A second `seed` files and links nothing
 answers `existing` for a key it already holds, and the links are already there. The sample
 also carries three saved SPARQL queries and a workflow script (below).
 
+## Workshop ledger
+
+The [workshop fixture](workshop/ledger.json) supplies 30 deliberately untidy items for
+practicing prioritization, dispatch, review and decisions with a person. Use a dedicated,
+disposable ledger and a separate generated library repository for each group. From this
+starter checkout, for example:
+
+```sh
+python3 tools/new.py ../workshop-library --target python
+python3 ../workshop-library/tools/gonk.py --repo ../workshop-library init --ledger workshop-run-1 --socket ~/.ikigai/gonk.sock --holder facilitator
+python3 tools/workshop_seed.py --repo ../workshop-library --repo-name workshop-library
+python3 ../workshop-library/tools/gonk.py --repo ../workshop-library next
+```
+
+Choose a ledger name never used on that gonk. A ledger is created by its first item; the
+facilitator needs permission to read and file items, link, comment, close and claim. Do not
+run the ordinary OpenSpec `seed` first. The workshop command refuses a ledger containing
+items; if any step fails after writing, discard that ledger and use a new name. It waits for
+the fixture's one-second lease to expire before returning. Run it before attendees connect,
+without concurrent writers. It does not route items to a worker: the facilitator dispatches
+suitable items using the normal worker setup and their own repository configuration.
+`--repo-name` supplies the `repo:` label that must match the worker configuration and an
+accessible GitHub repository; omit it only when practicing without a worker.
+
+To reset, initialize the generated repository with a **new ledger name** and run the command
+again; use a fresh generated repository too if attendees changed its files. This leaves the
+old ledger intact. The separate [facilitator notes](workshop/FACILITATOR.md) explain the
+intended decisions and evidence checks; keep them out of the material given to attendee agents.
+The exercises describe fictional requests, not permission to publish or change grants.
+
 ## Choosing a process
 
 The loop above is the same everywhere; who runs it, and around what, is not. A **process
