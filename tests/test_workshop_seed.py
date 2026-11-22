@@ -71,6 +71,24 @@ class WorkshopSeed(unittest.TestCase):
         self.assertEqual(len(ledger.calls), before + 1)
         self.assertTrue(ledger.calls[-1][0].startswith("source "))
 
+    def test_item_requests_do_not_reveal_facilitator_answers(self):
+        fixture = json.loads((ROOT / "workshop/ledger.json").read_text())
+        answer_phrases = (
+            "clarify the reference",
+            "resolve the reference before acting",
+            "ask a person to decide",
+            "ask a person to publish",
+            "seek agreement before changing the design",
+            "coordinate ownership",
+            "check existing work before changing anything",
+            "reproduce and investigate before changing it",
+        )
+        for item in fixture["items"]:
+            for field in ("title", "body"):
+                for phrase in answer_phrases:
+                    with self.subTest(item=item["id"], field=field, phrase=phrase):
+                        self.assertNotIn(phrase, item[field].lower())
+
     def test_failed_append_stops_without_following_writes(self):
         class Refusing(Ledger):
             def run(self, command, stdin=None):
