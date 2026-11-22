@@ -43,7 +43,8 @@ class TheCommand(unittest.TestCase):
     def test_claude_and_codex_are_asked_for_json(self):
         add = worker_session.with_json_output
         self.assertEqual(
-            add("claude", ["claude", "-p", "hi"]), ["claude", "--output-format", "json", "-p", "hi"]
+            add("claude", ["claude", "-p", "hi"]),
+            ["claude", "--output-format", "stream-json", "--verbose", "-p", "hi"],
         )
         self.assertEqual(
             add("codex", ["codex", "exec", "--sandbox", "x", "hi"]),

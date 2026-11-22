@@ -124,6 +124,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import gonk  # noqa: E402  (beside this file; the path above makes it importable)
 import review_findings  # noqa: E402
+import trail  # noqa: E402
 import worker_onboard  # noqa: E402
 import worker_session  # noqa: E402
 import worker_usage  # noqa: E402
@@ -183,6 +184,10 @@ TOKENS = (
     "{profile}",  # [agent] profile, for an agent with profiles (hermes)
 )
 
+# The worker's session trail segment (tools/trail.py), named by an id minted when it is created.
+WORKER_TRAIL_NAME_NS = "urn:log:tools:worker-"
+WORKER_TRAIL_INSTANCE_NS = "urn:iki:tools:worker:"
+
 REPO_SHAPE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 GITHUB_SLUG = re.compile(r"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$")
 GITHUB_REMOTE = re.compile(r"github\.com[:/]([A-Za-z0-9-]+/[A-Za-z0-9._-]+?)(?:\.git)?/?$")
@@ -235,6 +240,7 @@ class WorkerConfig:
     disk: dict = field(default_factory=dict)  # the [disk] table: see load_disk
     pool: list[str] = field(default_factory=list)  # the shared labels it also reads: default_pool
     harness: str | None = None  # claude or codex: whose session summary the hand-back carries
+    trail_text: bool = False  # [trail] text: the operator's opt-in to tool-call text (trail.py)
 
     def __post_init__(self) -> None:
         self.loop_dir = self.loop_dir or self.state_dir
@@ -319,6 +325,17 @@ def load_usage(u, where: str, command: list[str]) -> dict:
 
 DEFAULT_DISK_FLOOR_GB = 30
 DEFAULT_PRUNE_AFTER = "7d"
+
+
+def load_trail(d, where: str) -> bool:
+    """The [trail] table, checked: `text = true` is the operator's opt-in to argument and result
+    text on the session trail's lines (tools/trail.py). Off by default: digests only."""
+    if not isinstance(d, dict) or set(d) - {"text"}:
+        raise gonk.ConfigError(f"{where}: [trail] accepts text only")
+    text = d.get("text", False)
+    if not isinstance(text, bool):
+        raise gonk.ConfigError(f"{where}: [trail] text is true or false")
+    return text
 
 
 def load_disk(d, where: str) -> dict:
@@ -539,6 +556,7 @@ def load_worker(cfg: gonk.Config, path: Path | None = None) -> WorkerConfig:
         usage=load_usage(t.get("usage", {}), where, command),
         disk=load_disk(t.get("disk", {}), where),
         harness=worker_session.harness_of(command, harness),
+        trail_text=load_trail(t.get("trail", {}), where),
     )
 
 
@@ -2262,9 +2280,11 @@ class Worker:
         )
         # Claude Code and Codex are asked for their machine-readable output, which the worker
         # reads for the session summary (worker_session.py); the agent's words still go to the log.
+        # The same events are its session trail: one `log:ToolCall` line per tool call it made
+        # (tools/trail.py), in this checkout's .gonk/state/worker/trail/tools.log.
         harness = self.wc.harness
         argv = worker_session.with_json_output(harness, argv)
-        seen = worker_session.collector(harness)
+        seen = worker_session.collector(harness, self.trail_calls(harness))
         log(f"{display}: running `{argv[0]}` in {ws.path} on {ws.branch} (log {ws.log})")
         started = time.monotonic()
         with ws.log.open("w", encoding="utf-8") as out:
@@ -2292,6 +2312,8 @@ class Worker:
                 reader.join(timeout=30)
                 if not reader.is_alive():
                     proc.stdout.close()
+                if seen is not None and seen.calls is not None:
+                    seen.calls.close()
         exited = datetime.now(UTC)
         took = spoken(time.monotonic() - started)
         wall_ms = int((time.monotonic() - started) * 1000)
@@ -2567,6 +2589,18 @@ class Worker:
             return None
         url = first[0].strip() if first else ""
         return url if gonk.EVIDENCE_SHAPE.match(url) else None
+
+    def trail_calls(self, harness: str | None) -> trail.Calls | None:
+        """The session trail this run's tool calls are written to, for a harness whose events
+        name them (Claude Code's stream-json, `codex exec --json`); None for any other."""
+        namespace = worker_session.SESSION_NS.get(harness or "")
+        if namespace is None:
+            return None
+        path = self.wc.state_dir / "trail" / "tools.log"
+        writer = trail.Trail(
+            path, WORKER_TRAIL_NAME_NS, WORKER_TRAIL_INSTANCE_NS, self.wc.trail_text
+        )
+        return trail.Calls(writer, namespace)
 
     def session(self, harness, seen, argv, ended: str, code, wall_ms: int):
         """The session summary of this run, or why it has none (worker_session.py). Only a run

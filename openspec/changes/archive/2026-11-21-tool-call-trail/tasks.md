@@ -1,0 +1,3 @@
+- [x] 1. Tests against lines ikigai-log 0.14.0 rendered, and for the default, the opt-in and one session's order (One line per tool call).
+- [x] 2. The writer, the hook, the claim hook's refused line and the worker's lines (No argument text by default).
+- [x] 3. The hook's and the worker's documentation, the sample settings and configuration (One session's lines read back in order).
