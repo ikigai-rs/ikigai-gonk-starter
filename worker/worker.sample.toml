@@ -40,6 +40,7 @@ lease = "30m"          # the claim's lease
 budget = "45m"         # wall-clock per item; the agent is stopped when it runs out
 ci_wait = "10m"        # after the agent exits, how long to wait for its PR's CI to finish
 poll = "60s"           # between polls of `next` when nothing is ready
+# poll_max = "5m"      # idle, the wait doubles from poll up to this until something is new
 # keep = false         # true keeps every worktree after its hand-back
 # gh = "gh"            # the GitHub CLI, if it is not `gh` on PATH
 # stop_file = ".gonk/state/worker/stop"   # create it to stop the loop between items
@@ -99,6 +100,7 @@ preset = "claude"
 # floor_gb = 30
 # every = "6h"            # how often the Disk: line is posted between crossings of the floor
 # prune_after = "7d"      # "0s" keeps every worktree and log; under the floor a build still goes
+# reclaim_every = "10m"   # how often a kept worktree's item is asked about; under the floor, every poll
 
 # The session trail (worker/README.md, "The session trail"): one ikigai-log line per tool call
 # the agent made, in .gonk/state/worker/trail/tools.log, with the arguments' and result's

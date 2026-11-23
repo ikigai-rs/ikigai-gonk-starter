@@ -69,10 +69,15 @@ item 2816). Under `[disk] floor_gb` it takes no new item, says why in its log an
 line on its status item, and takes items again once space returns. When it starts and once a day
 after, it prunes the worktrees and logs items left under the work root once they are older than
 `[disk] prune_after`, keeping any worktree whose branch has an open pull request (`prune_work`).
-At each poll it also asks the ledger about each kept worktree (ledger item 2937, `Worker.reclaim`):
+At each poll it also asks the ledger about each kept worktree it has not asked about within
+`[disk] reclaim_every` (ledger items 2937 and 4102, `Worker.reclaim`):
 one whose item is closed, or whose claim moved from the holder that made it to another, goes
 whatever its age, and under the floor the `target/` of one whose item is open and unclaimed goes
 first. A worktree a claim still holds is never touched, nor one the ledger gives no answer for.
+
+With nothing to take, the loop waits `poll`, doubling at each quiet poll in a row up to
+`poll_max`; anything new in what `next` ranks, or an item claimed, starts it again from `poll`
+(ledger item 4102, `Worker.idle_wait`).
 
 A loop that names an `agent:` label also reads the shared targets, in order after its own labels
 (ledger item 2793): `worker:pool` on every machine, `worker:mac` first on a Mac (`pool` in its
@@ -219,6 +224,7 @@ class WorkerConfig:
     lease: str
     renew_every: int
     poll: int
+    poll_max: int  # the idle backoff's ceiling: `poll` doubles up to it while nothing changes
     budget: int
     ci_wait: int
     ci_poll: int
@@ -325,6 +331,13 @@ def load_usage(u, where: str, command: list[str]) -> dict:
 
 DEFAULT_DISK_FLOOR_GB = 30
 DEFAULT_PRUNE_AFTER = "7d"
+# A kept worktree's item is asked about at most this often (ledger item 4102): at every poll, a
+# machine's loops read each one twice a minute, and nothing about removing a worktree is urgent.
+# Under the floor it is asked at every poll, since a build may have to go.
+DEFAULT_RECLAIM_EVERY = "10m"
+# The idle interval's ceiling (ledger item 4102): with nothing to take and nothing changed in
+# what `next` answers, the wait doubles from `poll` up to this; anything new sets it back.
+DEFAULT_POLL_MAX = "5m"
 
 
 def load_trail(d, where: str) -> bool:
@@ -341,9 +354,13 @@ def load_trail(d, where: str) -> bool:
 def load_disk(d, where: str) -> dict:
     """The [disk] table, checked: floor_gb (free space under which the loop takes no new item;
     0 turns the floor off), every (how often the `Disk:` line is posted), prune_after (how old a
-    kept worktree or log is before the loop removes it; `0s` keeps them all)."""
-    if not isinstance(d, dict) or set(d) - {"floor_gb", "every", "prune_after"}:
-        raise gonk.ConfigError(f"{where}: [disk] accepts floor_gb, every and prune_after only")
+    kept worktree or log is before the loop removes it; `0s` keeps them all), reclaim_every (how
+    often the loop asks the ledger again about one kept worktree's item; `0s` asks at every
+    poll)."""
+    if not isinstance(d, dict) or set(d) - {"floor_gb", "every", "prune_after", "reclaim_every"}:
+        raise gonk.ConfigError(
+            f"{where}: [disk] accepts floor_gb, every, prune_after and reclaim_every only"
+        )
     floor = d.get("floor_gb", DEFAULT_DISK_FLOOR_GB)
     if isinstance(floor, bool) or not isinstance(floor, (int, float)) or floor < 0:
         raise gonk.ConfigError(f"{where}: [disk] floor_gb is a number of GB, 0 or more")
@@ -351,6 +368,9 @@ def load_disk(d, where: str) -> dict:
         "floor_gb": float(floor),
         "every": seconds(str(d.get("every", "6h")), "disk every"),
         "prune_after": seconds(str(d.get("prune_after", DEFAULT_PRUNE_AFTER)), "prune_after"),
+        "reclaim_every": seconds(
+            str(d.get("reclaim_every", DEFAULT_RECLAIM_EVERY)), "reclaim_every"
+        ),
     }
 
 
@@ -432,6 +452,16 @@ def load_worker(cfg: gonk.Config, path: Path | None = None) -> WorkerConfig:
         raise gonk.ConfigError(
             f"{where}: renew_every must be at least 1s and shorter than the lease ({lease}), "
             "or the lease runs out between renewals"
+        )
+
+    poll = seconds(str(t.get("poll", "60s")), "poll")
+    poll_max = seconds(str(t.get("poll_max", DEFAULT_POLL_MAX)), "poll_max")
+    if "poll_max" not in t:
+        poll_max = max(poll_max, poll)  # a long `poll` of its own is never shortened
+    elif poll_max < poll:
+        raise gonk.ConfigError(
+            f"{where}: poll_max must be at least poll ({t.get('poll', '60s')}): it is the "
+            "ceiling the idle interval grows to"
         )
 
     agent = t.get("agent", {})
@@ -535,7 +565,8 @@ def load_worker(cfg: gonk.Config, path: Path | None = None) -> WorkerConfig:
         work_root=str(t.get("work_root", "~/work")),
         lease=lease,
         renew_every=renew,
-        poll=seconds(str(t.get("poll", "60s")), "poll"),
+        poll=poll,
+        poll_max=poll_max,
         budget=seconds(str(t.get("budget", "45m")), "budget"),
         ci_wait=seconds(str(t.get("ci_wait", "10m")), "ci_wait"),
         ci_poll=seconds(str(t.get("ci_poll", "20s")), "ci_poll"),
@@ -1904,8 +1935,15 @@ class Worker:
             self.root, d["floor_gb"], d["every"], u.get("status_item"), self.ledger, log
         )
         self.prune_after = d["prune_after"]
+        self.reclaim_every = d.get("reclaim_every", seconds(DEFAULT_RECLAIM_EVERY, "reclaim_every"))
         self.pruned_at: float | None = None
         self.reclaim_logged: dict[Path, str] = {}
+        # When each kept worktree's item was last asked about (monotonic), for reclaim_every.
+        self.reclaim_asked: dict[int, float] = {}
+        # The idle backoff: how many quiet polls in a row, and what `next` answered last.
+        self.quiet = 0
+        self.ranking_seen: str | None = None
+        self.ranking_changed = False
 
     # ----------------------------------------------------------------- choosing
 
@@ -1918,6 +1956,7 @@ class Worker:
             if doc is None:
                 return [], [], err
             ranking += doc.get("ranking", [])
+        self.saw_ranking(ranking)
         now = gonk.iso_now()
         take, skip = [], []
         busy: dict[str, str | None] = {}
@@ -1937,6 +1976,40 @@ class Worker:
             else:
                 take.append((item, self.wc.repository(repo_labels(item)[0])[0]))
         return take, skip, None
+
+    def saw_ranking(self, ranking: list[dict]) -> None:
+        """Note whether what `next` ranks (which items, who claims them, which await their
+        dispatcher, their labels) differs from the last poll's: a change ends the backoff."""
+        seen = json.dumps(
+            [
+                [
+                    r.get("item", {}).get("number"),
+                    (r.get("item", {}).get("claim") or {}).get("holder"),
+                    r.get("item", {}).get("awaiting"),
+                    r.get("item", {}).get("labels"),
+                    len(r.get("item", {}).get("comments") or []),
+                ]
+                for r in ranking
+            ],
+            sort_keys=True,
+        )
+        self.ranking_changed = self.ranking_seen is not None and seen != self.ranking_seen
+        self.ranking_seen = seen
+
+    def idle_wait(self) -> float:
+        """How long to wait before the next poll after one that took nothing (ledger item
+        4102): `poll`, doubling at each quiet poll in a row up to `poll_max`. A poll whose
+        `next` answer changed starts again from `poll`, as does one after an item was worked."""
+        if self.ranking_changed:
+            self.quiet, self.ranking_changed = 0, False
+        poll, ceiling = self.wc.poll, self.wc.poll_max
+        wait = min(poll * 2 ** min(self.quiet, 32), ceiling)
+        if self.quiet and ceiling > poll and wait == ceiling > poll * 2 ** min(self.quiet - 1, 32):
+            log(
+                f"idle: nothing new in {self.quiet + 1} polls; polling every {wait}s until there is"
+            )
+        self.quiet += 1
+        return wait
 
     def why_not(self, item: dict, now: datetime, busy: dict) -> str | None:
         reason = self.skip_reason(item, now, busy)
@@ -2152,6 +2225,7 @@ class Worker:
     # ----------------------------------------------------------------- one item
 
     def run_once(self) -> Outcome:
+        self.ranking_changed = False
         self.reclaim()
         low = self.disk.check()
         held = self.usage.check()
@@ -2678,6 +2752,23 @@ class Worker:
             return
         items: dict[int, tuple[dict | None, str | None]] = {}
         thinnable: list[Path] = []
+        # Asked about at most every reclaim_every, but at every poll under the floor; a tree
+        # not asked about this poll is left as it is, so every action is on a fresh answer.
+        # (The floor is read only when a tree would otherwise wait, and once per poll.)
+        now, every, urgent = time.monotonic(), self.reclaim_every, []
+
+        def due(tree: Path) -> bool:
+            number = int(TREE_NAME.match(tree.name).group(1))
+            asked = self.reclaim_asked.get(number)
+            if not every or asked is None or now - asked >= every or number in items:
+                self.reclaim_asked[number] = now
+                return True
+            if not urgent:
+                urgent.append(self.disk.under_floor())
+            if urgent[0]:
+                self.reclaim_asked[number] = now
+            return urgent[0]
+
         for home in work_homes(self.root):
             if not kept_trees(home):
                 continue  # no lock taken, so a poll with nothing kept never fences a sibling loop
@@ -2686,6 +2777,8 @@ class Worker:
                 continue
             try:
                 for tree in kept_trees(home):
+                    if not due(tree):
+                        continue
                     action, why = self.kept_fate(tree, items)
                     if action == "remove" and removing:
                         self.reclaim_tree(tree, why)
@@ -2788,10 +2881,17 @@ class Worker:
             if self.pruned_at is None or time.monotonic() - self.pruned_at >= PRUNE_EVERY:
                 self.prune()
             outcome = self.run_once()
-            if outcome.code in (NOTHING, ERROR):
+            if outcome.code in (NOTHING, ERROR) and outcome.number is None:
                 if outcome.code == ERROR:
                     log(outcome.summary)
-                self.shutdown.wait(self.wc.poll)
+                self.shutdown.wait(self.idle_wait())
+            else:
+                # An item was claimed (and worked, or backed off): more may follow it soon.
+                self.quiet = 0
+                if outcome.code in (NOTHING, ERROR):
+                    if outcome.code == ERROR:
+                        log(outcome.summary)
+                    self.shutdown.wait(self.wc.poll)
         log("stopped by a signal")
         return 0
 
