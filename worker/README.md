@@ -882,9 +882,9 @@ account that could push with another credential. The first push is the final wor
 | `lease`, `renew_every` | `30m`, a third of the lease | the claim's lease, and the heartbeat that renews it |
 | `budget` | `45m` | wall-clock per item; the agent is stopped when it runs out |
 | `ci_wait`, `ci_poll` | `10m`, `20s` | how long to wait, after the agent exits, for its pull request's CI to finish |
-| `poll` | `60s` | between polls of `next` when nothing is ready |
+| `poll`, `poll_max` | `60s`, `5m` | between polls of `next` when nothing is ready: `poll` at first, doubling at each poll in a row that took nothing and saw nothing new, up to `poll_max` (see "Idle polling" below); `poll_max = poll` keeps the interval fixed |
 | `keep` | `false` | keep every worktree after its hand-back, and past its item's closing (`run --keep` for one run) |
-| `[disk]` | `floor_gb = 30`, `every = "6h"`, `prune_after = "7d"` | under `floor_gb` free on the work root's volume the loop takes no new item (`0` turns the floor off); `every` paces its `Disk:` line; kept worktrees and logs older than `prune_after` are removed, and a kept worktree goes as soon as its item closes or its claim moves to another holder (`"0s"` keeps them; see Disk below) |
+| `[disk]` | `floor_gb = 30`, `every = "6h"`, `prune_after = "7d"`, `reclaim_every = "10m"` | under `floor_gb` free on the work root's volume the loop takes no new item (`0` turns the floor off); `every` paces its `Disk:` line; kept worktrees and logs older than `prune_after` are removed, and a kept worktree goes once its item closes or its claim moves to another holder (`"0s"` keeps them; see Disk below); `reclaim_every` is how often the loop asks the ledger about one kept worktree's item (`"0s"`: every poll) |
 | `gh`, `stop_file` | `gh`, `.gonk/state/worker/stop` (a loop's own: `.gonk/state/worker/<agent>/stop`) | the GitHub CLI; the file that stops the loop between items (`.gonk/state/worker/stop` stops every loop) |
 
 The presets are each agent's documented non-interactive form (`claude -p`, `codex exec`,
@@ -1015,8 +1015,11 @@ the Pop!_OS 24.04 worker, `run --once`) showed, and what is still to try:
    the pushed branch stays on GitHub.
 
    A kept worktree is there so the dispatcher can look, and a build in one is tens of GB, so
-   age is not the only thing that ends it. At each poll the loop asks the ledger about the item
-   of every kept worktree under the work root, and logs what it reclaims with its size:
+   age is not the only thing that ends it. The loop asks the ledger about the item of every kept
+   worktree under the work root, each one at most every `[disk] reclaim_every` (default 10
+   minutes; at every poll while the free disk is under the floor), and logs what it reclaims with
+   its size. A worktree it did not ask about at a poll is left as it is until it does, so every
+   removal is decided on a fresh answer:
 
    | The item | The kept worktree |
    | --- | --- |
@@ -1098,6 +1101,27 @@ README "One tool-call line: an agent's trail"):
   `urn:log:verify` notes and does not count as broken.
 - **Best effort.** A line that cannot be written is said once on standard error; the run,
   its hand-back and its summary are the same either way.
+
+**Idle polling.** A loop asks `next` once for each label set it reads (its own labels, then
+each shared one), and with nothing to take it waits before asking again (ledger item 4102). The
+wait is `poll` (60 s) at first and doubles at each poll in a row that took nothing and saw
+nothing new, up to `poll_max` (5 minutes): 60 s, 120 s, 240 s, then 300 s. Anything new in what
+`next` ranks (an item added or gone, a claim, a hand-back, a label, a comment such as a dispatch)
+and any item the loop claimed start it again from `poll`. So work dispatched to an idle loop is
+taken within `poll_max`, and work dispatched while items are coming and going within about
+`poll`. gonk's HTTP door answers `If-None-Match` (its Dashboard fragments), and a layer's feed
+takes a `wait=` long poll, but the worker reaches the ledger through `ikigai -c` over QUIC, a
+batch with no validator to send and no wait on `next`, so the backoff is the lever here. Busy, the loop running the item asks `next`
+nothing: its heartbeat reads the item and renews the claim every `renew_every`, two requests a
+renewal. One loop with an `agent:` label and one kept worktree, measured for an hour of a fake
+clock against the in-memory ledger (`GONK_POLLING_REPORT=1 python3 -m unittest
+tests/test_worker_polling.py`):
+
+| One loop, an hour | Before (`poll_max = poll`, `reclaim_every = "0s"`) | After (the defaults) |
+| --- | --- | --- |
+| idle: `next` | 120 | 28 |
+| idle: the kept worktree's item | 60 | 6 |
+| busy: the heartbeat (`renew_every` 10 m) | 12 | 12 |
 
 `run --once` exits 0 when it handed an item back with evidence, 3 when there was nothing to
 take, 4 when it took one and could not hand it back with evidence (lost, overrun, stopped,

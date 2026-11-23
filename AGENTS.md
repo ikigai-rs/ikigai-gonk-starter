@@ -241,10 +241,11 @@ items the dispatcher marks for them, and work each one in a fresh working tree o
   why in its log and in a `Disk:` line on its status item, and takes items again by itself once
   space returns. Worktrees kept after a run without evidence, and items' logs, are removed once
   older than `[disk] prune_after` (default 7 days), when the loop starts and once a day, unless
-  the branch has an open pull request. At each poll a kept worktree whose item is closed, or
-  whose claim moved from the holder that made it to another, goes whatever its age; under the
-  floor the `target/` of one whose item is open and unclaimed goes first. A worktree a claim
-  still holds is never touched.
+  the branch has an open pull request. A kept worktree whose item is closed, or whose claim
+  moved from the holder that made it to another, goes whatever its age, once the loop asks
+  about it (every `[disk] reclaim_every`, default 10 minutes; every poll under the floor);
+  under the floor the `target/` of one whose item is open and unclaimed goes first. A worktree
+  a claim still holds is never touched.
 - **A skip the dispatcher can fix is said on the item.** An item dispatched to a worker that
   skips it because its repository is not configured there, its dispatch no longer matches it,
   or the loop holds for usage, gets one comment per reason saying why and what to do (for a

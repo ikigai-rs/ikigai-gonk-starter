@@ -24,11 +24,14 @@ class TheConfig(unittest.TestCase):
     def test_the_defaults(self):
         self.rig.configure(disk="")
         d = worker.load_worker(gonk.load(self.rig.checkout)).disk
-        self.assertEqual(d, {"floor_gb": 30.0, "every": 6 * 3600, "prune_after": 7 * 86400})
+        self.assertEqual(
+            d,
+            {"floor_gb": 30.0, "every": 6 * 3600, "prune_after": 7 * 86400, "reclaim_every": 600},
+        )
 
     def test_it_is_checked(self):
         for bad in ["floor_gb = -1", 'floor_gb = "30"', "floor_gb = true", 'every = "soon"',
-                    'prune_after = "7"', 'floor = 30']:  # fmt: skip
+                    'prune_after = "7"', 'floor = 30', 'reclaim_every = "often"']:  # fmt: skip
             self.rig.configure(disk=bad)
             with self.assertRaises(gonk.ConfigError, msg=bad):
                 worker.load_worker(gonk.load(self.rig.checkout))
