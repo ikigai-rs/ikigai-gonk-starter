@@ -38,7 +38,7 @@
 <https://ikigai-rs.dev/ns/harness#> a owl:Ontology ;
     rdfs:label "ikigai harness vocabulary" ;
     rdfs:comment "Terms for describing the harness a coding agent works in: its controls (guides and sensors), where and when each acts, what it regulates, the tests that show a sensor can fire, the log of every time one does, and the coverage questions asked of both." ;
-    owl:versionInfo "0.5.0" .
+    owl:versionInfo "0.6.0" .
 
 # ── controls ───────────────────────────────────────────────────────────────────────────────
 
@@ -54,6 +54,15 @@ harness:Guide a rdfs:Class ;
 harness:Incident a rdfs:Class ;
     rdfs:label "Incident" ;
     rdfs:comment "Something that went wrong, recorded so the harness learns from it: one entry of a repository's incident log, named by a stable IRI that ends in the entry's id. The controls it produced cite it (harness:existsFor)." .
+
+harness:Pack a rdfs:Class ;
+    rdfs:label "Pack" ;
+    rdfs:comment "A harness graph that applies to many repositories at once: an operator's rules, enforced by hooks in every repository its agents work in. Named urn:iki:harness:pack:name:{pack}, with an rdfs:label and an owl:versionInfo. Which repositories it reaches is a SHACL node shape over root descriptions (urn:repo:{root}:description) that the pack names; its guides, controls and incidents keep their own IRIs." .
+
+harness:adopts a rdf:Property ;
+    rdfs:range harness:Pack ;
+    rdfs:label "adopts" ;
+    rdfs:comment "From a repository's own harness (<> in its .gonk/harness/harness.ttl) to a pack it takes on even though the pack's shape does not reach it." .
 
 # ── direction ──────────────────────────────────────────────────────────────────────────────
 
@@ -121,6 +130,10 @@ harness:runtime a harness:Stage ;
     rdfs:label "runtime" ;
     rdfs:comment "While something runs unattended: the worker loop choosing, running and handing back items." .
 
+harness:sessionEnd a harness:Stage ;
+    rdfs:label "session end" ;
+    rdfs:comment "When an agent session ends: a clean exit, a logout, an account switch or a crash (Claude Code's SessionEnd hook). An addition, like postCommit and periodic, because a session boundary sits at neither end of a single change." .
+
 # ── category ───────────────────────────────────────────────────────────────────────────────
 
 harness:Category a rdfs:Class ;
@@ -160,6 +173,10 @@ harness:warn a harness:Outcome ;
 harness:report a harness:Outcome ;
     rdfs:label "report" ;
     rdfs:comment "Findings for someone to read; nothing is allowed or refused by it, and nothing is recorded as a firing." .
+
+harness:checkpoint a harness:Outcome ;
+    rdfs:label "checkpoint" ;
+    rdfs:comment "The action happens and the sensor PRESERVES its in-flight state to a recoverable place, allowing and refusing nothing: a session-end checkpoint saves uncommitted work to a git ref, so a crash is not destructive." .
 
 # ── properties of a control ────────────────────────────────────────────────────────────────
 
