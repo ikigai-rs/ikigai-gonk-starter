@@ -1,0 +1,4 @@
+#!/bin/sh
+# The worker's upstream guard (tools/upstream_guard.py, ledger item 4449): first on the agent's
+# PATH, it refuses a git call that would post outside ikigai-rs, and runs the real git otherwise.
+exec python3 -I "$(dirname -- "$0")/../../../tools/upstream_guard.py" git "$@"

@@ -1455,6 +1455,37 @@ that is all a review job needs of it. `append` and `link` take `urn:cap:ledger:w
 would also let a worker close and relabel, so they stay with the dispatcher, whose identity already
 holds it for closing. The same decision as for pull request aliases.
 
+## The upstream guard
+
+A worker posts to no GitHub project outside ikigai-rs. Twice a line in the brief was not
+enough (rudof-project/rudof#963 on 2026-11-22, oxigraph/oxigraph#2050 on 2026-11-26), so the
+worker runs every agent with a guard (`tools/upstream_guard.py`, ledger item 4449):
+
+- **`gh` and `git` wrappers first on the agent's PATH** (`worker/guard/bin/`), for Claude Code,
+  Codex, Hermes and a command of your own alike. Each refuses (exit 3, with the reason and what
+  to do instead on standard error) or runs the real program, the next of its name on PATH.
+- **A Claude Code PreToolUse hook**, added with `claude --settings <json>` when the worker runs
+  `claude` by name, which reads each `Bash` command's text and refuses the same calls however
+  the program is spelled (`/opt/homebrew/bin/gh`, `env gh`, `bash -c "gh ..."`).
+
+Refused: a `gh` write (`issue create|comment|edit|close|reopen|...`, `pr create|comment|review|
+edit|close|merge|...`, `release create|...`, any `discussion`, `gh api` with `-X POST|PUT|PATCH|
+DELETE` or `-f`/`-F` fields, a GraphQL mutation) whose repository is not under `ikigai-rs/`,
+however it is named (`-R`, `--repo`, `GH_REPO`, a URL argument, a `repos/OWNER/REPO/...` path,
+or the checkout's remotes when none is named: every GitHub remote must be under ikigai-rs, since
+gh may choose `upstream`); and `git push` to a remote whose URL is not under
+`github.com/ikigai-rs/`. A push to a local path or `file://` URL goes through. The sentence the
+agent sees ends: "write what you would have posted (the issue's title and body, the upstream
+repository and why) in your pull request's description or your hand-back, and the dispatcher
+decides whether a person files it."
+
+It guards against a mistake, not a hostile agent: the agent's account could still reach the
+real programs another way. The capability fix is the token's: `ikigai-worker` is an outside
+collaborator, so it cannot hold a fine-grained token scoped to the organization, and a classic
+token with `public_repo` or `repo` writes to any public repository. A GitHub App installed only
+on ikigai-rs (its installation tokens reach only those repositories; leave `workflows` off)
+would refuse such a post at GitHub whatever the agent runs.
+
 ## Files
 
 | file | runs | what |
