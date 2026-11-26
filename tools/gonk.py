@@ -328,6 +328,22 @@ def same_principal(a: str | None, b: str | None) -> bool:
 DISPATCH_PREFIX = "Dispatch:"
 DISPATCH_DIGEST = re.compile(r"^brief:\s*sha256:([0-9a-f]{64})\s*$")
 
+# The longest note `dispatch --note` and `reject --note` write (ledger item 4472). A worker
+# hands a router's note to its agent whole, so the bound is enforced here, where the note is
+# written, and nothing is cut on the way.
+MAX_NOTE = 8000
+
+
+def bounded_note(note: str, flag: str = "--note") -> str:
+    """`note`, or a refusal when it is longer than MAX_NOTE, saying the limit and its length."""
+    if len(note) > MAX_NOTE:
+        raise ConfigError(
+            f"{flag} is {len(note):,} characters, over the limit of {MAX_NOTE:,}: a worker "
+            "hands a dispatcher's note to its agent whole, never cut, so shorten it or move it "
+            "into the item's body"
+        )
+    return note
+
 
 def brief_digest(title: str | None, body: str | None) -> str:
     """The SHA-256 of an item's brief as the ledger serves it: its title, a newline, its body,
@@ -347,6 +363,12 @@ def dispatch_text(
     after a blank line when there is one (a worker reads only the first two lines)."""
     text = f"{DISPATCH_PREFIX} {' '.join(labels)}\nbrief: sha256:{brief_digest(title, body)}"
     return text + (f"\n\n{note}" if note else "")
+
+
+def dispatch_note(text: str) -> str:
+    """The dispatcher's note a dispatch comment carries after its blank line, or ""."""
+    parts = (text or "").strip().split("\n\n", 1)
+    return parts[1].strip() if len(parts) == 2 else ""
 
 
 def parse_dispatch(text: str) -> tuple[list[str], str | None] | None:
@@ -2086,6 +2108,7 @@ def cmd_reject(args, cfg: Config, make_ikigai) -> int:
             "next worker with nothing",
             args,
         )
+    bounded_note(note)
     answer = comment_flag(make_ikigai(cfg.target), cfg, args.item, note, "rejects")
     return show(answer)
 
@@ -2142,7 +2165,7 @@ def cmd_dispatch(args, cfg: Config, make_ikigai) -> int:
             "and no worker would take it: pass --as <your principal> (your passkey's or your "
             "machine's IRI, as the workers' `routers` list it)"
         )
-    note = (args.note or "").strip()
+    note = bounded_note((args.note or "").strip())
     if args.allow_blocked and not note:
         raise ConfigError(
             "--allow-blocked needs --note: why this item is dispatched although the ledger says "
