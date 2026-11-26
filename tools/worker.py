@@ -192,16 +192,39 @@ TOKENS = (
 
 # THE UPSTREAM GUARD (tools/upstream_guard.py, ledger item 4449). Twice a worker posted on a
 # project outside ikigai-rs although its brief said not to, so the agent runs with the guard's
-# `gh` and `git` wrappers first on its PATH (every agent), and Claude Code also with its
-# PreToolUse hook: a gh write or a git push outside ikigai-rs is refused with a sentence saying
-# what to do instead.
+# `gh` and `git` wrappers first on its PATH (every agent), also in its login shells (a block at
+# the end of the account's profiles, checked before any agent starts), and Claude Code also with
+# its PreToolUse hook: a gh write or a git push outside ikigai-rs is refused with a sentence
+# saying what to do instead.
 
 
 def guard_env(env: dict[str, str]) -> dict[str, str]:
-    """`env` with the upstream guard's wrappers first on PATH (once)."""
+    """`env` with the upstream guard's wrappers first on PATH (once), and the variable the
+    profile block reads to put them first again in a login shell."""
     path = [p for p in (env.get("PATH") or os.defpath).split(os.pathsep) if p]
     bin_ = str(upstream_guard.GUARD_BIN)
-    return {**env, "PATH": os.pathsep.join([bin_, *(p for p in path if p != bin_)])}
+    return {
+        **env,
+        "PATH": os.pathsep.join([bin_, *(p for p in path if p != bin_)]),
+        upstream_guard.GUARD_ENV: bin_,
+    }
+
+
+def prepare_upstream_guard(env: dict[str, str] | None = None) -> str | None:
+    """Before any agent starts: the guard's block at the end of this account's shell profiles,
+    then proof that `sh`, `bash` and `zsh`, plain and as login shells (`-lc`, as Codex runs
+    commands), find the guard's gh and git. Why the worker must not start, or None."""
+    env = guard_env(dict(os.environ if env is None else env))
+    home = Path(env.get("HOME") or Path.home())
+    try:
+        for f in upstream_guard.install_profiles(home):
+            log(f"upstream guard: its block is now at the end of {f}")
+    except OSError as e:
+        return f"refusing to start: the upstream guard cannot write {home}'s shell profiles ({e})"
+    why = upstream_guard.check_login_shells(env)
+    if why:
+        return f"refusing to start: an agent's shell would run the real gh or git: {why}"
+    return None
 
 
 def guard_settings() -> str:
@@ -3060,6 +3083,9 @@ def cmd_run(args, make_ikigai, home) -> int:
         if why:
             raise gonk.ConfigError(why)
     worker = build(args, make_ikigai, home)
+    why = prepare_upstream_guard()
+    if why:
+        raise gonk.ConfigError(why)
     worker.announce()
     if args.once:
         outcome = worker.run_once()
