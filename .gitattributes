@@ -28,3 +28,7 @@
 *.plist     text eol=lf
 *.recipes   text eol=lf
 justfile    text eol=lf
+
+# The harness vocabulary is held VERBATIM by ikigai-devtools and compared byte for byte by its
+# vector-drift scan (ledger #4306), so it is named here rather than left to text=auto.
+.gonk/harness/vocabulary.ttl text eol=lf
