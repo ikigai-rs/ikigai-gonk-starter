@@ -1455,6 +1455,95 @@ that is all a review job needs of it. `append` and `link` take `urn:cap:ledger:w
 would also let a worker close and relabel, so they stay with the dispatcher, whose identity already
 holds it for closing. The same decision as for pull request aliases.
 
+## The upstream guard
+
+A worker posts to no GitHub project outside ikigai-rs. Twice a line in the brief was not
+enough (rudof-project/rudof#963 on 2026-11-22, oxigraph/oxigraph#2050 on 2026-11-26), so the
+worker runs every agent with a guard (`tools/upstream_guard.py`, ledger item 4449):
+
+- **`gh` and `git` wrappers first on the agent's PATH** (`worker/guard/bin/`), for Claude Code,
+  Codex, Hermes and a command of your own alike. Each refuses (exit 3, with the reason and what
+  to do instead on standard error) or runs the real program, the next of its name on PATH.
+- **The same in a login shell.** `bash -lc` and `zsh -lc` (the way Codex runs commands) run
+  macOS's path_helper and Homebrew's shellenv, which put `/usr/bin` and `/opt/homebrew/bin` ahead
+  of the wrappers. So at start the worker writes a block at the END of the account's
+  `~/.profile`, `~/.zshenv`, `~/.zprofile`, `~/.zshrc` and the `~/.bash_profile` or
+  `~/.bash_login` bash reads, moving it back to the end if lines were added after it. The block
+  puts the wrappers first again, and only when `IKIGAI_UPSTREAM_GUARD_BIN` is set, which only
+  the worker's agent has. Then it checks that `sh`, `bash` and `zsh` (those installed), with `-c`
+  and `-lc`, find the guard's gh and git. If one does not, the worker **refuses to start**,
+  naming the shell and what it found.
+- **A Claude Code PreToolUse hook**, added with `claude --settings <json>` when the worker runs
+  `claude` by name. It reads each `Bash` command's text and refuses the same calls however the
+  program is spelled: a full path, `env`, `timeout`, `nice`, `xargs`, `find -exec`, `eval`,
+  `$(...)`, backticks, `if`/`for`/`while` bodies, `bash -c`, a here-document or a pipe into a
+  shell, a script file it runs, or `python -c` code that names gh or git by full path. A
+  command it cannot parse is refused, never let through.
+
+What is refused:
+
+- **gh: any command that is not a read, aimed outside `ikigai-rs/`.** The reads are an
+  allowlist: `view`, `list`, `status`, `diff`, `checks`, `search`, `gh api` GET, a GraphQL query,
+  `auth status`, `auth git-credential` (git's credential helper), `release download`,
+  `repo clone` and a few more (`GH_READ*` in the module). Any other gh command needs a target
+  under ikigai-rs, however it is named: `-R`, `--repo`, `GH_REPO`, a URL argument, a
+  `repos/OWNER/REPO/...` path, the `OWNER/REPO` of `gh repo edit|delete|archive|sync`, `--org`
+  or `--owner`. With none named, the checkout's remotes count: every GitHub remote must be under
+  ikigai-rs, since gh may choose `upstream`.
+- **gh commands that write to no ikigai-rs repository**, whatever their arguments:
+  `gist create|edit`, `repo fork` without `--org ikigai-rs`, `repo create` without
+  `ikigai-rs/` (`gh repo create list` creates "list": only `deploy-key`, `gitignore`, `license`
+  and `autolink` have a read below `gh repo`), `ssh-key add`, `auth login`, `config set`,
+  `codespace create`;
+  `gh alias set|import` and `gh extension install`; and any command gh does not have built in,
+  since an alias or an extension can run anything.
+- **`gh auth token`**, which prints the token any HTTP client could post with.
+- **A URL argument wherever it stands.** A github.com URL in any argument is a target, also
+  after a flag that is a boolean in that command (`gh pr review -a URL`, `gh pr merge -s URL`).
+- **GraphQL**: a mutation (the word `mutation` or `subscription` anywhere in the document's
+  raw text, comments and strings included), and GraphQL the guard cannot read. A query in a file
+  (`-F query=@file`, `--input file.json`) is read and allowed; `-F query=@-` and `--input -`
+  (standard input) are refused.
+- **git**: `git push` to a remote whose URL is not under `github.com/ikigai-rs/`, also as
+  `send-pack`, `http-push`, `subtree push`, an alias that expands to a push (`-c alias.p=push`,
+  or one in the config), and a push with `--recurse-submodules` (or `push.recurseSubmodules`)
+  other than `no`. Also a push to a bare name that is no configured remote (one added in the
+  same command line), a URL with a `.` or `..` segment, an empty segment or a %-escape
+  (`https://github.com/ikigai-rs/../outside/x`), a push while a `url.<base>.insteadOf` or
+  `pushInsteadOf` rewrite (in the config, in `-c`, or in `GIT_CONFIG_COUNT`) sends URLs to a
+  base outside the organization, and pointing a remote there: `git remote set-url`,
+  `git config remote.<name>.url|pushurl`, `-c remote.<name>.pushurl=`, or setting such a
+  rewrite. The push URL read is the remote's `pushurl` when it has one. A push to a local path
+  or `file://` URL goes through.
+
+Each refusal is recorded as a firing of its harness control (`profiles/harness/workers.ttl`):
+`worker-upstream-gh`, `worker-upstream-gh-token`, `worker-upstream-git-push`,
+`worker-upstream-unreadable`, and `worker-upstream-login-shells` for the start check.
+
+The sentence the agent sees ends: "write what you would have posted (the issue's title and body,
+the upstream repository and why) in your pull request's description or your hand-back, and the
+dispatcher decides whether a person files it."
+
+**What it does not cover.** It guards against a mistake, not a hostile agent, and these get
+past it:
+
+- **Any HTTP client with the token**: `curl`, a script or a program that calls
+  `api.github.com` with the worker's token. `gh auth token` is refused, but the token can be
+  read another way (gh's config or keychain, `GH_TOKEN` in the environment).
+- **MCP GitHub tools**, or any tool of the agent's that is not `Bash`: the hook reads only
+  `Bash` commands, and such a tool calls GitHub without gh or git.
+- **Codex and Hermes have no hook.** Only the wrappers on PATH guard them, so a gh or git run
+  by its full path (`/opt/homebrew/bin/gh`), or a shell that drops the guard's variable
+  (`env -i bash -lc '...'`, whose profiles then do not put the wrappers first), runs the real
+  program.
+- **A program the agent writes** (a Python file, a compiled binary) that runs gh or git by its
+  full path. A shell script it runs is read; `python -c` code that names one is refused.
+ The capability fix is the token's: `ikigai-worker` is an outside
+collaborator, so it cannot hold a fine-grained token scoped to the organization, and a classic
+token with `public_repo` or `repo` writes to any public repository. A GitHub App installed only
+on ikigai-rs (its installation tokens reach only those repositories; leave `workflows` off)
+would refuse such a post at GitHub whatever the agent runs.
+
 ## Files
 
 | file | runs | what |

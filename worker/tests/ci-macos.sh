@@ -150,6 +150,28 @@ dseditgroup -o edit -d hubdiag -t user staff
 check
 expect_exit "setup repairs it" 0 "$st"
 
+echo "── the upstream guard in the agent's login shells (ledger item 4449)"
+# path_helper (/etc/zprofile, /etc/profile) puts /usr/bin first in a login shell, ahead of the
+# guard's wrappers, so `zsh -lc` (as Codex runs commands) found the real git. The block
+# install_profiles writes at the end of the agent's profiles puts the wrappers back in front.
+G=/Users/agent/guard-test
+install -d -o agent "$G/tools" "$G/worker/guard/bin"
+install -o agent -m 0644 "$repo/tools/upstream_guard.py" "$G/tools/"
+install -o agent -m 0755 "$repo/worker/guard/bin/gh" "$repo/worker/guard/bin/git" "$G/worker/guard/bin/"
+py="$(command -v python3)"
+guard_py() {
+    as_agent env PATH="$G/worker/guard/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+        IKIGAI_UPSTREAM_GUARD_BIN="$G/worker/guard/bin" \
+        "$py" -I -c "import os, sys; sys.path.insert(0, '$G/tools'); import upstream_guard as g; $1" 2>&1
+}
+echo "   without the block (informational): $(guard_py 'print(g.check_login_shells(dict(os.environ)))')"
+out="$(guard_py 'g.install_profiles(__import__("pathlib").Path.home()); print(g.check_login_shells(dict(os.environ)))')"
+if [ "$out" = None ]; then ok "with the block, sh, bash and zsh (-c and -lc) find the guard's gh and git"; else bad "with the block: $out"; fi
+out="$(guard_py 'g.install_profiles(__import__("pathlib").Path.home()); print("again", g.install_profiles(__import__("pathlib").Path.home()))')"
+has "installing it twice changes nothing" "again []" "$out"
+has "a login zsh finds the guard's git" "$G/worker/guard/bin/git" "$(as_agent env PATH="$G/worker/guard/bin:/usr/bin:/bin" IKIGAI_UPSTREAM_GUARD_BIN="$G/worker/guard/bin" /bin/zsh -lc 'command -v git')"
+rm -rf "$G"
+
 echo "── what this runner tells us that the man pages did not"
 echo "   sleep, as hubdiag: $(cd / && sudo -u hubdiag /bin/bash -c "$(cat "$repo/worker/probe.sh")" probe.sh --sections sleep 2>&1 | tr '\n' ' ')"
 echo "   log show as hubdiag: $(sudo -u hubdiag log show --last 5s --style compact 2>&1 | head -2 | tr '\n' ' ')"

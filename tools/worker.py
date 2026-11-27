@@ -130,6 +130,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import gonk  # noqa: E402  (beside this file; the path above makes it importable)
 import review_findings  # noqa: E402
 import trail  # noqa: E402
+import upstream_guard  # noqa: E402
 import worker_onboard  # noqa: E402
 import worker_session  # noqa: E402
 import worker_usage  # noqa: E402
@@ -188,6 +189,64 @@ TOKENS = (
     "{report_file}",  # where the agent writes evidence when it opens no pull request
     "{profile}",  # [agent] profile, for an agent with profiles (hermes)
 )
+
+# THE UPSTREAM GUARD (tools/upstream_guard.py, ledger item 4449). Twice a worker posted on a
+# project outside ikigai-rs although its brief said not to, so the agent runs with the guard's
+# `gh` and `git` wrappers first on its PATH (every agent), also in its login shells (a block at
+# the end of the account's profiles, checked before any agent starts), and Claude Code also with
+# its PreToolUse hook: a gh write or a git push outside ikigai-rs is refused with a sentence
+# saying what to do instead.
+
+
+def guard_env(env: dict[str, str]) -> dict[str, str]:
+    """`env` with the upstream guard's wrappers first on PATH (once), and the variable the
+    profile block reads to put them first again in a login shell."""
+    path = [p for p in (env.get("PATH") or os.defpath).split(os.pathsep) if p]
+    bin_ = str(upstream_guard.GUARD_BIN)
+    return {
+        **env,
+        "PATH": os.pathsep.join([bin_, *(p for p in path if p != bin_)]),
+        upstream_guard.GUARD_ENV: bin_,
+    }
+
+
+def prepare_upstream_guard(env: dict[str, str] | None = None) -> str | None:
+    """Before any agent starts: the guard's block at the end of this account's shell profiles,
+    then proof that `sh`, `bash` and `zsh`, plain and as login shells (`-lc`, as Codex runs
+    commands), find the guard's gh and git. Why the worker must not start, or None."""
+    env = guard_env(dict(os.environ if env is None else env))
+    home = Path(env.get("HOME") or Path.home())
+    try:
+        for f in upstream_guard.install_profiles(home):
+            log(f"upstream guard: its block is now at the end of {f}")
+    except OSError as e:
+        return f"refusing to start: the upstream guard cannot write {home}'s shell profiles ({e})"
+    why = upstream_guard.check_login_shells(env)
+    if why:
+        return f"refusing to start: an agent's shell would run the real gh or git: {why}"
+    return None
+
+
+def guard_settings() -> str:
+    """Claude Code settings, as JSON, that run the upstream guard's hook before every Bash call."""
+    hook = f"python3 -I {shlex.quote(str(Path(upstream_guard.__file__).resolve()))} hook"
+    return json.dumps(
+        {
+            "hooks": {
+                "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": hook}]}]
+            }
+        }
+    )
+
+
+def with_guard(harness: str | None, argv: list[str]) -> list[str]:
+    """The command with the upstream guard's hook in its settings, when it runs Claude Code by
+    name: `claude --settings <json>`, merged with the agent's own settings. Any other command is
+    left as it is; the wrappers on PATH (`guard_env`) guard it."""
+    if not argv or harness != "claude" or Path(argv[0]).name != "claude":
+        return argv
+    return [argv[0], "--settings", guard_settings(), *argv[1:]]
+
 
 # The worker's session trail segment (tools/trail.py), named by an id minted when it is created.
 WORKER_TRAIL_NAME_NS = "urn:log:tools:worker-"
@@ -2376,6 +2435,7 @@ class Worker:
         # (tools/trail.py), in this checkout's .gonk/state/worker/trail/tools.log.
         harness = self.wc.harness
         argv = worker_session.with_json_output(harness, argv)
+        argv = with_guard(harness, argv)
         seen = worker_session.collector(harness, self.trail_calls(harness))
         log(f"{display}: running `{argv[0]}` in {ws.path} on {ws.branch} (log {ws.log})")
         started = time.monotonic()
@@ -2386,7 +2446,8 @@ class Worker:
                     cwd=ws.path,
                     # One cargo target directory per worktree, whatever this account's environment
                     # or cargo configuration says: loops on one machine never share a build.
-                    env={**os.environ, "CARGO_TARGET_DIR": str(ws.path / "target")},
+                    # The upstream guard's wrappers first on PATH (guard_env, above).
+                    env=guard_env({**os.environ, "CARGO_TARGET_DIR": str(ws.path / "target")}),
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.PIPE if seen else out,
                     stderr=subprocess.STDOUT,
@@ -3022,6 +3083,13 @@ def cmd_run(args, make_ikigai, home) -> int:
         if why:
             raise gonk.ConfigError(why)
     worker = build(args, make_ikigai, home)
+    why = prepare_upstream_guard()
+    if why:
+        try:
+            repo = Path(args.repo).resolve() if args.repo else gonk.find_repo(Path.cwd())
+        except gonk.ConfigError:
+            repo = None
+        raise gonk.refuse("worker-upstream-login-shells", repo, why)
     worker.announce()
     if args.once:
         outcome = worker.run_once()

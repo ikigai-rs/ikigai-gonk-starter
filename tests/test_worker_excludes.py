@@ -74,7 +74,10 @@ class Excludes(unittest.TestCase):
         self.assertEqual(code, worker.CONFIG)
         self.assertIn("refusing to start a loop", err.getvalue())
         self.assertIn(LINE, err.getvalue())
-        with mock.patch.object(worker, "unignored_claude_settings") as check:
+        with (
+            mock.patch.object(worker, "unignored_claude_settings") as check,
+            mock.patch.object(worker, "prepare_upstream_guard", return_value=None),
+        ):
             with (
                 contextlib.redirect_stdout(io.StringIO()),
                 contextlib.redirect_stderr(io.StringIO()),
