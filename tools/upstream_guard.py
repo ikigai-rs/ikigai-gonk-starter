@@ -414,9 +414,7 @@ def _gh_positionals(args: list[str], value_flags: set[str]) -> list[str]:
             pass
         elif a in value_flags:
             i += 1
-        elif (
-            a.startswith("-") and len(a) > 2 and a[:2] in value_flags and not a.startswith("--")
-        ):
+        elif a.startswith("-") and len(a) > 2 and a[:2] in value_flags and not a.startswith("--"):
             pass  # -Rowner/repo
         elif not a.startswith("-"):
             out.append(a)
@@ -512,6 +510,7 @@ def repo_urls_in(args: list[str]) -> list[str]:
         if REPO_URL.match(value) and len(value.split()) == 1:
             found.append(value)
     return found
+
 
 def check_gh(args: list[str], env: dict[str, str], cwd: str | None) -> str | None:
     """Why this `gh` call (its arguments after `gh`) is refused, or None to let it run."""
@@ -861,7 +860,9 @@ def check_git_config(sub: str, rest: list[str]) -> str | None:
     return check_config_entry(what, pos[0], pos[1])
 
 
-def git_refusal(args: list[str], env: dict[str, str], cwd: str | None, depth: int = 0) -> str | None:
+def git_refusal(
+    args: list[str], env: dict[str, str], cwd: str | None, depth: int = 0
+) -> str | None:
     globals_, sub, rest = git_subcommand(args)
     for key, value in config_from_options(globals_, env):
         why = check_config_entry("`git -c`", key, value)
@@ -974,8 +975,11 @@ def check_remote(
     names = set(run_git([*opts, "remote"], here, env))
     if remote in names:
         urls = run_git([*opts, "remote", "get-url", "--push", "--all", remote], here, env)
-    elif "://" in remote or remote.startswith(("/", "./", "../", "~")) or remote == "." or (
-        re.match(r"^[^/]+:", remote)
+    elif (
+        "://" in remote
+        or remote.startswith(("/", "./", "../", "~"))
+        or remote == "."
+        or (re.match(r"^[^/]+:", remote))
     ):
         urls = run_git([*opts, "ls-remote", "--get-url", remote], here, env) or [remote]
     else:
