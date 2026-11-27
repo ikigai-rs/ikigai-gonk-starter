@@ -39,8 +39,8 @@ def iso(t: datetime) -> str:
 
 class FakeLedger:
     """One ledger, in memory, answering `ikigai -c` command strings the way gonk does for
-    next, items, item:N, claim (sink and delete), comment (with its `author`), label and
-    close. Thread-safe: the heartbeat calls it from its own thread.
+    next, items, item:N, claim (sink and delete), comment (with its `author`), label (sink
+    and delete) and close. Thread-safe: the heartbeat calls it from its own thread.
 
     It models a ledger 0.8.0 or later: `comment handback=true` sets the item's `awaiting` to
     `dispatcher`, `rejects=true` clears it, and the JSON item carries the field — the state,
@@ -411,6 +411,16 @@ class FakeLedger:
             if label not in item["labels"]:
                 item["labels"] = sorted([*item["labels"], label])
             return gonk.Answer(0, f"labeled {display} {label}\n", "")
+        if verb == "delete" and name == "label":
+            # As the ledger's label Delete: the label is `content`, never piped (the cli gives
+            # stdin only to a SINK) and never `label=`; NotFound when the item has no such label.
+            label = args.get("content", "")
+            if "label" in args or not label:
+                return gonk.Answer(1, "", "invalid argument `label`: pipe it or send content")
+            if label not in item["labels"]:
+                return gonk.Answer(1, "", f"not found: {display} has no label {label}")
+            item["labels"] = [w for w in item["labels"] if w != label]
+            return gonk.Answer(0, f"unlabeled {display} {label}\n", "")
         if verb == "sink" and name == "close":
             self.closes.append(item["number"])
             item["status"] = "closed"

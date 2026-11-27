@@ -1,0 +1,1 @@
+- [x] 1. `reject --redispatch` and `--park`, the refusal of a bare reject, their tests and documentation (A reject says where the item goes next).

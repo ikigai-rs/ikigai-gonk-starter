@@ -38,19 +38,23 @@ class CliAliases(unittest.TestCase):
         fake = FakeIkigai(
             [
                 ("item:gh:acme%2Flib%237", ok('{"item":{"number":12}}')),
+                (":item:12 ", ok('{"item":{"number":12,"labels":[]}}')),
                 (":comment item=12", ok("rejected")),
             ]
         )
-        code, out, err = run(repo, ["reject", "gh:acme/lib#7", "--note", "try again"], fake)
+        code, out, err = run(
+            repo, ["reject", "gh:acme/lib#7", "--note", "try again", "--park"], fake
+        )
         self.assertEqual(code, 0, err)
         self.assertIn("rejected", out)
-        self.assertEqual(len(fake.calls), 2)
+        self.assertEqual(len(fake.calls), 3)
+        self.assertIn("item=12 rejects=true", fake.calls[2][0])
 
     def test_unknown_alias_does_not_mutate(self):
         repo = scratch_repo(self)
         wire(repo)
         fake = FakeIkigai()
-        code, _, err = run(repo, ["reject", "gh:acme/lib#7", "--note", "try again"], fake)
+        code, _, err = run(repo, ["reject", "gh:acme/lib#7", "--note", "try again", "--park"], fake)
         self.assertEqual(code, 2)
         self.assertIn("resolve", err)
         self.assertEqual(len(fake.calls), 1)
@@ -74,7 +78,9 @@ class CloseAliases(unittest.TestCase):
         self.assertEqual(len(ledger.aliases), 2)
         for number in (7, 8):
             code, _, err = run(
-                rig.checkout, ["reject", f"gh:acme/lib#{number}", "--note", "review"], ledger
+                rig.checkout,
+                ["reject", f"gh:acme/lib#{number}", "--note", "review", "--park"],
+                ledger,
             )
             self.assertEqual(code, 0, err)
         self.assertEqual(ledger.closes, [n])

@@ -19,14 +19,21 @@ python3 tools/gonk.py next                            # what is ready, ranked, a
 python3 tools/gonk.py claim 12                        # take it, on a 30-minute lease
 # reproduce, fix, open a pull request, get CI green
 python3 tools/gonk.py report 12 --evidence <PR URL>   # the evidence on the item; hand it back
-python3 tools/gonk.py reject 12 --note "<why not>"    # the evidence did not hold; ready again
+python3 tools/gonk.py reject 12 --note "<why not>" --redispatch   # did not hold; send it back
+python3 tools/gonk.py reject 12 --note "<why not>" --park         # did not hold; wait on a person
 python3 tools/gonk.py close 12 --evidence <PR URL>    # whoever dispatched it, once it holds
 ```
 
 `report` hands the item back with `handback=true`, so the ledger records that it is awaiting
 its dispatcher and `next` stops offering it to the next worker (ikigai-ledger 0.8.0, ledger
 item 1199). `reject` is the dispatcher's answer when the evidence does not hold: `rejects=true`
-clears that state and the item is ready again. Both keep the `Evidence:` prefix in the comment,
+clears that state and the item is ready again. It says where the item goes next:
+`--redispatch` dispatches it again to the `worker:` and `agent:` labels it carries (`--labels`
+replaces them, `--dispatch-note` says what to do), checking everything `dispatch` checks before
+it writes the reject; `--park` takes its `worker:` labels off, so no worker is offered it. A
+bare reject is refused, because a worker takes an item it handed back only after a new
+dispatch, so a reject alone left the item skipped while `next` listed it as ready (ledger item
+4484). Both keep the `Evidence:` prefix in the comment,
 so a ledger older than 0.8.0 — which ignores the argument it does not know — reads the hand-back
 the same way. Over the owner's socket, where gonk names nobody, `report` and `close` pass this
 working tree's holder as the comment's free-text `author`, so a reader can tell hand-backs

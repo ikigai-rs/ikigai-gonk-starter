@@ -33,7 +33,7 @@ release *args:
 report item evidence *flags:
     python3 tools/gonk.py report {{item}} --evidence "{{evidence}}" {{flags}}
 
-# The evidence did not hold, so the item is ready again: just reject 12 --note "why"
+# The evidence did not hold: just reject 12 --note "why" --redispatch (send it back) or --park
 reject item *flags:
     python3 tools/gonk.py reject {{item}} {{flags}}
 
