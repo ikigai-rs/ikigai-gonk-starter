@@ -252,6 +252,14 @@ class TheBrief(unittest.TestCase):
         ]:
             self.assertIn(text, evidence)
 
+    def test_the_brief_asks_for_a_tokens_section_when_a_bearer_token_is_added(self):
+        # Ledger item 4546: the rule beside `## Accessibility`, in the same numbered rule.
+        n = self.ledger.file("Token", ["worker:w1", "repo:lib"])
+        evidence = self.prompt_for(n).split("5. The pull request is your evidence.", 1)[1]
+        evidence = evidence.split("6. You have", 1)[0]
+        for text in ["bearer token", "## Tokens", "authorizes", "lifetime", "holder-bound"]:
+            self.assertIn(text, evidence)
+
     def test_with_no_comments_the_brief_ends_with_the_item(self):
         n = self.ledger.file("Plain", ["worker:w1", "repo:lib"], body="Just this.")
         self.assertTrue(self.prompt_for(n).rstrip().endswith("# Plain\n\nJust this."))

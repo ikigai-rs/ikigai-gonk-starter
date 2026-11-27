@@ -1,0 +1,2 @@
+- [x] 1. State the `## Tokens` rule in the worker brief and `AGENTS.md` (A Tokens section for a bearer token).
+- [x] 2. Advise credential-shaped added lines in `tools/checks.py pr`, with tests (Credential-shaped lines are advised).

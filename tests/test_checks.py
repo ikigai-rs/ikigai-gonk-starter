@@ -136,6 +136,83 @@ class PullRequest(unittest.TestCase):
     def test_an_unmarked_change_needs_no_folder(self):
         self.assertEqual(self.pr({"title": "Fix a typo", "body": ""}, ["tools/gonk.py"])[0], 0)
 
+    # -- `## Tokens` (ledger item 4546): conditional on the lines the diff adds
+
+    def diff(self, path: str, *lines: str) -> str:
+        head = f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -0,0 +1 @@\n"
+        return head + "".join(f"+{line}\n" for line in lines)
+
+    def pr_diff(self, body: str, diff: str) -> tuple[int, str]:
+        patch = self.repo / "diff.patch"
+        patch.write_text(diff, encoding="utf-8")
+        event = self.repo / "event.json"
+        event.write_text(json.dumps({"pull_request": {"title": "t", "body": body}}))
+        files = self.repo / "changed.txt"
+        files.write_text("src/app.py", encoding="utf-8")
+        argv = ["--repo", str(self.repo), "pr", "--event", str(event), "--changed", str(files)]
+        return run(argv + ["--diff", str(patch)])
+
+    def test_each_credential_shape_is_advised_without_a_tokens_section(self):
+        for line in [
+            'resp.set_cookie("sid", sid)',
+            'headers["Authorization"] = "Bearer " + token',
+            'req.header("X-API-Key", key)',
+            'link = f"{base}/accept?invite={code}"',
+            "fn issue_session(user: &User) -> Session {",
+        ]:
+            with self.subTest(line=line):
+                code, err = self.pr_diff("A change.", self.diff("src/app.py", line))
+                self.assertEqual(code, 0, err)
+                self.assertIn("advice, not a refusal", err)
+                self.assertIn("no `## Tokens` section", err)
+                self.assertIn("src/app.py:", err)
+
+    def test_with_a_tokens_section_there_is_no_advice(self):
+        body = "A change.\n\n## Tokens\n\nA session cookie: 1 hour, hashed at rest, HTTPS only.\n"
+        code, err = self.pr_diff(body, self.diff("src/app.py", 'resp.set_cookie("sid", sid)'))
+        self.assertEqual((code, err), (0, ""))
+
+    def test_a_diff_with_no_credential_shape_needs_no_section(self):
+        diff = self.diff("src/app.py", "def sort_key(item):", "x = cookie_count + 1")
+        self.assertEqual(self.pr_diff("", diff), (0, ""))
+
+    def test_removed_lines_and_prose_are_not_read(self):
+        diff = (
+            "--- a/src/app.py\n+++ b/src/app.py\n@@ -1 +0,0 @@\n-auth = 'Bearer ' + t\n"
+            + self.diff("docs/auth.md", "Send a bearer header.")
+        )
+        self.assertEqual(self.pr_diff("", diff), (0, ""))
+
+    def test_a_repository_can_make_it_refuse(self):
+        (self.repo / ".gonk" / "checks.toml").write_text('[pr]\ntokens = "refuse"\n')
+        code, err = self.pr_diff("", self.diff("src/app.py", 'auth = "Bearer " + t'))
+        self.assertEqual(code, 1)
+        self.assertIn("src/app.py: a bearer header", err)
+        self.assertNotIn("advice", err)
+
+    def test_the_lines_come_from_git_when_no_diff_is_given(self):
+        def git(*args: str) -> str:
+            return subprocess.run(
+                ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+                cwd=self.repo,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+        git("init", "-q")
+        (self.repo / "app.py").write_text("x = 1\n")
+        git("add", "app.py")
+        git("commit", "-qm", "base")
+        base = git("rev-parse", "HEAD")
+        (self.repo / "app.py").write_text("x = 1\nauth = 'Bearer ' + t\n")
+        git("commit", "-qam", "head")
+        event = self.repo / "event.json"
+        event.write_text(json.dumps({"pull_request": {"body": "", "base": {"sha": base}}}))
+        code, err = run(["--repo", str(self.repo), "pr", "--event", str(event)])
+        self.assertEqual(code, 0, err)
+        self.assertIn("app.py: a bearer header", err)
+
     def test_a_spec_that_does_not_validate_is_refused(self):
         (self.repo / "openspec" / "changes" / "half").mkdir(parents=True)
         (self.repo / "openspec" / "changes" / "half" / "proposal.md").write_text("x")
