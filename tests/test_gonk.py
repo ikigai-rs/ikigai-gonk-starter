@@ -625,6 +625,19 @@ class Claims(unittest.TestCase):
             ],
         )
 
+    def test_reject_refuses_a_note_over_the_bound_saying_the_limit_and_the_length(self):
+        # Ledger item 4472: the worker hands a router's note whole, so the bound is here.
+        fake = FakeIkigai([(":comment", ok("commented\n"))])
+        note = "n" * (gonk.MAX_NOTE + 1)
+        code, _, err = run(self.repo, ["reject", "12", "--note", note], fake)
+        self.assertEqual(code, 2)
+        self.assertIn("--note is 8,001 characters, over the limit of 8,000", err)
+        self.assertIn("move it into the item's body", err)
+        self.assertEqual(fake.calls, [])
+        note = "n" * gonk.MAX_NOTE
+        self.assertEqual(run(self.repo, ["reject", "12", "--note", note], fake)[0], 0)
+        self.assertEqual(fake.calls[0][1], note)
+
     def test_release_comments_the_note_then_releases_with_no_content(self):
         # Ledger item 1229: the cli never gives a batch's stdin to a DELETE, so a note piped
         # to the release was dropped. It is a comment of its own, posted first.

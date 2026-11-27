@@ -1742,11 +1742,27 @@ The item, {display} on the ledger `{ledger}`:
 # The worker's own hand-back comments, which the brief does not carry back to it
 HAND_BACK_PREFIXES = ("Evidence:", "gonk worker")
 
-# Bounds on the comments the brief carries: enough for a real correction, not a flood
+# Bounds on the comments the brief carries: enough for a real correction, not a flood. They
+# bound comments by others, which are untrusted text. A router's note is never cut: its bound is
+# gonk.MAX_NOTE, enforced where `dispatch --note` and `reject --note` write it (ledger item 4472).
 MAX_COMMENTS_IN_BRIEF = 20
 MAX_COMMENT_LINES = 40
 MAX_COMMENT_TEXT = 2000
 MAX_BRIEF_COMMENTS = 8000
+
+
+def cut_comment(text: str) -> str:
+    """A comment by others bounded to MAX_COMMENT_LINES lines and MAX_COMMENT_TEXT characters,
+    saying plainly when it was cut and how much of it is kept, so the agent can tell a short
+    comment from one whose tail is lost."""
+    whole = len(text)
+    lines = text.splitlines()
+    if len(lines) > MAX_COMMENT_LINES:
+        text = "\n".join(lines[:MAX_COMMENT_LINES])
+    text = text[:MAX_COMMENT_TEXT]
+    if len(text) == whole:
+        return text
+    return f"{text}\n[this comment was cut at {len(text):,} of {whole:,} characters]"
 
 
 def fence(text: str) -> str:
@@ -1785,18 +1801,20 @@ def brief_comments(item: dict, routers: list[str] | None = None) -> str:
         trusted = by_router(comment, routers)
         if trusted and gonk.parse_dispatch(text) is not None:
             newest_dispatch = at
-            continue
-        lines = text.splitlines()
-        if len(lines) > MAX_COMMENT_LINES:
-            text = "\n".join(lines[:MAX_COMMENT_LINES]) + "\n[...]"
-        if len(text) > MAX_COMMENT_TEXT:
-            text = text[:MAX_COMMENT_TEXT] + "[...]"
-        entries.append((at, trusted, comment, text))
+            # The dispatch itself is routing; the note `dispatch --note` put after it is not.
+            text = gonk.dispatch_note(text)
+            if not text:
+                continue
+        entries.append((at, trusted, comment, text if trusted else cut_comment(text)))
     chosen: list[tuple[int, bool, dict, str]] = []
     total, truncated = 0, False
-    # The dispatcher's notes since its newest dispatch first, then the rest newest first.
-    first = sorted(entries, key=lambda e: (e[1] and e[0] > newest_dispatch, e[0]))
-    for entry in reversed(first):
+    # The dispatcher's notes since its newest dispatch are always carried, whole; then the rest,
+    # newest first, while they fit.
+    current = [e for e in entries if e[1] and e[0] >= newest_dispatch]
+    chosen.extend(current)
+    total = sum(len(e[3]) for e in current)
+    rest = [e for e in entries if not (e[1] and e[0] >= newest_dispatch)]
+    for entry in reversed(rest):
         text = entry[3]
         if total + len(text) > MAX_BRIEF_COMMENTS or len(chosen) >= MAX_COMMENTS_IN_BRIEF:
             truncated = True

@@ -755,8 +755,50 @@ class TheLoop(unittest.TestCase):
         self.assertEqual(outcome.code, worker.HANDED_BACK, outcome.summary)
         prompt = self.rig.prompt(n)
         self.assertIn("DATA WRITTEN BY OTHERS", prompt)
-        self.assertIn("[...]", prompt)  # truncated
+        self.assertIn("[this comment was cut at 2,000 of 5,000 characters]", prompt)
+        self.assertNotIn("[...]", prompt)
         self.assertNotIn(long_text, prompt)
+
+    def test_a_comment_by_others_cut_by_lines_says_how_much_is_kept(self):
+        n = self.ledger.file("Lines", ["worker:w1", "repo:lib"])
+        self.ledger.add_comment(n, "\n".join(f"line {i:02}" for i in range(60)))
+        self.run_once()
+        prompt = self.rig.prompt(n)
+        self.assertIn("line 39\n[this comment was cut at 319 of 479 characters]", prompt)
+        self.assertNotIn("line 40", prompt)
+
+    def test_a_dispatchers_long_reject_note_reaches_the_agent_whole(self):
+        # Ledger item 4472: a 2,969-character note reached the agent cut after its sixth fix.
+        n = self.ledger.file("Send-back", ["worker:w1", "repo:lib"])
+        note = "\n".join(f"{i}. fix number {i}: " + "y" * 280 for i in range(1, 11))
+        self.assertGreater(len(note), worker.MAX_COMMENT_TEXT)
+        self.ledger.add_comment(n, note, author=DISPATCHER)
+        for i in range(20):
+            self.ledger.add_comment(n, f"other {i:02} " + "z" * 1500)
+        self.run_once()
+        prompt = self.rig.prompt(n)
+        self.assertIn("Notes from your dispatcher", prompt)
+        self.assertIn(note, prompt)
+        self.assertIn("10. fix number 10", prompt)
+
+    def test_a_dispatchers_note_of_many_lines_is_not_cut(self):
+        n = self.ledger.file("Lines", ["worker:w1", "repo:lib"])
+        note = "\n".join(f"step {i:02}" for i in range(60))
+        self.ledger.add_comment(n, note, author=DISPATCHER)
+        self.run_once()
+        self.assertIn(note, self.rig.prompt(n))
+
+    def test_the_note_a_dispatch_carries_reaches_the_agent_whole(self):
+        n = self.ledger.file("Noted", ["worker:w1", "repo:lib"], dispatched_by=None)
+        item = self.ledger.items[n]
+        note = "Start from the spec. " + "w" * 6000 + " End here."
+        text = gonk.dispatch_text(item["labels"], item["title"], item["body"], note)
+        self.ledger.add_comment(n, text, author=DISPATCHER)
+        outcome = self.run_once()
+        self.assertEqual(outcome.code, worker.HANDED_BACK, outcome.summary)
+        prompt = self.rig.prompt(n)
+        self.assertIn(note, prompt)
+        self.assertNotIn("brief: sha256:", prompt)
 
     def test_the_brief_carries_comments_in_the_order_they_were_written(self):
         n = self.ledger.file("Re-run", ["worker:w1", "repo:lib"])

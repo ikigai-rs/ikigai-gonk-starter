@@ -386,6 +386,20 @@ class WhatTheDispatchCommandRefuses(unittest.TestCase):
         item = self.ledger.items[then]
         self.assertIsNone(worker.dispatch_problem(item, [DISPATCHER], ["worker:w1"]))
 
+    def test_a_dispatch_note_over_the_bound_is_refused_and_nothing_is_written(self):
+        n = self.ledger.file("Noted", ["repo:lib"], dispatched_by=None)
+        note = "n" * (gonk.MAX_NOTE + 1)
+        code, said = self.dispatch(str(n), "--labels", "worker:w1", "--note", note)
+        self.assertEqual(code, 2, said)
+        self.assertIn("--note is 8,001 characters, over the limit of 8,000", said)
+        self.assertEqual(self.dispatches(n), [])
+        self.assertEqual(self.ledger.items[n]["labels"], ["repo:lib"])
+        note = "n" * gonk.MAX_NOTE
+        code, said = self.dispatch(str(n), "--labels", "worker:w1", "--note", note)
+        self.assertEqual(code, 0, said)
+        [sent] = self.dispatches(n)
+        self.assertEqual(gonk.dispatch_note(sent["text"]), note)
+
     def test_an_item_that_is_not_open_is_refused(self):
         n = self.ledger.file("Done", ["repo:lib"], dispatched_by=None)
         self.ledger.items[n]["status"] = "closed"
