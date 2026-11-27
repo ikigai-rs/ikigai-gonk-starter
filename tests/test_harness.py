@@ -711,6 +711,46 @@ class SensorsFire(unittest.TestCase):
         self.assertEqual(code, worker.CONFIG)
         assert_fired(self, rig.checkout, "worker-refuses-root")
 
+    def test_worker_upstream_login_shells(self):
+        rig = self.worker_rig()
+        with (
+            mock.patch.object(worker, "build", return_value=mock.Mock()),
+            mock.patch.object(worker, "prepare_upstream_guard", return_value="refusing: zsh -lc"),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            code = worker.main(["--repo", str(rig.checkout), "run", "--once"], FakeLedger())
+        self.assertEqual(code, worker.CONFIG)
+        assert_fired(self, rig.checkout, "worker-upstream-login-shells")
+
+    # -- tools/upstream_guard.py, through its entry points: the wrappers and the hook
+
+    def guard(self, argv: list[str], stdin: str = "") -> int:
+        guard = sys.modules.get("upstream_guard") or worker.upstream_guard
+        with (
+            mock.patch.object(guard.sys, "stdin", io.StringIO(stdin)),
+            mock.patch.object(guard.os, "getcwd", lambda: str(self.repo)),
+            mock.patch.object(guard.os, "execv", side_effect=AssertionError("ran the real one")),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            return guard.main(argv)
+
+    def test_worker_upstream_gh(self):
+        self.assertEqual(self.guard(["gh", "issue", "create", "-R", "oxigraph/oxigraph"]), 3)
+        assert_fired(self, self.repo, "worker-upstream-gh")
+
+    def test_worker_upstream_gh_token(self):
+        self.assertEqual(self.guard(["gh", "auth", "token"]), 3)
+        assert_fired(self, self.repo, "worker-upstream-gh-token")
+
+    def test_worker_upstream_git_push(self):
+        self.assertEqual(self.guard(["git", "push", "https://github.com/oxigraph/x", "main"]), 3)
+        assert_fired(self, self.repo, "worker-upstream-git-push")
+
+    def test_worker_upstream_unreadable(self):
+        event = {"tool_name": "Bash", "tool_input": {"command": "echo 'x"}, "cwd": str(self.repo)}
+        self.assertEqual(self.guard(["hook"], json.dumps(event)), 2)
+        assert_fired(self, self.repo, "worker-upstream-unreadable")
+
     def test_worker_needs_labels(self):
         rig = self.worker_rig(labels="[]")
         with self.assertRaises(gonk.ConfigError):

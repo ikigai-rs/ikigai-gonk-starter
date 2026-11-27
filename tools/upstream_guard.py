@@ -76,6 +76,57 @@ class Unreadable(Exception):
     """A command, script or GraphQL document the guard cannot read: it is refused."""
 
 
+class Refusal(str):
+    """A refusal's sentence, and the harness control (profiles/harness/workers.ttl) it fires."""
+
+    control: str
+
+    def __new__(cls, control: str, text: str):
+        self = super().__new__(cls, text)
+        self.control = control
+        return self
+
+
+def tagged(why: str | None, control: str) -> Refusal | None:
+    """`why` as a refusal of `control`, unless it is none or already says its control."""
+    if why is None or isinstance(why, Refusal):
+        return why
+    return Refusal(control, why)
+
+
+def sensor(control: str) -> str:
+    """Names the harness control a refusal fires (tools/harness.py reads the literal)."""
+    return control
+
+
+def repo_of(cwd: str | None) -> Path | None:
+    """The repository holding `cwd` (its `.gonk/layout.toml`), where the firing is recorded."""
+    try:
+        here = Path(cwd or ".").resolve()
+    except OSError:
+        return None
+    for candidate in (here, *here.parents):
+        if (candidate / ".gonk" / "layout.toml").is_file():
+            return candidate
+    return None
+
+
+def fire_refusal(why: str, cwd: str | None, tool: str | None = None, session=None) -> None:
+    """Record the refusal as a firing of its control in the repository's firing log. Never
+    raises and never prints to standard output; the refusal stands either way."""
+    control = getattr(why, "control", None)
+    repo = repo_of(cwd)
+    if not control or repo is None:
+        return
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import harness  # the repository's own copy, beside this file
+
+        harness.fire(control, "refusal", repo, tool=tool, session=session)
+    except Exception:  # noqa: BLE001  (best effort: the refusal is the decision)
+        pass
+
+
 # --------------------------------------------------------------------------- repositories
 
 REPO_URL = re.compile(
@@ -88,10 +139,24 @@ def under_org(owner: str) -> bool:
     return owner.lower() == ORG
 
 
+def odd_path(url: str) -> bool:
+    """A URL or spec with a `.` or `..` segment, an empty one or a %-escape: it can name a place
+    other than the one it seems to (`https://github.com/ikigai-rs/../outside/x`)."""
+    path = re.sub(r"^[a-z][a-z0-9+.-]*://[^/]*", "", url.strip(), flags=re.I)
+    path = re.sub(r"^[^/:]+@[^/:]+:", "", path)  # git@github.com:owner/repo
+    path = path.split("?", 1)[0].split("#", 1)[0]
+    if "%" in path or "\\" in path:
+        return True
+    segments = path.strip("/").split("/")
+    return any(seg in (".", "..") for seg in segments) or "" in segments[:-1]
+
+
 def slug_of(spec: str) -> tuple[str, str] | None:
     """(owner, repo) of a gh repository spec: `OWNER/REPO`, `HOST/OWNER/REPO` (github.com only)
     or a github.com URL; None when it is none of these (another host, or not a repository)."""
     spec = spec.strip()
+    if odd_path(spec):
+        return None
     m = REPO_URL.match(spec)
     if m:
         return m.group("owner"), m.group("repo").removesuffix(".git")
@@ -111,6 +176,8 @@ def remote_url_target(url: str) -> tuple[str, str] | None | str:
         return None
     if url.startswith("file://") or url.startswith(("/", "./", "../", "~")) or url == ".":
         return "local"
+    if odd_path(url):
+        return None
     m = re.match(
         r"^(?:ssh://)?(?:[^@/]+@)?github\.com[:/](?P<owner>[^/]+)/(?P<repo>[^/]+?)/?$", url
     )
@@ -211,7 +278,7 @@ GH_READ_GROUPS = {"search", "status", "browse", "help", "version", "completion"}
 # Further reads, by group. `auth git-credential` is git's credential helper (`gh auth setup-git`
 # installs it), so a push to ikigai-rs needs it.
 GH_READS = {
-    "auth": {"status", "token", "git-credential"},
+    "auth": {"status", "git-credential"},
     "config": {"get"},
     "release": {"download", "verify", "verify-asset"},
     "run": {"watch", "download"},
@@ -308,7 +375,35 @@ GH_VALUE_FLAGS = {
 }
 
 
+# Short flags that GH_VALUE_FLAGS reads as taking a value but that are booleans in these
+# commands (`gh pr review -a` approves; `gh pr merge -s` squashes), so that what follows them is
+# read as the positional argument it is.
+GH_BOOLEAN_FLAGS = {
+    ("pr", "review"): {"-a", "-r", "-c"},
+    ("pr", "merge"): {"-m", "-r", "-s", "-d"},
+    ("pr", "comment"): {"-e", "-w"},
+    ("issue", "comment"): {"-e", "-w"},
+    ("pr", "create"): {"-d", "-e", "-f", "-w"},
+    ("issue", "create"): {"-e", "-w"},
+    ("pr", "close"): {"-d"},
+    ("pr", "edit"): set(),
+    ("release", "create"): {"-d", "-p"},
+}
+# The repository subcommands whose own subcommand (pos[2]) is the verb: `gh repo deploy-key
+# list`. For any other `gh repo X`, pos[2] is a name (`gh repo create list` creates "list").
+GH_REPO_NESTED = {"deploy-key", "gitignore", "license", "autolink"}
+
+
 def gh_positionals(args: list[str]) -> list[str]:
+    """gh's positional arguments, reading each flag as gh reads it for this command."""
+    first = _gh_positionals(args, GH_VALUE_FLAGS)
+    booleans = GH_BOOLEAN_FLAGS.get(tuple(first[:2]), set())
+    if not booleans:
+        return first
+    return _gh_positionals(args, GH_VALUE_FLAGS - booleans)
+
+
+def _gh_positionals(args: list[str], value_flags: set[str]) -> list[str]:
     out, i = [], 0
     while i < len(args):
         a = args[i]
@@ -317,10 +412,10 @@ def gh_positionals(args: list[str]) -> list[str]:
             break
         if a.startswith("--") and "=" in a:
             pass
-        elif a in GH_VALUE_FLAGS:
+        elif a in value_flags:
             i += 1
         elif (
-            a.startswith("-") and len(a) > 2 and a[:2] in GH_VALUE_FLAGS and not a.startswith("--")
+            a.startswith("-") and len(a) > 2 and a[:2] in value_flags and not a.startswith("--")
         ):
             pass  # -Rowner/repo
         elif not a.startswith("-"):
@@ -404,13 +499,34 @@ def gh_is_read(group: str, sub: str, pos: list[str]) -> bool:
         return True
     if sub in GH_READ_SUBS or sub in GH_READS.get(group, ()):
         return True
-    # `gh repo deploy-key list`, `gh repo gitignore view`, ...
-    return group == "repo" and len(pos) > 2 and pos[2] in GH_READ_SUBS
+    # `gh repo deploy-key list`, `gh repo gitignore view`, ... and never `gh repo create list`.
+    return group == "repo" and sub in GH_REPO_NESTED and len(pos) > 2 and pos[2] in GH_READ_SUBS
 
+
+def repo_urls_in(args: list[str]) -> list[str]:
+    """Every argument, or `--flag=` value, that is a github.com URL, wherever it stands: a URL
+    after a flag gh reads as a boolean is still the target."""
+    found = []
+    for a in args:
+        value = a.partition("=")[2] if a.startswith("-") and "=" in a else a
+        if REPO_URL.match(value) and len(value.split()) == 1:
+            found.append(value)
+    return found
 
 def check_gh(args: list[str], env: dict[str, str], cwd: str | None) -> str | None:
     """Why this `gh` call (its arguments after `gh`) is refused, or None to let it run."""
     pos = gh_positionals(args)
+    if pos[:2] == ["auth", "token"]:
+        return Refusal(
+            sensor("worker-upstream-gh-token"),
+            "Refused: `gh auth token` prints the worker's GitHub token, and with it any HTTP "
+            "client (curl, a script) can post anywhere, past this guard. Use the gh command for "
+            f"what you need, with `--repo {ORG}/<name>`; gh reads the token itself. {INSTEAD}",
+        )
+    return tagged(gh_refusal(args, pos, env, cwd), sensor("worker-upstream-gh"))
+
+
+def gh_refusal(args: list[str], pos: list[str], env: dict[str, str], cwd: str | None) -> str | None:
     if not pos:
         return None  # `gh`, `gh --version`, `gh --help`
     group = pos[0]
@@ -451,8 +567,10 @@ def check_gh(args: list[str], env: dict[str, str], cwd: str | None) -> str | Non
             return check_owner(what, [], "the worker's own account")
         return check_named(what, [pos[2]])
     named = flag_values(args, {"-R", "--repo"})
-    named += [a for a in pos[2:] if REPO_URL.match(a)]
-    if group == "repo" and len(pos) > 2 and "/" in pos[2] and not REPO_URL.match(pos[2]):
+    named += repo_urls_in(args)
+    if group == "repo" and len(pos) > 2 and not REPO_URL.match(pos[2]):
+        if "/" not in pos[2]:  # `gh repo edit view`: a repository of the worker's own account
+            return check_owner(what, [], f"the repository {pos[2]!r} of the worker's own account")
         named.append(pos[2])  # gh repo edit|delete|archive|sync OWNER/REPO
     if group == "issue" and sub == "transfer" and len(pos) > 3:
         named.append(pos[3])  # the destination
@@ -502,10 +620,10 @@ def graphql_documents(args: list[str], cwd: str | None) -> list[str]:
 
 
 def is_mutation(doc: str) -> bool:
-    doc = re.sub(r'"""[\s\S]*?"""', " ", doc)
-    doc = re.sub(r'"(?:\\.|[^"\\\n])*"', " ", doc)
-    doc = re.sub(r"#[^\n]*", " ", doc)
-    return re.search(r"\b(mutation|subscription)\b", doc) is not None
+    """A document that may write: the word `mutation` (or `subscription`) anywhere in its raw
+    text. Comments and strings are not taken out first: a triple quote on each side would hide
+    one."""
+    return re.search(r"mutation|subscription", doc, re.IGNORECASE) is not None
 
 
 def check_gh_api(
@@ -663,7 +781,94 @@ def git_cwd(globals_: list[str], cwd: str | None) -> tuple[str | None, list[str]
 
 def check_git(args: list[str], env: dict[str, str], cwd: str | None, depth: int = 0) -> str | None:
     """Why this `git` call (its arguments after `git`) is refused, or None to let it run."""
+    return tagged(git_refusal(args, env, cwd, depth), sensor("worker-upstream-git-push"))
+
+
+# The configuration that decides where a push goes: a remote's URLs, and the `url.<base>.
+# insteadOf` / `pushInsteadOf` rewrites that turn one URL into another.
+REMOTE_URL_KEY = re.compile(r"^remote\.(?P<name>.+)\.(?:url|pushurl)$", re.IGNORECASE)
+REWRITE_KEY = re.compile(r"^url\.(?P<base>.+)\.(?:insteadof|pushinsteadof)$", re.IGNORECASE)
+
+
+def check_config_entry(what: str, key: str, value: str | None) -> str | None:
+    """Why setting `key` (to `value`) points a push outside the organization, or None."""
+    m = REWRITE_KEY.match(key)
+    if m:
+        base = m.group("base")
+        target = remote_url_target(base)
+        if base.endswith("/") and target is None:
+            target = remote_url_target(base + "x")  # a prefix: `https://github.com/ikigai-rs/`
+        if target == "local" or (isinstance(target, tuple) and under_org(target[0])):
+            return None
+        return (
+            f"Refused: {what} sets `{key}`, a rewrite that sends URLs beginning "
+            f"{(value or '…')!r} to {base}, which is not under github.com/{ORG}/. {INSTEAD}"
+        )
+    m = REMOTE_URL_KEY.match(key)
+    if m and value is not None:
+        target = remote_url_target(value)
+        if target == "local" or (isinstance(target, tuple) and under_org(target[0])):
+            return None
+        return (
+            f"Refused: {what} points the remote `{m.group('name')}` at {value}, which is not "
+            f"under github.com/{ORG}/: a push to it would post outside. {INSTEAD}"
+        )
+    return None
+
+
+def config_from_options(globals_: list[str], env: dict[str, str]) -> list[tuple[str, str]]:
+    """(key, value) of the configuration a command line sets for one run: `-c key=value`,
+    `--config-env key=VAR` and GIT_CONFIG_COUNT / GIT_CONFIG_KEY_n / GIT_CONFIG_VALUE_n."""
+    found = []
+    for flag, value in flag_pairs(globals_, {"-c", "--config-env"}):
+        key, _, val = value.partition("=")
+        found.append((key, env.get(val, UNKNOWN) if flag == "--config-env" else val))
+    try:
+        count = int(env.get("GIT_CONFIG_COUNT", "0") or 0)
+    except ValueError:
+        count = 0
+    for n in range(min(count, 100)):
+        found.append((env.get(f"GIT_CONFIG_KEY_{n}", ""), env.get(f"GIT_CONFIG_VALUE_{n}", "")))
+    return found
+
+
+def check_git_config(sub: str, rest: list[str]) -> str | None:
+    """`git config KEY VALUE` (and `--add`, `set`, `--replace-all`), `git remote add|set-url`."""
+    what = f"`git {sub}`"
+    if sub == "remote":
+        pos = [a for a in rest if not a.startswith("-")]
+        if pos[:1] == ["set-url"] and len(pos) >= 3:
+            return check_config_entry(what + " set-url", f"remote.{pos[1]}.url", pos[2])
+        if pos[:1] == ["add"] and len(pos) >= 3 and "--mirror=push" in rest:
+            return check_config_entry(what + " add", f"remote.{pos[1]}.url", pos[2])
+        return None
+    pos, i = [], 0
+    while i < len(rest):
+        a = rest[i]
+        if a in ("-f", "--file", "--blob", "--type", "--default", "--comment", "--value"):
+            i += 2
+            continue
+        if not a.startswith("-"):
+            pos.append(a)
+        i += 1
+    if pos[:1] in (["set"], ["unset"], ["get"], ["list"], ["edit"], ["rename-section"]):
+        if pos[0] != "set":
+            return None
+        pos = pos[1:]
+    reads = ("--get", "--unset", "--list", "-l", "--remove-section", "--rename-section", "-e")
+    if len(pos) < 2 or any(a.startswith(reads) for a in rest):
+        return None  # a read, or a removal: neither points a push anywhere
+    return check_config_entry(what, pos[0], pos[1])
+
+
+def git_refusal(args: list[str], env: dict[str, str], cwd: str | None, depth: int = 0) -> str | None:
     globals_, sub, rest = git_subcommand(args)
+    for key, value in config_from_options(globals_, env):
+        why = check_config_entry("`git -c`", key, value)
+        if why:
+            return why
+    if sub in ("config", "remote"):
+        return check_git_config(sub, rest)
     if sub is None or sub in GIT_BUILTINS:
         return None
     here, opts = git_cwd(globals_, cwd)
@@ -697,7 +902,7 @@ def check_git(args: list[str], env: dict[str, str], cwd: str | None, depth: int 
         words = shlex.split(text)
     except ValueError:
         return f"Refused: the git alias `{sub}` cannot be read. {INSTEAD}"
-    return check_git([*globals_, *words, *rest], env, cwd, depth + 1)
+    return git_refusal([*globals_, *words, *rest], env, cwd, depth + 1)
 
 
 def check_push(
@@ -758,11 +963,29 @@ def check_remote(
 ) -> str | None:
     if UNKNOWN in remote:
         return f"Refused: {what} goes to a remote the shell names when it runs. {INSTEAD}"
+    # A configured rewrite (`url.<base>.pushInsteadOf`) can send any URL elsewhere.
+    for line in run_git(
+        [*opts, "config", "--get-regexp", r"^url\..*\.(push)?insteadof$"], here, env
+    ):
+        key, _, value = line.partition(" ")
+        why = check_config_entry(what, key, value)
+        if why:
+            return why
     names = set(run_git([*opts, "remote"], here, env))
     if remote in names:
         urls = run_git([*opts, "remote", "get-url", "--push", "--all", remote], here, env)
-    else:
+    elif "://" in remote or remote.startswith(("/", "./", "../", "~")) or remote == "." or (
+        re.match(r"^[^/]+:", remote)
+    ):
         urls = run_git([*opts, "ls-remote", "--get-url", remote], here, env) or [remote]
+    else:
+        # A bare name that is no configured remote: a remote added in the same command line
+        # (`git remote add x URL && git push x`), which the guard cannot read yet.
+        return (
+            f"Refused: {what} names `{remote}`, which is not a configured remote of this "
+            f"checkout, so where it goes cannot be read. Push to a configured remote under "
+            f"github.com/{ORG}/, in a command of its own. {INSTEAD}"
+        )
     if not urls:
         return f"Refused: {what} goes to a remote whose URL cannot be read. {INSTEAD}"
     for url in urls:
@@ -1157,12 +1380,16 @@ _in_file = 0
 
 
 def dynamic(why: str) -> str | None:
-    return None if _in_file else why
+    return None if _in_file else Refusal(sensor("worker-upstream-unreadable"), why)
 
 
 def check_shell(text: str, env: dict[str, str], cwd: str | None, depth: int = 0) -> str | None:
     """Why a shell command line is refused: the first of its commands this refuses. Text the
     guard cannot read is refused."""
+    return tagged(shell_refusal(text, env, cwd, depth), sensor("worker-upstream-unreadable"))
+
+
+def shell_refusal(text: str, env: dict[str, str], cwd: str | None, depth: int = 0) -> str | None:
     if depth > 8:
         return f"Refused: the command nests shells too deeply for the upstream guard. {INSTEAD}"
     try:
@@ -1503,6 +1730,7 @@ def wrapper(name: str, args: list[str]) -> int:
     except Exception as e:  # noqa: BLE001  (fail closed, saying why)
         why = f"Refused: the upstream guard could not read this `{name}` call ({e}). {INSTEAD}"
     if why:
+        fire_refusal(why, os.getcwd(), tool=name)
         print(f"{name}: {why}", file=sys.stderr)
         return WRAPPER_REFUSED
     real = real_program(name, env)
@@ -1531,6 +1759,7 @@ def hook(stdin) -> int:
     except Exception as e:  # noqa: BLE001  (fail closed, saying why)
         why = f"Refused: the upstream guard could not read this command ({e}). {INSTEAD}"
     if why:
+        fire_refusal(why, event.get("cwd") or os.getcwd(), "Bash", event.get("session_id"))
         print(why, file=sys.stderr)
         return HOOK_REFUSED
     return 0

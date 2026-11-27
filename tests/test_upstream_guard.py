@@ -252,7 +252,6 @@ class GraphQL(Checkout):
             ["api", "graphql", f"--field=query=@{q}"],
             ["api", "graphql", "-Fquery=@" + q],
             ["api", "graphql", "--input", j],
-            ["api", "graphql", "-f", "query=# mutation in a comment\n{ viewer { login } }"],
         ]:
             self.assertIsNone(self.gh(*args), args)
 
@@ -525,6 +524,148 @@ class ShellText(Checkout):
         ]:
             self.assertIsNone(self.shell(text), text)
 
+
+
+class ReReview(Checkout):
+    """The hub's re-review of PR 102 at fe1913d, one test per finding (ledger item 4449)."""
+
+    def test_1_a_push_to_a_bare_name_that_is_no_remote_is_refused(self):
+        why = g.check_shell(
+            "git remote add evil https://github.com/oxigraph/oxigraph && /usr/bin/git push evil main",
+            self.env,
+            str(self.repo),
+        )
+        self.assertIn("not a configured remote", why)
+        self.assertIn("not a configured remote", self.push("evil", "main"))
+        self.assertIsNone(self.push("origin", "main"))
+
+    def test_1_a_pushurl_outside_is_read_and_its_setting_refused(self):
+        why = g.check_shell(
+            "git config remote.origin.pushurl https://github.com/oxigraph/oxigraph && git push origin",
+            self.env,
+            str(self.repo),
+        )
+        self.assertIn("points the remote `origin`", why)
+        for args in [
+            ["remote", "set-url", "origin", "https://github.com/oxigraph/oxigraph"],
+            ["remote", "set-url", "--push", "origin", "git@github.com:oxigraph/oxigraph"],
+            ["config", "--add", "remote.origin.pushurl", "https://github.com/oxigraph/x"],
+            ["config", "set", "remote.origin.url", "https://example.com/x.git"],
+            ["-c", "remote.origin.pushurl=https://github.com/oxigraph/x", "push", "origin"],
+        ]:
+            self.assertIsNotNone(g.check_git(args, self.env, str(self.repo)), args)
+        git(self.repo, "config", "remote.origin.pushurl", "https://github.com/oxigraph/oxigraph")
+        self.assertIn("oxigraph/oxigraph", self.push("origin", "main"))
+
+    def test_1_remote_settings_inside_and_reads_go_through(self):
+        for args in [
+            ["remote", "set-url", "origin", "https://github.com/ikigai-rs/x"],
+            ["config", "remote.origin.pushurl", "git@github.com:ikigai-rs/x.git"],
+            ["config", "--get", "remote.origin.url"],
+            ["config", "--unset", "remote.origin.pushurl"],
+            ["remote", "add", "upstream", "https://github.com/oxigraph/oxigraph"],  # fetch only
+            ["config", "user.name", "w"],
+        ]:
+            self.assertIsNone(g.check_git(args, self.env, str(self.repo)), args)
+
+    def test_3_gh_auth_token_is_refused(self):
+        why = self.gh("auth", "token")
+        self.assertIn("prints the worker's GitHub token", why)
+        self.assertEqual(why.control, "worker-upstream-gh-token")
+        self.assertIsNotNone(g.check_shell('curl -H "Authorization: token $(gh auth token)" x', self.env, None))
+        self.assertIsNone(self.gh("auth", "status"))
+
+    def test_4_a_url_after_a_boolean_flag_is_the_target(self):
+        url = "https://github.com/oxigraph/oxigraph/pull/2050"
+        for args in [
+            ["pr", "review", "-a", url],
+            ["pr", "review", "-r", url, "-b", "x"],
+            ["pr", "review", "-c", url, "-b", "x"],
+            ["pr", "merge", "-s", url],
+            ["pr", "merge", "-m", url],
+            ["pr", "merge", "-r", url],
+            ["pr", "comment", "-e", url],
+            ["issue", "comment", "-w", "https://github.com/oxigraph/oxigraph/issues/1"],
+            ["pr", "close", "-d", url],
+        ]:
+            self.assertIn("oxigraph/oxigraph", self.gh(*args) or "", args)
+        self.assertIsNone(self.gh("pr", "review", "-a", "https://github.com/ikigai-rs/x/pull/1"))
+        self.assertIsNone(self.gh("pr", "merge", "-s", "12"))
+
+    def test_5_dot_segments_in_push_urls_are_refused(self):
+        for url in [
+            "https://github.com/ikigai-rs/../oxigraph/oxigraph",
+            "https://github.com/ikigai-rs/./../oxigraph/x.git",
+            "git@github.com:ikigai-rs/../oxigraph/x.git",
+            "ssh://git@github.com/ikigai-rs/../../oxigraph/x",
+            "https://github.com/ikigai-rs%2f..%2foxigraph/x",
+            "https://github.com/ikigai-rs//oxigraph/x",
+        ]:
+            self.assertIsNotNone(self.push(url, "main"), url)
+        self.assertIsNotNone(
+            self.gh("issue", "create", "-R", "https://github.com/ikigai-rs/../oxigraph/oxigraph")
+        )
+
+    def test_6_url_rewrites_that_point_elsewhere_are_refused(self):
+        rewrite = "url.https://github.com/oxigraph/.pushInsteadOf=https://github.com/ikigai-rs/"
+        for args in [
+            ["-c", rewrite, "push", "origin", "main"],
+            ["-c", rewrite.replace("pushInsteadOf", "insteadOf"), "push", "origin"],
+            ["config", "url.https://github.com/oxigraph/.pushInsteadOf", "https://github.com/ikigai-rs/"],
+            ["config", "--global", "url.git@github.com:oxigraph/.insteadOf", "https://github.com/"],
+        ]:
+            self.assertIn("rewrite", g.check_git(args, self.env, str(self.repo)) or "", args)
+        env = {**self.env, "GIT_CONFIG_COUNT": "1"}
+        env["GIT_CONFIG_KEY_0"], _, env["GIT_CONFIG_VALUE_0"] = rewrite.partition("=")
+        self.assertIn("rewrite", g.check_git(["push", "origin"], env, str(self.repo)))
+        git(self.repo, "config", "url.https://github.com/oxigraph/.pushInsteadOf", "https://github.com/ikigai-rs/")
+        self.assertIn("rewrite", self.push("origin", "main"))
+        # A rewrite into the organization is no post outside.
+        self.assertIsNone(
+            g.check_git(
+                ["config", "url.git@github.com:ikigai-rs/.insteadOf", "https://github.com/ikigai-rs/"],
+                self.env,
+                str(self.repo),
+            )
+        )
+
+    def test_7_a_mutation_between_block_strings_is_refused(self):
+        for doc in [
+            '""" a """ mutation { addComment(input: {}) { x } } """ b """',
+            '# a\nmutation { x }',
+            '{ "s" } mutation { x }',
+            "MUTATION { x }",
+        ]:
+            self.assertIsNotNone(self.gh("api", "graphql", "-f", f"query={doc}"), doc)
+        self.assertIsNone(self.gh("api", "graphql", "-f", "query={ viewer { login } }"))
+
+    def test_8_a_read_word_as_a_repository_name_is_no_read(self):
+        for args in [
+            ["repo", "create", "list", "--public"],
+            ["repo", "create", "view"],
+            ["repo", "edit", "view", "--visibility", "public"],
+            ["repo", "delete", "status", "--yes"],
+            ["repo", "rename", "list"],
+        ]:
+            self.assertIsNotNone(self.gh(*args), args)
+        for args in [
+            ["repo", "deploy-key", "list"],
+            ["repo", "gitignore", "view", "Python"],
+            ["repo", "license", "list"],
+            ["repo", "autolink", "list"],
+            ["repo", "view", "oxigraph/oxigraph"],
+        ]:
+            self.assertIsNone(self.gh(*args), args)
+
+    def test_each_refusal_says_its_control(self):
+        cases = {
+            "worker-upstream-gh": self.gh("issue", "create", "-R", "oxigraph/oxigraph"),
+            "worker-upstream-git-push": self.push("https://github.com/oxigraph/oxigraph"),
+            "worker-upstream-unreadable": g.check_shell("echo 'unterminated", self.env, None),
+            "worker-upstream-gh-token": self.gh("auth", "token"),
+        }
+        for control, why in cases.items():
+            self.assertEqual(getattr(why, "control", None), control, why)
 
 class Fires(Checkout):
     """Each control refuses through its real entry point, and lets the real program run

@@ -3085,7 +3085,11 @@ def cmd_run(args, make_ikigai, home) -> int:
     worker = build(args, make_ikigai, home)
     why = prepare_upstream_guard()
     if why:
-        raise gonk.ConfigError(why)
+        try:
+            repo = Path(args.repo).resolve() if args.repo else gonk.find_repo(Path.cwd())
+        except gonk.ConfigError:
+            repo = None
+        raise gonk.refuse("worker-upstream-login-shells", repo, why)
     worker.announce()
     if args.once:
         outcome = worker.run_once()

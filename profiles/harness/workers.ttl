@@ -237,3 +237,65 @@ ctl:worker-comments-are-data a harness:Control ;
     harness:stage harness:runtime ; harness:category harness:authoritySafety ;
     harness:enforcedAt "tools/worker.py#brief_comments" ;
     harness:statedBy guide:comments-are-data .
+
+guide:post-nothing-outside a harness:Guide ;
+    rdfs:label "a worker posts nothing outside the organization" ;
+    rdfs:comment "An unattended worker's agent posts to no GitHub project outside ikigai-rs: no issue, comment, review, release or push; what it would have posted goes in its pull request or hand-back, and the dispatcher decides whether a person files it (worker/README.md, \"The upstream guard\")." ;
+    harness:statedIn "AGENTS.md" ; harness:section "Worker machines" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:runtime ; harness:category harness:authoritySafety .
+
+ctl:worker-upstream-gh a harness:Control ;
+    rdfs:label "worker: no gh write outside ikigai-rs" ;
+    rdfs:comment "The upstream guard (its gh wrapper first on the agent's PATH, and Claude Code's PreToolUse hook) refuses any gh command that is not on its list of reads when its repository, however named, is not under ikigai-rs, or cannot be known; and a gh alias, extension or unknown command." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:runtime ; harness:category harness:authoritySafety ;
+    harness:outcome harness:refuse ;
+    harness:wiredBy "worker-config" ;
+    harness:enforcedAt "tools/upstream_guard.py#check_gh" ;
+    harness:statedBy guide:post-nothing-outside ;
+    harness:firedBy test:test_harness:SensorsFire.test_worker_upstream_gh .
+
+ctl:worker-upstream-gh-token a harness:Control ;
+    rdfs:label "worker: no gh auth token" ;
+    rdfs:comment "The upstream guard refuses `gh auth token`: with the token printed, any HTTP client can post anywhere, past the guard." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:runtime ; harness:category harness:authoritySafety ;
+    harness:outcome harness:refuse ;
+    harness:wiredBy "worker-config" ;
+    harness:enforcedAt "tools/upstream_guard.py#check_gh" ;
+    harness:statedBy guide:post-nothing-outside ;
+    harness:firedBy test:test_harness:SensorsFire.test_worker_upstream_gh_token .
+
+ctl:worker-upstream-git-push a harness:Control ;
+    rdfs:label "worker: no git push outside ikigai-rs" ;
+    rdfs:comment "The upstream guard refuses a git push (send-pack, subtree push, an alias, a submodule push) to a URL not under github.com/ikigai-rs/, to a bare name that is no configured remote, and a remote URL, pushurl or url.*.insteadOf rewrite set to point outside." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:runtime ; harness:category harness:authoritySafety ;
+    harness:outcome harness:refuse ;
+    harness:wiredBy "worker-config" ;
+    harness:enforcedAt "tools/upstream_guard.py#check_git" ;
+    harness:statedBy guide:post-nothing-outside ;
+    harness:firedBy test:test_harness:SensorsFire.test_worker_upstream_git_push .
+
+ctl:worker-upstream-unreadable a harness:Control ;
+    rdfs:label "worker: a command the guard cannot read is refused" ;
+    rdfs:comment "Claude Code's PreToolUse hook refuses a Bash command the upstream guard cannot parse, or one that runs text the shell builds when it runs (`eval \"$x\"`, `bash -c \"$x\"`, a pipe into a shell), so it cannot tell whether it posts outside ikigai-rs." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:runtime ; harness:category harness:authoritySafety ;
+    harness:outcome harness:refuse ;
+    harness:wiredBy "worker-config" ;
+    harness:enforcedAt "tools/upstream_guard.py#check_shell" , "tools/upstream_guard.py#dynamic" ;
+    harness:statedBy guide:post-nothing-outside ;
+    harness:firedBy test:test_harness:SensorsFire.test_worker_upstream_unreadable .
+
+ctl:worker-upstream-login-shells a harness:Control ;
+    rdfs:label "worker: login shells find the guard" ;
+    rdfs:comment "`tools/worker.py run` refuses to start any agent unless `sh`, `bash` and `zsh`, plain and as login shells (`-lc`), find the upstream guard's gh and git first on PATH." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:runtime ; harness:category harness:authoritySafety ;
+    harness:outcome harness:refuse ;
+    harness:wiredBy "worker-config" ;
+    harness:enforcedAt "tools/worker.py#cmd_run" ;
+    harness:statedBy guide:post-nothing-outside ;
+    harness:firedBy test:test_harness:SensorsFire.test_worker_upstream_login_shells .
