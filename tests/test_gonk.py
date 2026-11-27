@@ -609,14 +609,18 @@ class Claims(unittest.TestCase):
         self.assertEqual(fake.calls, [("delete urn:gk:iki:ledger:acme:claim item=7", "")])
 
     def test_reject_clears_the_hand_back_with_a_reason(self):
-        fake = FakeIkigai([(":comment", ok("commented\n"))])
-        code, _, err = run(self.repo, ["reject", "12"], fake)
+        fake = FakeIkigai([(":comment", ok("commented\n")), (":item:12 ", item())])
+        code, _, err = run(self.repo, ["reject", "12", "--park"], fake)
         self.assertEqual(code, 2)
         self.assertIn("--note", err)
-        code, _, _ = run(self.repo, ["reject", "12", "--note", "CI is red on main"], fake)
+        code, _, err = run(self.repo, ["reject", "12", "--note", "CI is red on main"], fake)
+        self.assertEqual(code, 2)
+        self.assertIn("--redispatch or --park", err)
+        self.assertEqual(fake.calls, [])
+        code, _, _ = run(self.repo, ["reject", "12", "--note", "CI is red on main", "--park"], fake)
         self.assertEqual(code, 0)
         self.assertEqual(
-            fake.calls,
+            fake.calls[1:],
             [
                 (
                     "sink urn:gk:iki:ledger:acme:comment item=12 rejects=true",
@@ -627,16 +631,16 @@ class Claims(unittest.TestCase):
 
     def test_reject_refuses_a_note_over_the_bound_saying_the_limit_and_the_length(self):
         # Ledger item 4472: the worker hands a router's note whole, so the bound is here.
-        fake = FakeIkigai([(":comment", ok("commented\n"))])
+        fake = FakeIkigai([(":comment", ok("commented\n")), (":item:12 ", item())])
         note = "n" * (gonk.MAX_NOTE + 1)
-        code, _, err = run(self.repo, ["reject", "12", "--note", note], fake)
+        code, _, err = run(self.repo, ["reject", "12", "--note", note, "--park"], fake)
         self.assertEqual(code, 2)
         self.assertIn("--note is 8,001 characters, over the limit of 8,000", err)
         self.assertIn("move it into the item's body", err)
         self.assertEqual(fake.calls, [])
         note = "n" * gonk.MAX_NOTE
-        self.assertEqual(run(self.repo, ["reject", "12", "--note", note], fake)[0], 0)
-        self.assertEqual(fake.calls[0][1], note)
+        self.assertEqual(run(self.repo, ["reject", "12", "--note", note, "--park"], fake)[0], 0)
+        self.assertEqual(fake.calls[1][1], note)
 
     def test_release_comments_the_note_then_releases_with_no_content(self):
         # Ledger item 1229: the cli never gives a batch's stdin to a DELETE, so a note piped

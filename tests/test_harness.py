@@ -582,6 +582,12 @@ class SensorsFire(unittest.TestCase):
         self.assertEqual(code, 2)
         assert_fired(self, self.repo, "reject-needs-reason")
 
+    def test_reject_says_where_next(self):
+        code, _, _ = run(gonk.main, self.repo, ["reject", "12", "--note", "CI is red"])
+        self.assertEqual(code, 2)
+        assert_fired(self, self.repo, "reject-says-where-next")
+        self.assertEqual(fired(self.repo), ["reject-says-where-next"])
+
     def claim_refused(self, text: str, *flags: str) -> None:
         fake = FakeIkigai([(":claim", gonk.Answer(1, "", text))])
         code, _, _ = run(gonk.main, self.repo, ["claim", "12", *flags], fake)

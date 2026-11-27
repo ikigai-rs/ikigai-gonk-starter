@@ -186,7 +186,7 @@ guide:report-with-evidence a harness:Guide ;
 
 guide:dispatcher-closes-on-evidence a harness:Guide ;
     rdfs:label "the dispatcher closes, after checking the evidence" ;
-    rdfs:comment "Only the dispatcher closes an item, and only after checking its evidence: the pull request merged, with green CI. A rejection says why: `reject` needs a `--note`." ;
+    rdfs:comment "Only the dispatcher closes an item, and only after checking its evidence: the pull request merged, with green CI. A rejection says why: `reject` needs a `--note`; and where the item goes next: `--redispatch` or `--park`." ;
     harness:statedIn "AGENTS.md" ; harness:section "5. Report with evidence; the dispatcher closes" ;
     harness:direction harness:feedforward ; harness:execution harness:inferential ;
     harness:stage harness:merge ; harness:category harness:authoritySafety , harness:behavior .
@@ -210,6 +210,16 @@ ctl:reject-needs-reason a harness:Control ;
     harness:enforcedAt "tools/gonk.py#cmd_reject" ;
     harness:statedBy guide:dispatcher-closes-on-evidence ;
     harness:firedBy test:test_harness:SensorsFire.test_reject_needs_reason .
+
+ctl:reject-says-where-next a harness:Control ;
+    rdfs:label "a rejection says where the item goes next" ;
+    rdfs:comment "`tools/gonk.py reject` refuses without `--redispatch` or `--park`, before anything reaches the ledger: a worker takes an item it handed back only after a new dispatch, so a reject alone left it skipped while `next` listed it as ready." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:merge ; harness:category harness:behavior ;
+    harness:outcome harness:refuse ;
+    harness:enforcedAt "tools/gonk.py#cmd_reject" ;
+    harness:statedBy guide:dispatcher-closes-on-evidence ;
+    harness:firedBy test:test_harness:SensorsFire.test_reject_says_where_next .
 
 ctl:dispatcher-checks-evidence a harness:Control ;
     rdfs:label "the dispatcher checks the evidence" ;

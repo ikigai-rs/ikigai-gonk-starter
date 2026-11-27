@@ -704,7 +704,8 @@ Before it writes anything it checks the item (ledger item 2394), because a dispa
 will act on sits unexplained:
 
 - It **refuses** an item that is not open, and one handed back and awaiting its dispatcher:
-  that is a review (check the evidence, then close it or `reject` it), not a dispatch.
+  that is a review (check the evidence, then close it, or `reject` it with `--redispatch`),
+  not a dispatch.
 - It **refuses** an item an open item blocks, naming the blockers, as `next` reports them
   (`why: blocked`, `blocked_by`): `next` never offers a blocked item, so no worker would take
   it. `--allow-blocked --note "<why>"` dispatches it anyway, and the dispatch comment carries
@@ -719,6 +720,23 @@ will act on sits unexplained:
   `--keep-unprioritized` leaves it unset and warns that prioritized work ranks ahead of it.
   The priority-only item sink changes neither title nor body, so the dispatch digest holds.
   After dispatch it prints rank in `next` for the routing labels, or the exclusion reason.
+
+**Sending a hand-back back.** A worker skips an item it handed back until a router dispatches it
+again, so a reject says where the item goes next (ledger item 4484):
+
+    python3 tools/gonk.py reject 12 --note "<why>" --redispatch [--dispatch-note "<what to do>"] [--labels …] [--as <principal>]
+    python3 tools/gonk.py reject 12 --note "<why>" --park
+
+`--redispatch` makes every check above first, and writes nothing, not even the reject, when one
+refuses; then it writes the reject and the dispatch, by `dispatch`'s own writes, to the `worker:`
+and `agent:` labels the item carries (`--labels` replaces them, taking off the ones it drops).
+With no `--dispatch-note`, the dispatch says to do the fixes in the reject note, on the same pull
+request's branch, then hand back. If the dispatch write fails after the reject landed, it says
+the item is rejected and NOT dispatched, prints the `gonk.py dispatch` command that finishes it,
+and exits non-zero. `--park` writes the reject and takes the `worker:` labels off (the `agent:`
+label and every other stay), for an item that waits on a person. A bare `reject` is refused,
+naming both: a reject alone leaves the item skipped by the worker that handed it back while
+`next` lists it as ready.
 
 The worker takes an item only when the **newest** dispatch whose author is one of its
 `routers` names every label in its `labels` and the item's `repo:` label, and its digest

@@ -35,6 +35,7 @@ import base64
 import hashlib
 import json
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -2094,10 +2095,24 @@ def cmd_report(args, cfg: Config, make_ikigai) -> int:
     return code
 
 
+# The dispatch note `reject --redispatch` writes when it is given no `--dispatch-note`.
+REDISPATCH_NOTE = (
+    "Sent back: do the fixes the reject note above asks for, on the same pull request's "
+    "branch, then hand back."
+)
+
+
 def cmd_reject(args, cfg: Config, make_ikigai) -> int:
     """The dispatcher's rejection of a hand-back: the evidence did not hold, so the item is
     ready again. `rejects=true` clears the ledger's awaiting state (0.8.0, ledger item 1199),
-    which a worker's ordinary comment cannot; the note says why."""
+    which a worker's ordinary comment cannot; the note says why.
+
+    A reject also says where the item goes next (ledger item 4484). A worker skips an item it
+    handed back until a router dispatches it again (tools/worker.py, `redispatched_since`), and
+    a reject is no dispatch, so a reject alone left the item looking queued while no worker
+    took it. `--redispatch` dispatches it again by `dispatch`'s own path, everything checked
+    before the reject is written; `--park` takes its `worker:` labels off, for an item that
+    waits on a person. A bare reject is refused."""
     need(cfg, "ledger", "target")
     note = (args.note or "").strip()
     if not note:
@@ -2109,8 +2124,144 @@ def cmd_reject(args, cfg: Config, make_ikigai) -> int:
             args,
         )
     bounded_note(note)
-    answer = comment_flag(make_ikigai(cfg.target), cfg, args.item, note, "rejects")
-    return show(answer)
+    if not args.redispatch and not args.park:
+        raise refuse(
+            "reject-says-where-next",
+            cfg.repo,
+            "reject needs --redispatch or --park: a reject alone leaves the item skipped by "
+            "the worker that handed it back, which takes it again only after a new dispatch, "
+            "while `next` still lists it as ready. --redispatch sends it back to its workers; "
+            "--park takes its worker: labels off, for an item that waits on a person",
+            args,
+        )
+    if args.park:
+        stray = [
+            flag
+            for flag, given in [
+                ("--dispatch-note", args.dispatch_note is not None),
+                ("--labels", args.labels is not None),
+                ("--as", args.as_principal is not None),
+                ("--allow-blocked", args.allow_blocked),
+                ("--keep-unprioritized", args.keep_unprioritized),
+                ("--priority", args.priority is not None),
+                ("--status-item", bool(args.status_item)),
+            ]
+            if given
+        ]
+        if stray:
+            raise ConfigError(
+                f"{', '.join(stray)} {'is' if len(stray) == 1 else 'are'} for --redispatch: "
+                "--park dispatches nothing"
+            )
+        return reject_and_park(args, cfg, make_ikigai(cfg.target), note)
+    return reject_and_redispatch(args, cfg, make_ikigai(cfg.target), note)
+
+
+def reject_and_park(args, cfg: Config, ikigai: Ikigai, note: str) -> int:
+    """The reject, then each `worker:` label taken off, so no worker is offered the item. The
+    `agent:` label and every other label stay."""
+    item, err = item_json(cfg, ikigai, args.item)
+    if item is None:
+        raise ConfigError(f"could not read item {args.item}: {err}")
+    display = item.get("display") or f"{cfg.ledger}#{args.item}"
+    routing = [w for w in item.get("labels") or [] if w.startswith("worker:")]
+    code = show(comment_flag(ikigai, cfg, args.item, note, "rejects"))
+    if code:
+        return code
+    for label in routing:
+        answer = ikigai.run(f"delete {cfg.resource('label')} item={args.item} content={label}")
+        if not answer.ok:
+            show(answer)
+            left = ", ".join(routing[routing.index(label) :])
+            print(
+                f"gonk.py: {display} is rejected but NOT parked: it still carries {left}, so a "
+                "worker may still be offered it. Take those labels off, or dispatch it again "
+                "with `gonk.py dispatch`",
+                file=sys.stderr,
+            )
+            return 1
+    taken = ", ".join(routing) if routing else "none were on it"
+    print(
+        f"{display}: rejected and parked (worker: labels taken off: {taken}); no worker is "
+        "offered it until it is dispatched again"
+    )
+    return 0
+
+
+def reject_and_redispatch(args, cfg: Config, ikigai: Ikigai, note: str) -> int:
+    """Everything `dispatch` checks, first; then the reject; then the dispatch, by `dispatch`'s
+    own writes, with the routing labels the item carries (or `--labels`, which replace them).
+    A dispatch that fails after the reject landed says so and prints the command that
+    finishes it."""
+    if args.priority is None:
+        args.priority = 3
+    item, err = item_json(cfg, ikigai, args.item)
+    if item is None:
+        raise ConfigError(f"could not read item {args.item}: {err}")
+    display = item.get("display") or f"{cfg.ledger}#{args.item}"
+    current = [w for w in item.get("labels") or [] if w.startswith(("worker:", "agent:"))]
+    if args.labels is None and not current:
+        raise ConfigError(
+            f"{display} carries no worker: or agent: label, so there is nothing to dispatch it "
+            "again to: pass --labels agent:<kind> (with worker:<name> to pin it), or --park it; "
+            "nothing was written, not even the reject"
+        )
+    try:
+        labels = routing_labels(args.labels if args.labels is not None else ",".join(current))
+    except ConfigError as e:
+        raise ConfigError(f"nothing was written, not even the reject: {e}") from e
+    if args.allow_blocked and not (args.dispatch_note or "").strip():
+        raise ConfigError(
+            "--allow-blocked needs --dispatch-note: why this item is dispatched again although "
+            "the ledger says it is blocked, recorded in the dispatch for whoever reads it next; "
+            "nothing was written, not even the reject"
+        )
+    dispatch_note = (args.dispatch_note or "").strip() or REDISPATCH_NOTE
+    try:
+        plan = plan_dispatch(args, cfg, ikigai, labels, dispatch_note, rejecting=True)
+    except ConfigError as e:
+        raise ConfigError(f"nothing was written, not even the reject: {e}") from e
+    code = show(comment_flag(ikigai, cfg, args.item, note, "rejects"))
+    if code:
+        return code
+    code, dispatched = write_dispatch(args, cfg, ikigai, plan)
+    if not dispatched:
+        print(
+            f"gonk.py: {display} is rejected and NOT dispatched: no worker that handed it back "
+            "takes it until it is. Finish it with:\n  " + finishing_dispatch(args, labels, plan),
+            file=sys.stderr,
+        )
+        return code or 1
+    stale = [w for w in current if w not in labels]
+    for label in stale:
+        answer = ikigai.run(f"delete {cfg.resource('label')} item={args.item} content={label}")
+        if not answer.ok:
+            show(answer)
+            print(
+                f"gonk.py: {display} is rejected and dispatched to {','.join(labels)}, but still "
+                f"carries {label}, which the dispatch replaced: take it off",
+                file=sys.stderr,
+            )
+            return 1
+    print(f"{display}: rejected and dispatched again to {','.join(labels)}")
+    return 0
+
+
+def finishing_dispatch(args, labels: list[str], plan: dict) -> str:
+    """The `gonk.py dispatch` command that does what a failed `reject --redispatch` did not."""
+    words = ["python3", "tools/gonk.py", "dispatch", str(args.item), "--labels", ",".join(labels)]
+    if args.as_principal:
+        words += ["--as", args.as_principal]
+    if args.allow_blocked:
+        words.append("--allow-blocked")
+    if args.keep_unprioritized:
+        words.append("--keep-unprioritized")
+    elif args.priority != 3:
+        words += ["--priority", str(args.priority)]
+    for n in args.status_item or []:
+        words += ["--status-item", str(n)]
+    words += ["--note", plan["note"]]
+    return " ".join(shlex.quote(w) for w in words)
 
 
 def routing_labels(text: str | None) -> list[str]:
@@ -2149,8 +2300,18 @@ def cmd_dispatch(args, cfg: Config, make_ikigai) -> int:
     what counts: over QUIC gonk names this machine's client; over the owner's socket nothing
     names anyone, so `--as` says which principal the dispatch is from."""
     need(cfg, "ledger", "target")
-    labels = routing_labels(args.labels)
-    author = None
+    ikigai = make_ikigai(cfg.target)
+    plan = plan_dispatch(
+        args, cfg, ikigai, routing_labels(args.labels), (args.note or "").strip(), rejecting=False
+    )
+    code, _ = write_dispatch(args, cfg, ikigai, plan)
+    return code
+
+
+def dispatch_author(args, cfg: Config) -> str | None:
+    """The `author=` a dispatch is written with: `--as`, as a principal gonk names, or None over
+    QUIC, where the door names the client. Over the socket nothing names anyone, so `--as` is
+    required there."""
     if args.as_principal:
         author = principal_form(args.as_principal)
         if author is None:
@@ -2159,30 +2320,41 @@ def cmd_dispatch(args, cfg: Config, make_ikigai) -> int:
                 f"({', '.join(p + '…' for p in PRINCIPAL_PREFIXES)}): a free-text author is "
                 "one anybody can write, so no worker takes a dispatch from it"
             )
-    elif cfg.target.socket:
+        return author
+    if cfg.target.socket:
         raise ConfigError(
             "over the socket gonk names no author, so a dispatch from here would be from nobody "
             "and no worker would take it: pass --as <your principal> (your passkey's or your "
             "machine's IRI, as the workers' `routers` list it)"
         )
-    note = bounded_note((args.note or "").strip())
+    return None
+
+
+def plan_dispatch(
+    args, cfg: Config, ikigai: Ikigai, labels: list[str], note: str, rejecting: bool
+) -> dict:
+    """Everything a dispatch checks, before it writes anything: who it is from, the note's bound,
+    the item open, not awaiting its dispatcher (unless `rejecting`, whose reject clears that),
+    one `repo:` label, and not blocked unless `--allow-blocked` with a note. Answers what
+    `write_dispatch` writes; raises ConfigError, having written nothing, when it cannot."""
+    author = dispatch_author(args, cfg)
+    note = bounded_note(note, "--dispatch-note" if rejecting else "--note")
     if args.allow_blocked and not note:
         raise ConfigError(
             "--allow-blocked needs --note: why this item is dispatched although the ledger says "
             "it is blocked, recorded in the dispatch for whoever reads it next"
         )
-    ikigai = make_ikigai(cfg.target)
     item, err = item_json(cfg, ikigai, args.item)
     if item is None:
         raise ConfigError(f"could not read item {args.item}: {err}")
     display = item.get("display") or f"{cfg.ledger}#{args.item}"
     if item.get("status", "open") != "open":
         raise ConfigError(f"{display} is {item.get('status')}: only an open item is dispatched")
-    if awaiting_dispatcher(item):
+    if awaiting_dispatcher(item) and not rejecting:
         raise ConfigError(
             f"{display} is awaiting its dispatcher (handed back with evidence): that is a "
             "review, not a dispatch. Check the evidence, then close it, or `reject` it with a "
-            "--note and dispatch it again"
+            "--note and --redispatch"
         )
     repos = [w for w in item.get("labels") or [] if w.startswith("repo:")]
     if len(repos) != 1:
@@ -2190,33 +2362,58 @@ def cmd_dispatch(args, cfg: Config, make_ikigai) -> int:
             f"item {args.item} has {len(repos)} `repo:` labels; a worker works in exactly one "
             "repository, so label it with one first"
         )
-    blockers, err = open_blockers(cfg, ikigai, args.item, repos[0])
+    if awaiting_dispatcher(item):
+        # `next` names an item's blockers only when it excludes the item for them, and it
+        # excludes a hand-back as awaiting first: read the blocking links themselves.
+        blockers, err = blocking_items(cfg, ikigai, item)
+    else:
+        blockers, err = open_blockers(cfg, ikigai, args.item, repos[0])
     if err:
         raise ConfigError(
             f"could not ask `next` whether {display} is blocked ({err}); a blocked item is "
             "never offered to a worker, so this does not dispatch without knowing"
         )
-    named_blockers = ", ".join(f"{cfg.ledger}#{n}" for n in blockers)
-    if blockers and not args.allow_blocked:
+    named = [f"{cfg.ledger}#{n}" for n in blockers]
+    if awaiting_dispatcher(item):
+        named += mirrored_blockers(item)
+    named_blockers = ", ".join(named)
+    if named and not args.allow_blocked:
         raise ConfigError(
             f"{display} is blocked by {named_blockers}: `next` never offers a blocked item, so "
             "no worker would take it. Close the blocker first, or dispatch it anyway with "
             '--allow-blocked --note "<why>"'
         )
-    if blockers:
-        note = f"Dispatched while blocked by {named_blockers}: {note}"
+    blockers = named
+    written = f"Dispatched while blocked by {named_blockers}: {note}" if blockers else note
     for line in worker_coverage(cfg, ikigai, args, labels, repos[0]):
         print(line, file=sys.stderr)
+    return {
+        "item": item,
+        "display": display,
+        "labels": labels,
+        "repo": repos[0],
+        "author": author,
+        "note": note,
+        "written": written,
+    }
+
+
+def write_dispatch(args, cfg: Config, ikigai: Ikigai, plan: dict) -> tuple[int, bool]:
+    """Write what `plan_dispatch` checked: the routing labels the item lacks, its priority when
+    it has none, then the dispatch comment. Answers (exit code, whether the dispatch comment was
+    written); a failed write stops it there, said by `show`."""
+    item, labels = plan["item"], plan["labels"]
     for label in labels:
         if label in (item.get("labels") or []):
             continue
         answer = ikigai.run(f"sink {cfg.resource('label')} item={args.item}", stdin=label)
         if not answer.ok:
-            return show(answer)
+            return show(answer), False
     if item.get("priority") is None:
         if args.keep_unprioritized:
             print(
-                f"warning: {display} remains unprioritized; prioritized work ranks ahead of it",
+                f"warning: {plan['display']} remains unprioritized; prioritized work ranks "
+                "ahead of it",
                 file=sys.stderr,
             )
         else:
@@ -2224,18 +2421,60 @@ def cmd_dispatch(args, cfg: Config, make_ikigai) -> int:
                 f"sink {cfg.resource(f'item:{args.item}')} priority={args.priority}"
             )
             if not answer.ok:
-                return show(answer)
-            print(f"{display}: set priority {args.priority} (was unprioritized)")
-    named = [w for w in labels if not w.startswith("repo:")] + repos
-    text = dispatch_text(named, item.get("title"), item.get("body"), note or None)
+                return show(answer), False
+            print(f"{plan['display']}: set priority {args.priority} (was unprioritized)")
+    named = [w for w in labels if not w.startswith("repo:")] + [plan["repo"]]
+    text = dispatch_text(named, item.get("title"), item.get("body"), plan["written"] or None)
     words = [f"sink {cfg.resource('comment')} item={args.item}"]
-    if author:
-        words.append(f"author={author}")
+    if plan["author"]:
+        words.append(f"author={plan['author']}")
     answer = ikigai.run(" ".join(words), stdin=text)
     code = show(answer)
     if answer.ok:
         print_dispatch_rank(cfg, ikigai, args.item, labels)
-    return code
+    return code, answer.ok
+
+
+def mirrored_blockers(item: dict) -> list[str]:
+    """The IRIs of the open items of OTHER ledgers that block this one, as its mirror holds them
+    (`mirrored`, ikigai-ledger 0.17.0); none on a ledger older than that."""
+    return [
+        e.get("iri") or "?"
+        for e in item.get("mirrored") or []
+        if e.get("type") == "blocks" and e.get("status") == "open"
+    ]
+
+
+def blocking_items(cfg: Config, ikigai: Ikigai, item: dict) -> tuple[list[int], str | None]:
+    """The open items of this ledger whose `blocks` link points at `item`, read from the links
+    themselves (every open item, paged), and an error when they cannot be read. For an item
+    `next` excludes for another reason first, so `open_blockers` cannot see its blockers.
+    `mirrored_blockers` names the open blockers in other ledgers."""
+    number, found, offset, page = item.get("number"), [], 0, 200
+    while True:
+        answer = ikigai.run(
+            f"source {cfg.resource('items')} status=open limit={page} offset={offset} "
+            "as=application/json"
+        )
+        if not answer.ok:
+            return [], answer.text() or f"exit {answer.code}"
+        try:
+            doc = json.loads(answer.out)
+            rows = doc.get("items") or []
+            total = int(doc.get("total", len(rows)))
+        except (ValueError, AttributeError, TypeError) as e:
+            return [], f"its JSON face did not parse: {e}"
+        for row in rows:
+            if row.get("status", "open") != "open":
+                continue
+            for link in row.get("links") or []:
+                target = link.get("target") or {}
+                if link.get("type") == "blocks" and target.get("number") == number:
+                    found.append(int(row["number"]))
+        offset += len(rows)
+        if not rows or offset >= total:
+            break
+    return sorted(set(found)), None
 
 
 def print_dispatch_rank(cfg: Config, ikigai: Ikigai, number: int, labels: list[str]) -> None:
@@ -2863,10 +3102,54 @@ def parser() -> argparse.ArgumentParser:
     s.set_defaults(run=cmd_report)
 
     s = sub.add_parser(
-        "reject", help="the evidence did not hold: the item is ready again (a dispatcher's act)"
+        "reject",
+        help="the evidence did not hold: send the item back with --redispatch, or --park it "
+        "(a dispatcher's act)",
     )
     s.add_argument("item", type=item_reference)
     s.add_argument("--note", help="why the evidence did not hold (required)")
+    where = s.add_mutually_exclusive_group()
+    where.add_argument(
+        "--redispatch",
+        action="store_true",
+        help="dispatch it again, to the worker: and agent: labels it carries (or --labels)",
+    )
+    where.add_argument(
+        "--park",
+        action="store_true",
+        help="take its worker: labels off, so no worker is offered it (it waits on a person)",
+    )
+    s.add_argument(
+        "--dispatch-note",
+        help="the note of the new dispatch (default: do the fixes the reject note asks for, on "
+        "the same pull request's branch, then hand back)",
+    )
+    s.add_argument("--labels", help="with --redispatch: the routing labels, as dispatch --labels")
+    s.add_argument(
+        "--as",
+        dest="as_principal",
+        help="with --redispatch: the principal the dispatch is from, as dispatch --as",
+    )
+    s.add_argument(
+        "--allow-blocked",
+        action="store_true",
+        help="with --redispatch: dispatch although an open item blocks it (needs --dispatch-note)",
+    )
+    priorities = s.add_mutually_exclusive_group()
+    priorities.add_argument(
+        "--priority", type=int, help="with --redispatch: priority assigned only if absent (3)"
+    )
+    priorities.add_argument(
+        "--keep-unprioritized",
+        action="store_true",
+        help="with --redispatch: leave missing priority unchanged, with a warning",
+    )
+    s.add_argument(
+        "--status-item",
+        type=item_reference,
+        action="append",
+        help="with --redispatch: a worker status item to check the repository against",
+    )
     s.set_defaults(run=cmd_reject)
 
     s = sub.add_parser(

@@ -27,7 +27,10 @@ items the dispatcher marks for them, and work each one in a fresh working tree o
 - **A worker claims, works and reports; it never closes and never merges.** It opens the pull
   request, reads its CI, and hands the item back with both as the evidence. The dispatcher
   checks that evidence, then merges and closes, or answers with
-  `python3 tools/gonk.py reject 12 --note "<why>"`, and the item is ready again. With the
+  `python3 tools/gonk.py reject 12 --note "<why>" --redispatch`, which dispatches it again to
+  the labels it carries, or `--park` instead, which takes its `worker:` labels off for an item
+  that waits on a person. A bare reject is refused: a worker takes an item it handed back only
+  after a new dispatch, so a reject alone leaves it skipped while `next` lists it. With the
   hand-back, a Claude Code or Codex run records its session summary: ids, counts and tokens read
   from the harness's JSON output, never transcript text and never a cost; one that cannot be made
   is one line on the hand-back, never a failed run (`worker/README.md`, "The session summary").
