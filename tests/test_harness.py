@@ -698,6 +698,18 @@ class SensorsFire(unittest.TestCase):
         self.assertEqual(self.pr({"title": "x", "body": "no section"}, ["faces/a/page.html"]), 1)
         assert_fired(self, self.repo, "pr-accessibility-section")
 
+    def test_pr_tokens_section(self):
+        patch = self.repo / "diff.patch"
+        patch.write_text("+++ b/app.py\n@@ -0,0 +1 @@\n+auth = 'Bearer ' + t\n")
+        event = self.repo / "event.json"
+        event.write_text(json.dumps({"pull_request": {"title": "x", "body": ""}}))
+        files = self.repo / "changed.txt"
+        files.write_text("app.py")
+        argv = ["--repo", str(self.repo), "pr", "--event", str(event), "--changed", str(files)]
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(checks.main(argv + ["--diff", str(patch)]), 0)
+        assert_fired(self, self.repo, "pr-tokens-section", "warning")
+
     def test_pr_spec_change_folder(self):
         self.assertEqual(self.pr({"title": "behavior: x", "body": ""}, ["tools/gonk.py"]), 1)
         assert_fired(self, self.repo, "pr-spec-change-folder")

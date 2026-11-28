@@ -1749,6 +1749,10 @@ its rules hold beside these.
    Every named accessibility check has a result: Pass, Fail or Blocked, with evidence (the
    test or command, tool and version used, or why it could not run). Keep unrun checks as
    Blocked; a screen reader nobody ran is Blocked, never "not applicable".
+   When the change issues or accepts a bearer token (a cookie, a header value, a code or key
+   in a URL), include a `## Tokens` section: what it authorizes, why it cannot be bound to a
+   key its presenter holds, and what limits it (lifetime, single use, hashed at rest, the
+   transport it is accepted on). A holder-bound credential is said in one line.
    For a rework, write the existing PR URL on the FIRST line
    of {report_file}, then the pushed full head commit SHA and what changed on the lines after.
    If you could not finish, say so there plainly.

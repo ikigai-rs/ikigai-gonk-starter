@@ -157,6 +157,23 @@ guide:stage-files-by-name a harness:Guide ;
     harness:direction harness:feedforward ; harness:execution harness:inferential ;
     harness:stage harness:preCommit ; harness:category harness:authoritySafety .
 
+guide:tokens-section a harness:Guide ;
+    rdfs:label "a pull request that adds a bearer token says what limits it" ;
+    rdfs:comment "A credential ikigai issues or accepts is holder-bound (its presenter proves it holds a key). A pull request that issues or accepts a bearer token (a cookie, a header value, a code or key in a URL) has a `## Tokens` section: what it authorizes, why it cannot be bound, and what limits it (lifetime, single use, hashed at rest, transport). A holder-bound credential is said in one line; a pull request adding neither needs no section." ;
+    harness:statedIn "AGENTS.md" ; harness:section "4. Every change through a pull request with green CI" ;
+    harness:direction harness:feedforward ; harness:execution harness:inferential ;
+    harness:stage harness:merge ; harness:category harness:authoritySafety .
+
+ctl:pr-tokens-section a harness:Control ;
+    rdfs:label "CI: a credential-shaped line without a Tokens section" ;
+    rdfs:comment "In CI, `tools/checks.py pr` prints, as advice, each added line shaped like a credential (`CREDENTIAL_SHAPES`: a cookie issued or read, a bearer header, an api-key header, a credential in a URL, a function defined to mint a token, invite, code, session, secret or key) in a pull request whose description has no `## Tokens` section, and passes; `.gonk/checks.toml` `[pr] tokens = \"refuse\"` makes it refuse. A shape is a hint: the section says whether the credential is bearer or holder-bound." ;
+    harness:direction harness:feedback ; harness:execution harness:computational ;
+    harness:stage harness:ci ; harness:category harness:authoritySafety ;
+    harness:outcome harness:warn ;
+    harness:enforcedAt "tools/checks.py#check_tokens" ;
+    harness:statedBy guide:tokens-section ;
+    harness:firedBy test:test_harness:SensorsFire.test_pr_tokens_section .
+
 ctl:ci-checks a harness:Control ;
     rdfs:label "CI on every pull request" ;
     rdfs:comment "The repository's CI workflow runs its checks on every pull request and push to main. Its verdict is recorded by the CI service, not in this working tree's firing log. Whether a red pull request can still be merged is the hosting service's branch protection, which no file here sets." ;

@@ -2,7 +2,7 @@
 """Checks for any agent's work, whatever made it: a commit message and a pull request.
 
     python3 tools/checks.py commit-msg <file>     the git commit-msg hook (hooks/git/commit-msg)
-    python3 tools/checks.py pr [--event <file>] [--changed <file>]
+    python3 tools/checks.py pr [--event <file>] [--changed <file>] [--diff <file>]
                                                   a pull request, in CI (scripts/gates.sh)
 
 THE COMMIT MESSAGE (AGENTS.md, "6. Never a bare `#N`"). Ledger items and pull requests share
@@ -13,7 +13,7 @@ number it is. Allowed: a link (`https://…/pull/12`, `…/items/12`), `owner/re
 (`just hooks`), the same mechanism as the review hook.
 
 THE PULL REQUEST, read from the event GitHub Actions writes (`$GITHUB_EVENT_PATH`) and the
-files it changes. Outside a pull request it checks nothing and says so. Two checks:
+files it changes. Outside a pull request it checks nothing and says so. Three checks:
 
 - ACCESSIBILITY (AGENTS.md, "7. Read ACCESSIBILITY.md before changing what people see").
   Nothing can check that someone READ ACCESSIBILITY.md. This checks the evidence instead: a
@@ -26,13 +26,21 @@ files it changes. Outside a pull request it checks nothing and says so. Two chec
   `behavior-change` or a title starting `behavior:`, must add or change a file under
   `openspec/changes/`. The mark is the trigger because it is predictable: the author says
   which kind of change it is, and the check holds them to it.
+- TOKENS (AGENTS.md, "4. Every change through a pull request with green CI"). A pull request
+  whose diff ADDS a line shaped like a credential (`CREDENTIAL_SHAPES`: a cookie issued or
+  read, a bearer header, an api-key header, a credential in a URL, a function defined to mint
+  a token, invite, code, session, secret or key) has a `## Tokens` section in its description.
+  It is advice for now (`tokens = "advise"`): it prints each line and passes. With
+  `tokens = "refuse"` it refuses. Files matching `credential_ignore` (prose) are not read.
 
-Both are configurable in `.gonk/checks.toml` (absent: the defaults below):
+All are configurable in `.gonk/checks.toml` (absent: the defaults below):
 
     [pr]
     user_facing = ["faces/*", "*.html", "*.css", "*.svg"]   # fnmatch globs; `*` crosses `/`
     behavior_labels = ["behavior-change"]
     behavior_title_prefixes = ["behavior:"]
+    tokens = "advise"                                        # or "refuse"
+    credential_ignore = ["*.md", "*.txt"]
 
 Every refusal is recorded in the working tree's firing log (tools/harness.py), as the other
 sensors' are. Exit status: 0 passed, 1 refused, 2 could not read its input.
@@ -56,7 +64,37 @@ DEFAULTS = {
     "user_facing": ["faces/*", "*.html", "*.css", "*.svg"],
     "behavior_labels": ["behavior-change"],
     "behavior_title_prefixes": ["behavior:"],
+    "tokens": "advise",
+    "credential_ignore": ["*.md", "*.txt"],
 }
+
+# The five shapes of an added line that issues or accepts a credential, the one place they
+# are listed. A shape is a hint, not a verdict: the `## Tokens` section says whether the
+# credential is bearer or holder-bound.
+CREDENTIAL_SHAPES = [
+    (
+        "a cookie issued or read",
+        re.compile(r"set[-_]?cookie|\bcookies?\s*[\[.(]|document\.cookie|[\"']cookie[\"']", re.I),
+    ),
+    ("a bearer header", re.compile(r"\bbearer\b", re.I)),
+    ("an api-key header", re.compile(r"\bx-api-key\b|[\"']api[-_]?key[\"']", re.I)),
+    (
+        "a credential in a URL",
+        re.compile(
+            r"[?&](?:access_?token|token|api_?key|key|code|secret|password|session|sid|invite)="
+            r"|://[^/\s:@]+:[^/\s@]+@",
+            re.I,
+        ),
+    ),
+    (
+        "a function defined to mint a token, invite, code, session, secret or key",
+        re.compile(
+            r"\b(?:def|fn|function|func)\s+\w*?(?:mint|issue|new|create|make|generat|gen)"
+            r"\w*?(?:token|invite|code|session|secret|key)\w*\s*[(<]",
+            re.I,
+        ),
+    ),
+]
 
 # A `#N` is qualified by what is right before it: a word or path (`owner/repo#12`,
 # `default#12`, a URL's fragment), or the words `PR ` or `ledger `. Anything else is bare.
@@ -146,6 +184,84 @@ def check_accessibility(pr: dict, changed: list[str], config: dict, repo: Path) 
     ]
 
 
+def credential_shape(line: str) -> str | None:
+    """The first credential shape a source line has, or None.
+
+    >>> credential_shape('resp.headers["Set-Cookie"] = sid')
+    'a cookie issued or read'
+    >>> credential_shape('headers = {"Authorization": f"Bearer {t}"}')
+    'a bearer header'
+    >>> credential_shape('req.header("X-API-Key", k)')
+    'an api-key header'
+    >>> credential_shape('url = f"{base}/join?invite={code}"')
+    'a credential in a URL'
+    >>> credential_shape("fn mint_token(holder: &str) -> String {")
+    'a function defined to mint a token, invite, code, session, secret or key'
+    >>> credential_shape("def newSession(user):")
+    'a function defined to mint a token, invite, code, session, secret or key'
+    >>> credential_shape("def sort_key(item):") is None
+    True
+    """
+    for name, pattern in CREDENTIAL_SHAPES:
+        if pattern.search(line):
+            return name
+    return None
+
+
+def added_lines(diff: str) -> list[tuple[str, str]]:
+    r"""(path, text) for each line a unified diff adds.
+
+    >>> added_lines("+++ b/a.py\n@@ -0,0 +1 @@\n+x = 1\n-y\n+++ /dev/null\n")
+    [('a.py', 'x = 1')]
+    """
+    found, path = [], None
+    for line in diff.splitlines():
+        if line.startswith("+++ "):
+            target = line[4:].split("\t", 1)[0]
+            path = target[2:] if target.startswith("b/") else None
+        elif line.startswith("+") and path is not None:
+            found.append((path, line[1:]))
+    return found
+
+
+def credential_lines(diff: str, ignore: list[str]) -> list[tuple[str, str, str]]:
+    """(path, shape, text) for each added line shaped like a credential, outside `ignore`."""
+    found = []
+    for path, text in added_lines(diff):
+        if any(fnmatch.fnmatch(path, g) for g in ignore):
+            continue
+        shape = credential_shape(text)
+        if shape:
+            found.append((path, shape, text.strip()))
+    return found
+
+
+def has_tokens_section(body: str) -> bool:
+    return re.search(r"^##\s+Tokens\s*$", body or "", re.M | re.I) is not None
+
+
+def check_tokens(pr: dict, diff: str, config: dict, repo: Path) -> tuple[list[str], list[str]]:
+    """(problems, advice): a credential-shaped added line in a pull request with no
+    `## Tokens` section is advice, or a problem when the repository sets `tokens = "refuse"`."""
+    seen = credential_lines(diff, config["credential_ignore"])
+    if not seen or has_tokens_section(pr.get("body") or ""):
+        return [], []
+    refuse = config["tokens"] == "refuse"
+    harness.fire("pr-tokens-section", "refusal" if refuse else "warning", repo, tool="ci")
+    shown = [f"  {path}: {shape}: {text[:120]}" for path, shape, text in seen[:10]]
+    if len(seen) > 10:
+        shown.append(f"  … and {len(seen) - 10} more")
+    message = (
+        "This pull request adds lines shaped like a credential, and its description has no "
+        "`## Tokens` section:\n"
+        + "\n".join(shown)
+        + "\nSay what the token authorizes, why it cannot be holder-bound, and what limits it "
+        "(lifetime, single use, hashed at rest, the transport it is accepted on); a "
+        "holder-bound credential in one line; none at all in one line."
+    )
+    return ([message], []) if refuse else ([], [message])
+
+
 def changed_files_from_git(base: str, repo: Path) -> list[str] | None:
     """The files a pull request changes: its merge commit (what CI checks out) against its
     base, fetching the base when the checkout is shallow."""
@@ -161,7 +277,21 @@ def changed_files_from_git(base: str, repo: Path) -> list[str] | None:
     return [line for line in diff.stdout.splitlines() if line]
 
 
-def cmd_pr(event_path: str | None, changed_path: str | None, repo: Path) -> int:
+def diff_from_git(base: str, repo: Path) -> str | None:
+    """The lines a pull request changes, as `git diff -U0` of its base against HEAD (after
+    `changed_files_from_git`, which fetches a missing base)."""
+    diff = subprocess.run(
+        ["git", "diff", "-U0", "--no-color", "--no-ext-diff", base, "HEAD"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+    )
+    return diff.stdout if diff.returncode == 0 else None
+
+
+def cmd_pr(
+    event_path: str | None, changed_path: str | None, repo: Path, diff_path: str | None = None
+) -> int:
     if not event_path:
         print("pr checks: not a pull request (no $GITHUB_EVENT_PATH); nothing checked")
         return 0
@@ -174,15 +304,29 @@ def cmd_pr(event_path: str | None, changed_path: str | None, repo: Path) -> int:
     if not isinstance(pr, dict):
         print("pr checks: the event is not a pull request's; nothing checked")
         return 0
+    base = (pr.get("base") or {}).get("sha", "")
     if changed_path:
         changed = Path(changed_path).read_text(encoding="utf-8").split()
     else:
-        changed = changed_files_from_git((pr.get("base") or {}).get("sha", ""), repo)
+        changed = changed_files_from_git(base, repo)
         if changed is None:
             print("pr checks: could not list the files this pull request changes", file=sys.stderr)
             return 2
+    if diff_path:
+        diff = Path(diff_path).read_text(encoding="utf-8")
+    elif changed_path:
+        diff = ""  # a list of paths given and no diff: there are no lines to read
+    else:
+        diff = diff_from_git(base, repo)
+        if diff is None:
+            print("pr checks: could not read the lines this pull request changes", file=sys.stderr)
+            return 2
     config = load_config(repo)
     problems = check_accessibility(pr, changed, config, repo)
+    token_problems, advice = check_tokens(pr, diff, config, repo)
+    problems += token_problems
+    for a in advice:
+        print(f"pr checks (advice, not a refusal): {a}", file=sys.stderr)
     try:  # the spec profile's check, in a repository that carries it
         import spec_checks
     except ImportError:
@@ -210,12 +354,13 @@ def main(argv: list[str] | None = None) -> int:
     r = sub.add_parser("pr", help="check a pull request in CI")
     r.add_argument("--event", default=os.environ.get("GITHUB_EVENT_PATH"))
     r.add_argument("--changed", help="a file listing the changed paths (default: from git)")
+    r.add_argument("--diff", help="a file holding the unified diff (default: from git)")
     p.add_argument("--repo", help="the repository (default: found from the working directory)")
     args = p.parse_args(argv)
     repo = Path(args.repo).resolve() if args.repo else repo_root(Path.cwd())
     if args.command == "commit-msg":
         return cmd_commit_msg(Path(args.file), repo)
-    return cmd_pr(args.event, args.changed, repo)
+    return cmd_pr(args.event, args.changed, repo, args.diff)
 
 
 if __name__ == "__main__":
